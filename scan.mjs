@@ -18,6 +18,10 @@ function hasInstallCommand(text) {
   return /\b(?:pip3? install|poetry install|uv sync|conda env create)\b/i.test(text);
 }
 
+function hasRunCommand(text) {
+  return /^\s*(?:[$>]\s*)?(?:python3?(?:\s+-m\s+\S+|\s+\S+\.py\b)|torchrun\s+\S+|accelerate\s+launch\s+\S+)/im.test(text);
+}
+
 async function github(path) {
   const headers = {
     Accept: "application/vnd.github+json",
@@ -87,6 +91,12 @@ async function scan(input) {
       : "WARN  Install command not found in README",
   );
 
+  console.log(
+    hasRunCommand(readmeText)
+      ? "PASS  Run command found in README"
+      : "WARN  Run command not found in README",
+  );
+
   console.log(dependencies
     ? `PASS  Dependencies found: ${dependencies}`
     : "FAIL  Dependencies not found");
@@ -113,6 +123,10 @@ if (process.argv[2] === "--self-test") {
     hasInstallCommand("This project requires Python"),
     false,
   );
+
+  assert.equal(hasRunCommand("python train.py --epochs 10"), true);
+  assert.equal(hasRunCommand("This project requires Python 3.10"), false);
+
   console.log("PASS  self-test");
 } else {
   const input = process.argv[2];
