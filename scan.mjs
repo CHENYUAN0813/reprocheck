@@ -22,6 +22,12 @@ function hasRunCommand(text) {
   return /^\s*(?:[$>]\s*)?(?:python3?(?:\s+-m\s+\S+|\s+\S+\.py\b)|torchrun\s+\S+|accelerate\s+launch\s+\S+)/im.test(text);
 }
 
+function statusFor(failures, warnings) {
+  if (failures > 0) return "BLOCKED";
+  if (warnings > 0) return "NEEDS_WORK";
+  return "READY_FOR_REVIEW";
+}
+
 async function github(path) {
   const headers = {
     Accept: "application/vnd.github+json",
@@ -80,19 +86,21 @@ async function scan(input) {
   const readmeText = readmeFile?.content
     ? Buffer.from(readmeFile.content, "base64").toString("utf8")
     : "";
+  const installCommand = hasInstallCommand(readmeText);
+  const runCommand = hasRunCommand(readmeText);
 
   console.log(readme
     ? `PASS  README found: ${readme}`
     : "FAIL  README not found");
 
   console.log(
-    hasInstallCommand(readmeText)
+    installCommand
       ? "PASS  Install command found in README"
       : "WARN  Install command not found in README",
   );
 
   console.log(
-    hasRunCommand(readmeText)
+    runCommand
       ? "PASS  Run command found in README"
       : "WARN  Run command not found in README",
   );
@@ -105,6 +113,14 @@ async function scan(input) {
     ? `PASS  Python version found: ${pythonVersion}`
     : "WARN  Python version not clearly pinned");
 
+  const failures = [readme, dependencies].filter((value) => !value).length;
+  const warnings = [installCommand, runCommand, pythonVersion].filter(
+    (value) => !value,
+  ).length;
+
+  console.log(
+    `Status: ${statusFor(failures, warnings)} (failures: ${failures}, warnings: ${warnings})`,
+  );
   console.log(`Commit: ${commit.sha}`);
 }
 
@@ -126,6 +142,10 @@ if (process.argv[2] === "--self-test") {
 
   assert.equal(hasRunCommand("python train.py --epochs 10"), true);
   assert.equal(hasRunCommand("This project requires Python 3.10"), false);
+
+  assert.equal(statusFor(1, 0), "BLOCKED");
+  assert.equal(statusFor(0, 1), "NEEDS_WORK");
+  assert.equal(statusFor(0, 0), "READY_FOR_REVIEW");
 
   console.log("PASS  self-test");
 } else {
