@@ -14,6 +14,10 @@ For structured JSON output:
 
 Each check includes evidence and a suggestion when action is needed.
 
+## Web interface
+
+`npm run dev`
+
 ## Self-test
 
 `node scan.mjs --self-test`
