@@ -14,6 +14,10 @@ function parseRepo(input) {
   };
 }
 
+function hasInstallCommand(text) {
+  return /\b(?:pip3? install|poetry install|uv sync|conda env create)\b/i.test(text);
+}
+
 async function github(path) {
   const headers = {
     Accept: "application/vnd.github+json",
@@ -63,9 +67,25 @@ async function scan(input) {
     [".python-version", "runtime.txt"].includes(name),
   );
 
+  const readmeFile = readme
+    ? await github(
+        `${base}/contents/${encodeURIComponent(readme)}?ref=${commit.sha}`,
+      )
+    : null;
+
+  const readmeText = readmeFile?.content
+    ? Buffer.from(readmeFile.content, "base64").toString("utf8")
+    : "";
+
   console.log(readme
     ? `PASS  README found: ${readme}`
     : "FAIL  README not found");
+
+  console.log(
+    hasInstallCommand(readmeText)
+      ? "PASS  Install command found in README"
+      : "WARN  Install command not found in README",
+  );
 
   console.log(dependencies
     ? `PASS  Dependencies found: ${dependencies}`
@@ -83,6 +103,16 @@ if (process.argv[2] === "--self-test") {
     owner: "a",
     repo: "b",
   });
+
+  assert.equal(
+    hasInstallCommand("pip install -r requirements.txt"),
+    true,
+  );
+
+  assert.equal(
+    hasInstallCommand("This project requires Python"),
+    false,
+  );
   console.log("PASS  self-test");
 } else {
   const input = process.argv[2];

@@ -15,6 +15,7 @@ ReproCheck checks public Python research repositories for reproducibility proble
 - README exists
 - Dependency file exists
 - Python version is pinned
+- Install command exists in README
 
 ## Current limitations
 
