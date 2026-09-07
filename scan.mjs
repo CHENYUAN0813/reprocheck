@@ -14,12 +14,27 @@ function parseRepo(input) {
   };
 }
 
-function hasInstallCommand(text) {
-  return /\b(?:pip3? install|poetry install|uv sync|conda env create)\b/i.test(text);
+function findMatchingLine(text, pattern) {
+  const lines = text.split(/\r?\n/);
+  const index = lines.findIndex((line) => pattern.test(line));
+
+  return index === -1
+    ? null
+    : { line: index + 1, text: lines[index].trim() };
 }
 
-function hasRunCommand(text) {
-  return /^\s*(?:[$>]\s*)?(?:python3?(?:\s+-m\s+\S+|\s+\S+\.py\b)|torchrun\s+\S+|accelerate\s+launch\s+\S+)/im.test(text);
+function findInstallCommand(text) {
+  return findMatchingLine(
+    text,
+    /\b(?:pip3? install|poetry install|uv sync|conda env create)\b/i,
+  );
+}
+
+function findRunCommand(text) {
+  return findMatchingLine(
+    text,
+    /^\s*(?:[$>]\s*)?(?:python3?(?:\s+-m\s+\S+|\s+\S+\.py\b)|torchrun\s+\S+|accelerate\s+launch\s+\S+)/i,
+  );
 }
 
 function isLicenseFile(name) {
@@ -107,14 +122,18 @@ async function scan(input) {
   const readmeText = readmeFile?.content
     ? Buffer.from(readmeFile.content, "base64").toString("utf8")
     : "";
-  const installCommand = hasInstallCommand(readmeText);
-  const runCommand = hasRunCommand(readmeText);
+  const installCommand = findInstallCommand(readmeText);
+  const runCommand = findRunCommand(readmeText);
 
   const checks = [
     {
       id: "readme",
       status: readme ? "PASS" : "FAIL",
       message: readme ? `README found: ${readme}` : "README not found",
+      evidence: readme ? { file: readme } : null,
+      suggestion: readme
+        ? null
+        : "Add README.md with installation and run instructions",
     },
     {
       id: "install_command",
@@ -122,6 +141,12 @@ async function scan(input) {
       message: installCommand
         ? "Install command found in README"
         : "Install command not found in README",
+      evidence: installCommand
+        ? { file: readme, ...installCommand }
+        : null,
+      suggestion: installCommand
+        ? null
+        : "Add a supported installation command to README.md",
     },
     {
       id: "run_command",
@@ -129,6 +154,10 @@ async function scan(input) {
       message: runCommand
         ? "Run command found in README"
         : "Run command not found in README",
+      evidence: runCommand ? { file: readme, ...runCommand } : null,
+      suggestion: runCommand
+        ? null
+        : "Add a Python run command to README.md",
     },
     {
       id: "dependencies",
@@ -136,16 +165,24 @@ async function scan(input) {
       message: dependencies
         ? `Dependencies found: ${dependencies}`
         : "Dependencies not found",
+      evidence: dependencies ? { file: dependencies } : null,
+      suggestion: dependencies
+        ? null
+        : "Add requirements.txt or pyproject.toml",
     },
     {
       id: "license",
       status: license ? "PASS" : "WARN",
       message: license ? `License found: ${license}` : "License not found",
+      evidence: license ? { file: license } : null,
+      suggestion: license ? null : "Add a LICENSE file",
     },
     {
       id: "tests",
       status: tests ? "PASS" : "WARN",
       message: tests ? `Test entry found: ${tests}` : "Test entry not found",
+      evidence: tests ? { file: tests } : null,
+      suggestion: tests ? null : "Add a tests directory or Python test file",
     },
     {
       id: "python_version",
@@ -153,6 +190,10 @@ async function scan(input) {
       message: pythonVersion
         ? `Python version found: ${pythonVersion}`
         : "Python version not clearly pinned",
+      evidence: pythonVersion ? { file: pythonVersion } : null,
+      suggestion: pythonVersion
+        ? null
+        : "Pin Python with .python-version or runtime.txt",
     },
   ];
 
@@ -176,18 +217,21 @@ if (args.includes("--self-test")) {
     repo: "b",
   });
 
-  assert.equal(
-    hasInstallCommand("pip install -r requirements.txt"),
-    true,
+  assert.deepEqual(
+    findInstallCommand("Setup\npip install -r requirements.txt"),
+    { line: 2, text: "pip install -r requirements.txt" },
   );
 
   assert.equal(
-    hasInstallCommand("This project requires Python"),
-    false,
+    findInstallCommand("This project requires Python"),
+    null,
   );
 
-  assert.equal(hasRunCommand("python train.py --epochs 10"), true);
-  assert.equal(hasRunCommand("This project requires Python 3.10"), false);
+  assert.deepEqual(
+    findRunCommand("Usage\r\n$ python train.py --epochs 10"),
+    { line: 2, text: "$ python train.py --epochs 10" },
+  );
+  assert.equal(findRunCommand("This project requires Python 3.10"), null);
 
   assert.equal(isLicenseFile("LICENSE.md"), true);
   assert.equal(isLicenseFile("README.md"), false);

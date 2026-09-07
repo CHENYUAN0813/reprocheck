@@ -10,6 +10,8 @@ For structured JSON output:
 
 `node scan.mjs https://github.com/owner/repository --json`
 
+Each check includes evidence and a suggestion when action is needed.
+
 ## Self-test
 
 `node scan.mjs --self-test`
