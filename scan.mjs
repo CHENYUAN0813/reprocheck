@@ -22,6 +22,10 @@ function hasRunCommand(text) {
   return /^\s*(?:[$>]\s*)?(?:python3?(?:\s+-m\s+\S+|\s+\S+\.py\b)|torchrun\s+\S+|accelerate\s+launch\s+\S+)/im.test(text);
 }
 
+function isLicenseFile(name) {
+  return /^(?:licen[cs]e|copying)(?:[.-]|$)/i.test(name);
+}
+
 function statusFor(failures, warnings) {
   if (failures > 0) return "BLOCKED";
   if (warnings > 0) return "NEEDS_WORK";
@@ -76,6 +80,7 @@ async function scan(input) {
   const pythonVersion = names.find((name) =>
     [".python-version", "runtime.txt"].includes(name),
   );
+  const license = names.find(isLicenseFile);
 
   const readmeFile = readme
     ? await github(
@@ -109,12 +114,16 @@ async function scan(input) {
     ? `PASS  Dependencies found: ${dependencies}`
     : "FAIL  Dependencies not found");
 
+  console.log(license
+    ? `PASS  License found: ${license}`
+    : "WARN  License not found");
+
   console.log(pythonVersion
     ? `PASS  Python version found: ${pythonVersion}`
     : "WARN  Python version not clearly pinned");
 
   const failures = [readme, dependencies].filter((value) => !value).length;
-  const warnings = [installCommand, runCommand, pythonVersion].filter(
+  const warnings = [installCommand, runCommand, pythonVersion, license].filter(
     (value) => !value,
   ).length;
 
@@ -142,6 +151,9 @@ if (process.argv[2] === "--self-test") {
 
   assert.equal(hasRunCommand("python train.py --epochs 10"), true);
   assert.equal(hasRunCommand("This project requires Python 3.10"), false);
+
+  assert.equal(isLicenseFile("LICENSE.md"), true);
+  assert.equal(isLicenseFile("README.md"), false);
 
   assert.equal(statusFor(1, 0), "BLOCKED");
   assert.equal(statusFor(0, 1), "NEEDS_WORK");
