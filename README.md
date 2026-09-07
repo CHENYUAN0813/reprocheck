@@ -2,6 +2,8 @@
 
 ReproCheck checks public Python research repositories for reproducibility problems.
 
+It scans the complete repository file tree at a specific commit and reads the root README.
+
 ## Usage
 
 `node scan.mjs https://github.com/owner/repository`
@@ -29,5 +31,5 @@ Each check includes evidence and a suggestion when action is needed.
 ## Current limitations
 
 - Public GitHub repositories only
-- Checks root-level files only
+- Only README content is analyzed; other files are checked by path
 - Does not execute repository code

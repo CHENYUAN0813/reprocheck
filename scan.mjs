@@ -41,8 +41,8 @@ function isLicenseFile(name) {
   return /^(?:licen[cs]e|copying)(?:[.-]|$)/i.test(name);
 }
 
-function isTestEntry(name) {
-  return /^(?:tests?|pytest\.ini|tox\.ini|noxfile\.py|test_.+\.py|.+_test\.py)$/i.test(name);
+function isTestPath(path) {
+  return /(?:^|\/)(?:tests?(?:\/|$)|(?:test_.+|.+_test)\.py$|(?:pytest\.ini|tox\.ini|noxfile\.py)$)/i.test(path);
 }
 
 function statusFor(failures, warnings) {
@@ -56,6 +56,7 @@ function printReport(report) {
     console.log(`${check.status.padEnd(6)}${check.message}`);
   }
 
+  console.log(`Files scanned: ${report.filesScanned}`);
   console.log(
     `Status: ${report.status} (failures: ${report.summary.failures}, warnings: ${report.summary.warnings})`,
   );
@@ -86,32 +87,44 @@ async function scan(input) {
   const base = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
 
   const repository = await github(base);
-  const [files, commit] = await Promise.all([
-    github(`${base}/contents`),
-    github(`${base}/commits/${encodeURIComponent(repository.default_branch)}`),
-  ]);
+  const commit = await github(
+    `${base}/commits/${encodeURIComponent(repository.default_branch)}`,
+  );
+  const tree = await github(
+    `${base}/git/trees/${encodeURIComponent(commit.commit.tree.sha)}?recursive=1`,
+  );
 
-  if (!Array.isArray(files)) {
-    throw new Error("无法读取仓库根目录");
+  if (!Array.isArray(tree.tree)) {
+    throw new Error("无法读取仓库文件树");
   }
 
-  const names = files.map((file) => file.name);
-  const readme = names.find((name) => /^readme(\.|$)/i.test(name));
-  const dependencies = names.find((name) =>
+  if (tree.truncated) {
+    throw new Error("仓库文件树过大，GitHub 返回结果不完整");
+  }
+
+  const paths = tree.tree.map((entry) => entry.path);
+  const filePaths = tree.tree
+    .filter((entry) => entry.type === "blob")
+    .map((entry) => entry.path);
+  const rootFiles = filePaths.filter((path) => !path.includes("/"));
+  const readme = rootFiles.find((path) => /^readme(\.|$)/i.test(path));
+  const dependencies = filePaths.find((path) =>
     [
       "requirements.txt",
       "pyproject.toml",
       "poetry.lock",
-      "Pipfile",
+      "pipfile",
       "environment.yml",
       "environment.yaml",
-    ].includes(name),
+    ].includes(path.split("/").at(-1).toLowerCase()),
   );
-  const pythonVersion = names.find((name) =>
-    [".python-version", "runtime.txt"].includes(name),
+  const pythonVersion = filePaths.find((path) =>
+    [".python-version", "runtime.txt"].includes(
+      path.split("/").at(-1).toLowerCase(),
+    ),
   );
-  const license = names.find(isLicenseFile);
-  const tests = names.find(isTestEntry);
+  const license = rootFiles.find(isLicenseFile);
+  const tests = paths.find(isTestPath);
 
   const readmeFile = readme
     ? await github(
@@ -203,6 +216,7 @@ async function scan(input) {
   return {
     repository: `${owner}/${repo}`,
     commit: commit.sha,
+    filesScanned: filePaths.length,
     status: statusFor(failures, warnings),
     summary: { failures, warnings },
     checks,
@@ -236,9 +250,10 @@ if (args.includes("--self-test")) {
   assert.equal(isLicenseFile("LICENSE.md"), true);
   assert.equal(isLicenseFile("README.md"), false);
 
-  assert.equal(isTestEntry("tests"), true);
-  assert.equal(isTestEntry("test_model.py"), true);
-  assert.equal(isTestEntry("train.py"), false);
+  assert.equal(isTestPath("tests"), true);
+  assert.equal(isTestPath("src/tests/test_model.py"), true);
+  assert.equal(isTestPath("src/test_model.py"), true);
+  assert.equal(isTestPath("src/train.py"), false);
 
   assert.equal(statusFor(1, 0), "BLOCKED");
   assert.equal(statusFor(0, 1), "NEEDS_WORK");
