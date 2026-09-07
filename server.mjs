@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createViteServer } from "vite";
 import { scan } from "./scan.mjs";
+import worker from "./worker.mjs";
 
 const MAX_BODY_BYTES = 4096;
 
@@ -45,7 +46,7 @@ async function handleApi(request, response) {
       throw new Error("A GitHub repository URL is required");
     }
 
-    sendJson(response, 200, await scan(input.url));
+    sendJson(response, 200, await scan(input.url, process.env.GITHUB_TOKEN));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Scan failed";
     const status = message.startsWith("GitHub API") ? 502 : 400;
@@ -87,6 +88,17 @@ async function selfTest() {
 
     assert.equal(response.status, 400);
     assert.match(result.error, /github\.com/i);
+
+    const workerResponse = await worker.fetch(
+      new Request("https://reprocheck.test/api/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: "https://example.com/a/b" }),
+      }),
+      {},
+    );
+
+    assert.equal(workerResponse.status, 400);
     console.log("PASS  API self-test");
   } finally {
     await new Promise((resolve) => server.close(resolve));

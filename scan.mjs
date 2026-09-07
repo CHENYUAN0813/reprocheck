@@ -1,5 +1,8 @@
-import assert from "node:assert/strict";
-import { pathToFileURL } from "node:url";
+function expectEqual(actual, expected) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+}
 
 function parseRepo(input) {
   const url = new URL(input);
@@ -64,14 +67,14 @@ function printReport(report) {
   console.log(`Commit: ${report.commit}`);
 }
 
-async function github(path) {
+async function github(path, token) {
   const headers = {
     Accept: "application/vnd.github+json",
     "User-Agent": "reprocheck",
   };
 
-  if (process.env.GITHUB_TOKEN) {
-    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
   }
 
   const response = await fetch(`https://api.github.com${path}`, { headers });
@@ -83,16 +86,18 @@ async function github(path) {
   return response.json();
 }
 
-export async function scan(input) {
+export async function scan(input, token) {
   const { owner, repo } = parseRepo(input);
   const base = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
 
-  const repository = await github(base);
+  const repository = await github(base, token);
   const commit = await github(
     `${base}/commits/${encodeURIComponent(repository.default_branch)}`,
+    token,
   );
   const tree = await github(
     `${base}/git/trees/${encodeURIComponent(commit.commit.tree.sha)}?recursive=1`,
+    token,
   );
 
   if (!Array.isArray(tree.tree)) {
@@ -130,11 +135,17 @@ export async function scan(input) {
   const readmeFile = readme
     ? await github(
         `${base}/contents/${encodeURIComponent(readme)}?ref=${commit.sha}`,
+        token,
       )
     : null;
 
   const readmeText = readmeFile?.content
-    ? Buffer.from(readmeFile.content, "base64").toString("utf8")
+    ? new TextDecoder().decode(
+        Uint8Array.from(
+          atob(readmeFile.content.replace(/\s/g, "")),
+          (character) => character.charCodeAt(0),
+        ),
+      )
     : "";
   const installCommand = findInstallCommand(readmeText);
   const runCommand = findRunCommand(readmeText);
@@ -228,38 +239,38 @@ function main() {
   const args = process.argv.slice(2);
 
   if (args.includes("--self-test")) {
-    assert.deepEqual(parseRepo("https://github.com/a/b"), {
+    expectEqual(parseRepo("https://github.com/a/b"), {
       owner: "a",
       repo: "b",
     });
 
-    assert.deepEqual(
+    expectEqual(
       findInstallCommand("Setup\npip install -r requirements.txt"),
       { line: 2, text: "pip install -r requirements.txt" },
     );
 
-    assert.equal(
+    expectEqual(
       findInstallCommand("This project requires Python"),
       null,
     );
 
-    assert.deepEqual(
+    expectEqual(
       findRunCommand("Usage\r\n$ python train.py --epochs 10"),
       { line: 2, text: "$ python train.py --epochs 10" },
     );
-    assert.equal(findRunCommand("This project requires Python 3.10"), null);
+    expectEqual(findRunCommand("This project requires Python 3.10"), null);
 
-    assert.equal(isLicenseFile("LICENSE.md"), true);
-    assert.equal(isLicenseFile("README.md"), false);
+    expectEqual(isLicenseFile("LICENSE.md"), true);
+    expectEqual(isLicenseFile("README.md"), false);
 
-    assert.equal(isTestPath("tests"), true);
-    assert.equal(isTestPath("src/tests/test_model.py"), true);
-    assert.equal(isTestPath("src/test_model.py"), true);
-    assert.equal(isTestPath("src/train.py"), false);
+    expectEqual(isTestPath("tests"), true);
+    expectEqual(isTestPath("src/tests/test_model.py"), true);
+    expectEqual(isTestPath("src/test_model.py"), true);
+    expectEqual(isTestPath("src/train.py"), false);
 
-    assert.equal(statusFor(1, 0), "BLOCKED");
-    assert.equal(statusFor(0, 1), "NEEDS_WORK");
-    assert.equal(statusFor(0, 0), "READY_FOR_REVIEW");
+    expectEqual(statusFor(1, 0), "BLOCKED");
+    expectEqual(statusFor(0, 1), "NEEDS_WORK");
+    expectEqual(statusFor(0, 0), "READY_FOR_REVIEW");
 
     console.log("PASS  self-test");
     return;
@@ -271,7 +282,7 @@ function main() {
     console.error("用法：node scan.mjs https://github.com/owner/repo [--json]");
     process.exitCode = 1;
   } else {
-    scan(input)
+    scan(input, process.env.GITHUB_TOKEN)
       .then((report) => {
         if (args.includes("--json")) {
           console.log(JSON.stringify(report, null, 2));
@@ -286,6 +297,9 @@ function main() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  typeof process !== "undefined" &&
+  process.argv?.[1]?.replaceAll("\\", "/").endsWith("/scan.mjs")
+) {
   main();
 }

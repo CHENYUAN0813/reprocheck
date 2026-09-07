@@ -4,7 +4,8 @@
   "description": "",
   "scripts": {
     "dev": "node server.mjs",
-    "build": "vite build",
+    "prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "vite build --outDir dist/client && vite build --ssr worker.mjs --outDir dist/server",
     "preview": "vite preview",
     "test": "node scan.mjs --self-test && node server.mjs --self-test"
   },
@@ -16,6 +17,7 @@
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
+    "@openai/sites-vite-plugin": "^0.2.0",
     "vite": "^8.2.2"
   }
 }
