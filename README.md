@@ -18,6 +18,7 @@ ReproCheck checks public Python research repositories for reproducibility proble
 - Install command exists in README
 - Run command exists in README
 - License file exists
+- Test entry exists
 
 ## Current limitations
 

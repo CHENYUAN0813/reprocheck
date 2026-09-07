@@ -26,6 +26,10 @@ function isLicenseFile(name) {
   return /^(?:licen[cs]e|copying)(?:[.-]|$)/i.test(name);
 }
 
+function isTestEntry(name) {
+  return /^(?:tests?|pytest\.ini|tox\.ini|noxfile\.py|test_.+\.py|.+_test\.py)$/i.test(name);
+}
+
 function statusFor(failures, warnings) {
   if (failures > 0) return "BLOCKED";
   if (warnings > 0) return "NEEDS_WORK";
@@ -81,6 +85,7 @@ async function scan(input) {
     [".python-version", "runtime.txt"].includes(name),
   );
   const license = names.find(isLicenseFile);
+  const tests = names.find(isTestEntry);
 
   const readmeFile = readme
     ? await github(
@@ -118,14 +123,22 @@ async function scan(input) {
     ? `PASS  License found: ${license}`
     : "WARN  License not found");
 
+  console.log(tests
+    ? `PASS  Test entry found: ${tests}`
+    : "WARN  Test entry not found");
+
   console.log(pythonVersion
     ? `PASS  Python version found: ${pythonVersion}`
     : "WARN  Python version not clearly pinned");
 
   const failures = [readme, dependencies].filter((value) => !value).length;
-  const warnings = [installCommand, runCommand, pythonVersion, license].filter(
-    (value) => !value,
-  ).length;
+  const warnings = [
+    installCommand,
+    runCommand,
+    pythonVersion,
+    license,
+    tests,
+  ].filter((value) => !value).length;
 
   console.log(
     `Status: ${statusFor(failures, warnings)} (failures: ${failures}, warnings: ${warnings})`,
@@ -154,6 +167,10 @@ if (process.argv[2] === "--self-test") {
 
   assert.equal(isLicenseFile("LICENSE.md"), true);
   assert.equal(isLicenseFile("README.md"), false);
+
+  assert.equal(isTestEntry("tests"), true);
+  assert.equal(isTestEntry("test_model.py"), true);
+  assert.equal(isTestEntry("train.py"), false);
 
   assert.equal(statusFor(1, 0), "BLOCKED");
   assert.equal(statusFor(0, 1), "NEEDS_WORK");
