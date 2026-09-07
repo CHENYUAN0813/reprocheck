@@ -1,4 +1,4 @@
-import { StrictMode, useState } from "react";
+import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
@@ -70,14 +70,13 @@ const exampleReport = {
 };
 
 function App() {
-  const [url, setUrl] = useState("https://github.com/example-lab/vision-baseline");
+  const [url, setUrl] = useState("");
   const [report, setReport] = useState(exampleReport);
   const [isExample, setIsExample] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  async function submit(event) {
-    event.preventDefault();
+  const runScan = useCallback(async (targetUrl) => {
     setLoading(true);
     setError("");
 
@@ -85,7 +84,7 @@ function App() {
       const response = await fetch("/api/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url: targetUrl }),
       });
       const result = await response.json();
 
@@ -93,12 +92,62 @@ function App() {
 
       setReport(result);
       setIsExample(false);
+      return result;
     } catch (scanError) {
       setError(scanError.message || "Unable to scan this repository");
+      throw scanError;
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  function submit(event) {
+    event.preventDefault();
+    void runScan(url).catch(() => {});
   }
+
+  useEffect(() => {
+    const context = document.modelContext;
+
+    if (!context?.registerTool) return undefined;
+
+    const lifecycle = new AbortController();
+
+    void Promise.resolve(
+      context.registerTool(
+        {
+          name: "scan_repository",
+          title: "Scan repository",
+          description: "Scan a public GitHub research repository and show its reproducibility report.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              url: { type: "string", format: "uri" },
+            },
+            required: ["url"],
+            additionalProperties: false,
+          },
+          annotations: { readOnlyHint: true, untrustedContentHint: true },
+          async execute(input) {
+            if (typeof input?.url !== "string") {
+              throw new Error("A GitHub repository URL is required");
+            }
+
+            setUrl(input.url);
+            const result = await runScan(input.url);
+            return {
+              repository: result.repository,
+              status: result.status,
+              summary: result.summary,
+            };
+          },
+        },
+        { signal: lifecycle.signal },
+      ),
+    ).catch(() => {});
+
+    return () => lifecycle.abort();
+  }, [runScan]);
 
   return (
     <div className="shell">

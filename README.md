@@ -18,6 +18,8 @@ Each check includes evidence and a suggestion when action is needed.
 
 `npm run dev`
 
+Open `http://127.0.0.1:5173` and submit a public GitHub repository URL.
+
 ## Self-test
 
 `node scan.mjs --self-test`

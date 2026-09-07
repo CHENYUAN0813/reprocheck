@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { pathToFileURL } from "node:url";
 
 function parseRepo(input) {
   const url = new URL(input);
@@ -82,7 +83,7 @@ async function github(path) {
   return response.json();
 }
 
-async function scan(input) {
+export async function scan(input) {
   const { owner, repo } = parseRepo(input);
   const base = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
 
@@ -223,44 +224,47 @@ async function scan(input) {
   };
 }
 
-const args = process.argv.slice(2);
+function main() {
+  const args = process.argv.slice(2);
 
-if (args.includes("--self-test")) {
-  assert.deepEqual(parseRepo("https://github.com/a/b"), {
-    owner: "a",
-    repo: "b",
-  });
+  if (args.includes("--self-test")) {
+    assert.deepEqual(parseRepo("https://github.com/a/b"), {
+      owner: "a",
+      repo: "b",
+    });
 
-  assert.deepEqual(
-    findInstallCommand("Setup\npip install -r requirements.txt"),
-    { line: 2, text: "pip install -r requirements.txt" },
-  );
+    assert.deepEqual(
+      findInstallCommand("Setup\npip install -r requirements.txt"),
+      { line: 2, text: "pip install -r requirements.txt" },
+    );
 
-  assert.equal(
-    findInstallCommand("This project requires Python"),
-    null,
-  );
+    assert.equal(
+      findInstallCommand("This project requires Python"),
+      null,
+    );
 
-  assert.deepEqual(
-    findRunCommand("Usage\r\n$ python train.py --epochs 10"),
-    { line: 2, text: "$ python train.py --epochs 10" },
-  );
-  assert.equal(findRunCommand("This project requires Python 3.10"), null);
+    assert.deepEqual(
+      findRunCommand("Usage\r\n$ python train.py --epochs 10"),
+      { line: 2, text: "$ python train.py --epochs 10" },
+    );
+    assert.equal(findRunCommand("This project requires Python 3.10"), null);
 
-  assert.equal(isLicenseFile("LICENSE.md"), true);
-  assert.equal(isLicenseFile("README.md"), false);
+    assert.equal(isLicenseFile("LICENSE.md"), true);
+    assert.equal(isLicenseFile("README.md"), false);
 
-  assert.equal(isTestPath("tests"), true);
-  assert.equal(isTestPath("src/tests/test_model.py"), true);
-  assert.equal(isTestPath("src/test_model.py"), true);
-  assert.equal(isTestPath("src/train.py"), false);
+    assert.equal(isTestPath("tests"), true);
+    assert.equal(isTestPath("src/tests/test_model.py"), true);
+    assert.equal(isTestPath("src/test_model.py"), true);
+    assert.equal(isTestPath("src/train.py"), false);
 
-  assert.equal(statusFor(1, 0), "BLOCKED");
-  assert.equal(statusFor(0, 1), "NEEDS_WORK");
-  assert.equal(statusFor(0, 0), "READY_FOR_REVIEW");
+    assert.equal(statusFor(1, 0), "BLOCKED");
+    assert.equal(statusFor(0, 1), "NEEDS_WORK");
+    assert.equal(statusFor(0, 0), "READY_FOR_REVIEW");
 
-  console.log("PASS  self-test");
-} else {
+    console.log("PASS  self-test");
+    return;
+  }
+
   const input = args.find((arg) => !arg.startsWith("--"));
 
   if (!input) {
@@ -280,4 +284,8 @@ if (args.includes("--self-test")) {
         process.exitCode = 1;
       });
   }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
 }

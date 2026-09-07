@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
-    "dev": "vite",
+    "dev": "node server.mjs",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node scan.mjs --self-test"
+    "test": "node scan.mjs --self-test && node server.mjs --self-test"
   },
   "keywords": [],
   "author": "",
