@@ -6,6 +6,10 @@ ReproCheck checks public Python research repositories for reproducibility proble
 
 `node scan.mjs https://github.com/owner/repository`
 
+For structured JSON output:
+
+`node scan.mjs https://github.com/owner/repository --json`
+
 ## Self-test
 
 `node scan.mjs --self-test`

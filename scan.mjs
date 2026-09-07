@@ -36,6 +36,17 @@ function statusFor(failures, warnings) {
   return "READY_FOR_REVIEW";
 }
 
+function printReport(report) {
+  for (const check of report.checks) {
+    console.log(`${check.status.padEnd(6)}${check.message}`);
+  }
+
+  console.log(
+    `Status: ${report.status} (failures: ${report.summary.failures}, warnings: ${report.summary.warnings})`,
+  );
+  console.log(`Commit: ${report.commit}`);
+}
+
 async function github(path) {
   const headers = {
     Accept: "application/vnd.github+json",
@@ -99,54 +110,67 @@ async function scan(input) {
   const installCommand = hasInstallCommand(readmeText);
   const runCommand = hasRunCommand(readmeText);
 
-  console.log(readme
-    ? `PASS  README found: ${readme}`
-    : "FAIL  README not found");
+  const checks = [
+    {
+      id: "readme",
+      status: readme ? "PASS" : "FAIL",
+      message: readme ? `README found: ${readme}` : "README not found",
+    },
+    {
+      id: "install_command",
+      status: installCommand ? "PASS" : "WARN",
+      message: installCommand
+        ? "Install command found in README"
+        : "Install command not found in README",
+    },
+    {
+      id: "run_command",
+      status: runCommand ? "PASS" : "WARN",
+      message: runCommand
+        ? "Run command found in README"
+        : "Run command not found in README",
+    },
+    {
+      id: "dependencies",
+      status: dependencies ? "PASS" : "FAIL",
+      message: dependencies
+        ? `Dependencies found: ${dependencies}`
+        : "Dependencies not found",
+    },
+    {
+      id: "license",
+      status: license ? "PASS" : "WARN",
+      message: license ? `License found: ${license}` : "License not found",
+    },
+    {
+      id: "tests",
+      status: tests ? "PASS" : "WARN",
+      message: tests ? `Test entry found: ${tests}` : "Test entry not found",
+    },
+    {
+      id: "python_version",
+      status: pythonVersion ? "PASS" : "WARN",
+      message: pythonVersion
+        ? `Python version found: ${pythonVersion}`
+        : "Python version not clearly pinned",
+    },
+  ];
 
-  console.log(
-    installCommand
-      ? "PASS  Install command found in README"
-      : "WARN  Install command not found in README",
-  );
+  const failures = checks.filter((check) => check.status === "FAIL").length;
+  const warnings = checks.filter((check) => check.status === "WARN").length;
 
-  console.log(
-    runCommand
-      ? "PASS  Run command found in README"
-      : "WARN  Run command not found in README",
-  );
-
-  console.log(dependencies
-    ? `PASS  Dependencies found: ${dependencies}`
-    : "FAIL  Dependencies not found");
-
-  console.log(license
-    ? `PASS  License found: ${license}`
-    : "WARN  License not found");
-
-  console.log(tests
-    ? `PASS  Test entry found: ${tests}`
-    : "WARN  Test entry not found");
-
-  console.log(pythonVersion
-    ? `PASS  Python version found: ${pythonVersion}`
-    : "WARN  Python version not clearly pinned");
-
-  const failures = [readme, dependencies].filter((value) => !value).length;
-  const warnings = [
-    installCommand,
-    runCommand,
-    pythonVersion,
-    license,
-    tests,
-  ].filter((value) => !value).length;
-
-  console.log(
-    `Status: ${statusFor(failures, warnings)} (failures: ${failures}, warnings: ${warnings})`,
-  );
-  console.log(`Commit: ${commit.sha}`);
+  return {
+    repository: `${owner}/${repo}`,
+    commit: commit.sha,
+    status: statusFor(failures, warnings),
+    summary: { failures, warnings },
+    checks,
+  };
 }
 
-if (process.argv[2] === "--self-test") {
+const args = process.argv.slice(2);
+
+if (args.includes("--self-test")) {
   assert.deepEqual(parseRepo("https://github.com/a/b"), {
     owner: "a",
     repo: "b",
@@ -178,15 +202,23 @@ if (process.argv[2] === "--self-test") {
 
   console.log("PASS  self-test");
 } else {
-  const input = process.argv[2];
+  const input = args.find((arg) => !arg.startsWith("--"));
 
   if (!input) {
-    console.error("用法：node scan.mjs https://github.com/owner/repo");
+    console.error("用法：node scan.mjs https://github.com/owner/repo [--json]");
     process.exitCode = 1;
   } else {
-    scan(input).catch((error) => {
-      console.error(`ERROR ${error.message}`);
-      process.exitCode = 1;
-    });
+    scan(input)
+      .then((report) => {
+        if (args.includes("--json")) {
+          console.log(JSON.stringify(report, null, 2));
+        } else {
+          printReport(report);
+        }
+      })
+      .catch((error) => {
+        console.error(`ERROR ${error.message}`);
+        process.exitCode = 1;
+      });
   }
 }
