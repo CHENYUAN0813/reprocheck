@@ -2,6 +2,12 @@ import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
+const exampleParameters = [
+  { name: "--epochs", default: "20", file: "train.py", line: 24 },
+  { name: "--batch-size", default: "32", file: "train.py", line: 25 },
+  { name: "--seed", default: "42", file: "train.py", line: 26 },
+];
+
 const exampleReport = {
   repository: "example-lab/vision-baseline",
   commit: "8f30db1c4d73e6d807923a3d2f4c2af06c7a1b91",
@@ -108,8 +114,88 @@ const exampleReport = {
       evidence: { file: ".github/workflows/ci.yml" },
       suggestion: null,
     },
+    {
+      id: "command_references",
+      status: "PASS",
+      message: "All 3 command reference(s) exist",
+      evidence: { file: "requirements.txt" },
+      suggestion: null,
+    },
   ],
+  experimentParameters: exampleParameters,
+  reproductionPlan: {
+    status: "INCOMPLETE",
+    steps: [
+      {
+        id: "environment",
+        title: "Prepare Python environment",
+        status: "MISSING",
+        instruction: null,
+        evidence: null,
+      },
+      {
+        id: "install",
+        title: "Install dependencies",
+        status: "DOCUMENTED",
+        command: "pip install -r requirements.txt",
+        evidence: { file: "README.md", line: 42 },
+        references: [{ step: "install", path: "requirements.txt", exists: true }],
+      },
+      {
+        id: "model",
+        title: "Get model or checkpoint",
+        status: "DOCUMENTED",
+        instruction: "Download pretrained weights",
+        evidence: { file: "README.md", line: 91 },
+      },
+      {
+        id: "data",
+        title: "Get and prepare dataset",
+        status: "DOCUMENTED",
+        instruction: "Download and prepare the dataset",
+        evidence: { file: "README.md", line: 73 },
+      },
+      {
+        id: "run",
+        title: "Run the experiment",
+        status: "DOCUMENTED",
+        command: "python train.py --config configs/base.yaml",
+        evidence: { file: "README.md", line: 58 },
+        references: [
+          { step: "run", path: "train.py", exists: true },
+          { step: "run", path: "configs/base.yaml", exists: true },
+        ],
+        parameters: exampleParameters,
+      },
+    ],
+  },
 };
+
+function EvidenceLink({ report, evidence }) {
+  return (
+    <a
+      href={`https://github.com/${report.repository}/blob/${report.commit}/${evidence.file.split("/").map(encodeURIComponent).join("/")}${evidence.line ? `#L${evidence.line}` : ""}`}
+      target="_blank"
+      rel="noreferrer"
+    >
+      <code>
+        {evidence.file}
+        {evidence.line ? `:${evidence.line}` : ""}
+      </code>
+    </a>
+  );
+}
+
+function downloadJson(data, filename) {
+  const blobUrl = URL.createObjectURL(
+    new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }),
+  );
+  const link = document.createElement("a");
+  link.href = blobUrl;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(blobUrl);
+}
 
 function App() {
   const [url, setUrl] = useState("");
@@ -149,14 +235,22 @@ function App() {
   }
 
   function downloadReport() {
-    const blobUrl = URL.createObjectURL(
-      new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }),
+    downloadJson(
+      report,
+      `reprocheck-${report.repository.replace("/", "-")}-${report.commit.slice(0, 7)}.json`,
     );
-    const link = document.createElement("a");
-    link.href = blobUrl;
-    link.download = `reprocheck-${report.repository.replace("/", "-")}-${report.commit.slice(0, 7)}.json`;
-    link.click();
-    URL.revokeObjectURL(blobUrl);
+  }
+
+  function downloadPlan() {
+    downloadJson(
+      {
+        repository: report.repository,
+        commit: report.commit,
+        ...report.reproductionPlan,
+        experimentParameters: report.experimentParameters,
+      },
+      `reprocheck-plan-${report.repository.replace("/", "-")}-${report.commit.slice(0, 7)}.json`,
+    );
   }
 
   useEffect(() => {
@@ -286,16 +380,7 @@ function App() {
                     {check.evidence && (
                       <p className="evidence">
                         <span>Evidence</span>
-                        <a
-                          href={`https://github.com/${report.repository}/blob/${report.commit}/${check.evidence.file.split("/").map(encodeURIComponent).join("/")}${check.evidence.line ? `#L${check.evidence.line}` : ""}`}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          <code>
-                            {check.evidence.file}
-                            {check.evidence.line ? `:${check.evidence.line}` : ""}
-                          </code>
-                        </a>
+                        <EvidenceLink report={report} evidence={check.evidence} />
                       </p>
                     )}
                   </div>
@@ -307,6 +392,70 @@ function App() {
             ))}
           </div>
         </section>
+
+        {report.reproductionPlan && (
+          <section className="plan" aria-labelledby="plan-title">
+            <div className="plan-heading">
+              <div>
+                <p className="eyebrow">Reproduction plan</p>
+                <h2 id="plan-title">From repository to first run</h2>
+              </div>
+              <div className="plan-actions">
+                <span className={`status status-${report.reproductionPlan.status.toLowerCase()}`}>
+                  {report.reproductionPlan.status}
+                </span>
+                {!isExample && (
+                  <button className="download-button" type="button" onClick={downloadPlan}>
+                    Download plan
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <ol className="plan-steps">
+              {report.reproductionPlan.steps.map((step, index) => (
+                <li className={`plan-step plan-step-${step.status.toLowerCase()}`} key={step.id}>
+                  <span className="step-number">{index + 1}</span>
+                  <div>
+                    <div className="plan-step-heading">
+                      <h3>{step.title}</h3>
+                      <span>{step.status}</span>
+                    </div>
+                    {step.command && <code className="command">{step.command}</code>}
+                    {step.instruction && <p className="plan-instruction">{step.instruction}</p>}
+                    {step.status === "MISSING" && (
+                      <p className="plan-missing">The repository does not document this step.</p>
+                    )}
+                    {step.evidence?.file && (
+                      <p className="evidence">
+                        <span>Evidence</span>
+                        <EvidenceLink report={report} evidence={step.evidence} />
+                      </p>
+                    )}
+                    {step.references?.length > 0 && (
+                      <div className="plan-tags" aria-label="Validated command references">
+                        {step.references.map((reference) => (
+                          <code className={reference.exists ? "tag-valid" : "tag-missing"} key={reference.path}>
+                            {reference.exists ? "Found" : "Missing"} · {reference.path}
+                          </code>
+                        ))}
+                      </div>
+                    )}
+                    {step.parameters?.length > 0 && (
+                      <div className="plan-tags" aria-label="Experiment parameters">
+                        {step.parameters.map((parameter) => (
+                          <code key={parameter.name}>
+                            {parameter.name}{parameter.default === null ? "" : `=${parameter.default}`}
+                          </code>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
       </main>
     </div>
   );

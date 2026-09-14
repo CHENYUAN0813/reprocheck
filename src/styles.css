@@ -93,7 +93,8 @@ main {
 }
 
 .scan-panel,
-.report {
+.report,
+.plan {
   border: 1px solid #252d39;
   border-radius: 18px;
   background: rgba(13, 17, 24, 0.94);
@@ -237,7 +238,8 @@ button:disabled {
   background: #241d0c;
 }
 
-.status-ready_for_review {
+.status-ready_for_review,
+.status-ready {
   border-color: #2f8057;
   color: #77d9a5;
   background: #0d251a;
@@ -405,6 +407,115 @@ code {
   color: #d6bd7a;
 }
 
+.plan {
+  overflow: hidden;
+}
+
+.plan-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 28px 34px;
+  border-bottom: 1px solid #252d39;
+}
+
+.plan-heading .eyebrow {
+  margin-bottom: 5px;
+}
+
+.plan-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.plan-actions .download-button {
+  min-height: 38px;
+}
+
+.plan-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plan-step {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 16px;
+  padding: 22px 34px;
+  border-bottom: 1px solid #202733;
+}
+
+.plan-step:last-child {
+  border-bottom: 0;
+}
+
+.step-number {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid #384354;
+  border-radius: 50%;
+  color: #9bb9ff;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.plan-step-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.plan-step-heading span {
+  color: #74d49f;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.plan-step-missing .plan-step-heading span,
+.plan-missing,
+.tag-missing {
+  color: #edc45f;
+}
+
+.plan-instruction,
+.plan-missing {
+  margin-bottom: 9px;
+  color: #b8c1cf;
+}
+
+.plan-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.plan-tags code {
+  border: 1px solid #2d3745;
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: #aeb9c8;
+  background: #0a0f16;
+  font-size: 0.73rem;
+}
+
+.plan-tags .tag-valid {
+  border-color: #245c42;
+  color: #74d49f;
+}
+
+.plan-tags .tag-missing {
+  border-color: #7c6425;
+}
+
 @media (max-width: 800px) {
   .shell {
     width: min(100% - 24px, 680px);
@@ -424,6 +535,16 @@ code {
     align-items: stretch;
     flex-direction: column;
     padding: 24px;
+  }
+
+  .plan-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 24px;
+  }
+
+  .plan-step {
+    padding: 19px 24px;
   }
 
   .report-tools {
