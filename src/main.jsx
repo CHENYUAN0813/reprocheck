@@ -204,6 +204,12 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [selectedWorkflow, setSelectedWorkflow] = useState("quick");
+  const [preflight, setPreflight] = useState(null);
+  const [preflightLoading, setPreflightLoading] = useState(false);
+  const [preflightError, setPreflightError] = useState("");
+  const [runConfirmed, setRunConfirmed] = useState(false);
+  const [runJob, setRunJob] = useState(null);
+  const [runLoading, setRunLoading] = useState(false);
   const activeWorkflow = report.workflows?.find((workflow) => workflow.id === selectedWorkflow)
     ?? report.workflows?.[0]
     ?? null;
@@ -225,6 +231,10 @@ function App() {
 
       setReport(result);
       setIsExample(false);
+      setSelectedWorkflow("quick");
+      setPreflight(null);
+      setRunConfirmed(false);
+      setRunJob(null);
       return result;
     } catch (scanError) {
       setError(scanError.message || "Unable to scan this repository");
@@ -257,6 +267,87 @@ function App() {
       `reprocheck-plan-${report.repository.replace("/", "-")}-${report.commit.slice(0, 7)}.json`,
     );
   }
+
+  async function checkPreflight() {
+    setPreflightLoading(true);
+    setPreflightError("");
+    setRunConfirmed(false);
+    setRunJob(null);
+
+    try {
+      const response = await fetch("/api/preflight", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: `https://github.com/${report.repository}`,
+          commit: report.commit,
+          workflowId: activeWorkflow.id,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Runner check failed");
+      setPreflight(result);
+    } catch (runnerError) {
+      setPreflightError(runnerError.message || "Unable to check the runner");
+    } finally {
+      setPreflightLoading(false);
+    }
+  }
+
+  async function startExecution() {
+    setRunLoading(true);
+    setPreflightError("");
+
+    try {
+      const response = await fetch("/api/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: `https://github.com/${report.repository}`,
+          commit: report.commit,
+          workflowId: activeWorkflow.id,
+          confirmUnknownCode: true,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to start the run");
+      setRunJob(result);
+    } catch (runError) {
+      setPreflightError(runError.message || "Unable to start the run");
+    } finally {
+      setRunLoading(false);
+    }
+  }
+
+  async function cancelExecution() {
+    const response = await fetch(`/api/runs/${runJob.id}`, { method: "DELETE" });
+    const result = await response.json();
+    if (response.ok) setRunJob(result);
+  }
+
+  useEffect(() => {
+    if (runJob?.status !== "RUNNING") return undefined;
+
+    const timer = setInterval(async () => {
+      try {
+        const response = await fetch(`/api/runs/${runJob.id}`);
+        const result = await response.json();
+        if (response.ok) {
+          setRunJob(result);
+        } else if (response.status === 404) {
+          setRunJob((current) => ({
+            ...current,
+            status: "LOST",
+            diagnosis: "The local server restarted and lost this run record; the container still has its own timeout.",
+          }));
+        }
+      } catch {
+        // Keep the current log visible while a transient poll fails.
+      }
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [runJob?.id, runJob?.status]);
 
   useEffect(() => {
     const context = document.modelContext;
@@ -416,7 +507,12 @@ function App() {
                         type="button"
                         role="tab"
                         aria-selected={workflow.id === activeWorkflow?.id}
-                        onClick={() => setSelectedWorkflow(workflow.id)}
+                        onClick={() => {
+                          setSelectedWorkflow(workflow.id);
+                          setPreflight(null);
+                          setRunConfirmed(false);
+                          setRunJob(null);
+                        }}
                         key={workflow.id}
                       >
                         {workflow.title}
@@ -482,6 +578,87 @@ function App() {
                 <li className="workflow-empty">No matching entry point was found in the README.</li>
               )}
             </ol>
+          </section>
+        )}
+
+        {!isExample && activeWorkflow && (
+          <section className="runner" aria-labelledby="runner-title">
+            <div className="runner-heading">
+              <div>
+                <p className="eyebrow">Isolated execution preview</p>
+                <h2 id="runner-title">Check before running unknown code</h2>
+                <p>Re-scan the pinned commit and inspect the local Docker runner.</p>
+              </div>
+              <button type="button" onClick={checkPreflight} disabled={preflightLoading}>
+                {preflightLoading ? "Checking…" : "Check local runner"}
+              </button>
+            </div>
+
+            {preflightError && <p className="runner-error" role="alert">{preflightError}</p>}
+            {preflight && (
+              <div className="runner-result" aria-live="polite">
+                <div className={`runner-state ${preflight.runtime.available ? "runner-ready" : "runner-unavailable"}`}>
+                  <strong>{preflight.runtime.available ? "Docker ready" : preflight.runtime.reason}</strong>
+                  <span>{preflight.limits.cpus} CPUs · {preflight.limits.memory} · {preflight.limits.timeoutMinutes} minute limit · no host mounts</span>
+                </div>
+                <h3>Automated steps</h3>
+                <ol>
+                  {preflight.automatedSteps.map((step) => (
+                    <li key={step.id}><span>{step.title}</span><code className="command">{step.command}</code></li>
+                  ))}
+                </ol>
+                {preflight.manualSteps.length > 0 && (
+                  <>
+                    <h3>Manual preparation</h3>
+                    <ul>
+                      {preflight.manualSteps.map((step) => (
+                        <li key={step.id}><span>{step.title}</span><code className="command">{step.instruction}</code></li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+                <label className="runner-confirm">
+                  <input
+                    type="checkbox"
+                    checked={runConfirmed}
+                    onChange={(event) => setRunConfirmed(event.target.checked)}
+                  />
+                  I understand this runs untrusted code with network access inside a temporary Docker container.
+                </label>
+                <button
+                  type="button"
+                  onClick={startExecution}
+                  disabled={!preflight.runnable || !runConfirmed || runLoading || runJob?.status === "RUNNING"}
+                >
+                  {runLoading ? "Starting…" : "Run Quick verification"}
+                </button>
+                {!preflight.runnable && (
+                  <p className="runner-note">Start Docker Desktop, then check the local runner again.</p>
+                )}
+              </div>
+            )}
+            {runJob && (
+              <div className="run-log" aria-live="polite">
+                <div>
+                  <strong>Run {runJob.status.replaceAll("_", " ")}</strong>
+                  {runJob.status === "RUNNING" && (
+                    <button className="download-button" type="button" onClick={cancelExecution}>Cancel</button>
+                  )}
+                </div>
+                <ol className="run-progress">
+                  {runJob.steps.map((step) => (
+                    <li className={`run-step-${step.status.toLowerCase()}`} key={step.id}>
+                      <span>{step.status}</span>{step.title}
+                    </li>
+                  ))}
+                </ol>
+                {runJob.failureStep && (
+                  <p className="runner-error">Stopped at: {runJob.failureStep.title}</p>
+                )}
+                {runJob.diagnosis && <p className="run-diagnosis">{runJob.diagnosis}</p>}
+                <pre>{runJob.log || "Starting isolated container…"}</pre>
+              </div>
+            )}
           </section>
         )}
       </main>
