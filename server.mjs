@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createViteServer } from "vite";
+import {
+  buildDockerInvocation,
+  buildPreflight,
+  cancelRun,
+  diagnoseRun,
+  getRun,
+  inspectRuntime,
+  startRun,
+  summarizeSteps,
+} from "./runner.mjs";
 import { scan } from "./scan.mjs";
 import worker from "./worker.mjs";
 
@@ -30,8 +40,25 @@ async function readJson(request) {
 
 async function handleApi(request, response) {
   const url = new URL(request.url || "/", "http://localhost");
+  const runId = url.pathname.match(/^\/api\/runs\/([\w-]+)$/)?.[1];
 
-  if (url.pathname !== "/api/scan") return false;
+  if (runId) {
+    if (request.method === "GET") {
+      const job = getRun(runId);
+      sendJson(response, job ? 200 : 404, job ?? { error: "Run not found" });
+      return true;
+    }
+    if (request.method === "DELETE") {
+      const job = cancelRun(runId);
+      sendJson(response, job ? 200 : 404, job ?? { error: "Running job not found" });
+      return true;
+    }
+    response.setHeader("Allow", "GET, DELETE");
+    sendJson(response, 405, { error: "Method not allowed" });
+    return true;
+  }
+
+  if (!["/api/scan", "/api/preflight", "/api/run"].includes(url.pathname)) return false;
 
   if (request.method !== "POST") {
     response.setHeader("Allow", "POST");
@@ -46,7 +73,32 @@ async function handleApi(request, response) {
       throw new Error("A GitHub repository URL is required");
     }
 
-    sendJson(response, 200, await scan(input.url, process.env.GITHUB_TOKEN));
+    const report = await scan(input.url, process.env.GITHUB_TOKEN);
+    if (url.pathname === "/api/scan") {
+      sendJson(response, 200, report);
+      return true;
+    }
+    if (!/^[a-f\d]{40}$/i.test(input.commit ?? "")) {
+      throw new Error("The scanned commit is required before execution");
+    }
+    if (input.commit !== report.commit) {
+      sendJson(response, 409, { error: "The repository changed after scanning; scan it again before execution" });
+      return true;
+    }
+
+    const preflight = buildPreflight(report, input.workflowId, await inspectRuntime());
+    if (url.pathname === "/api/preflight") {
+      sendJson(response, 200, preflight);
+      return true;
+    }
+    if (input.confirmUnknownCode !== true) {
+      throw new Error("Explicit confirmation is required before running unknown code");
+    }
+    if (!preflight.runnable) {
+      sendJson(response, 409, { error: preflight.runtime.reason ?? "The workflow is not ready", preflight });
+      return true;
+    }
+    sendJson(response, 202, startRun(preflight));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Scan failed";
     const status = message.startsWith("GitHub API") ? 502 : 400;
@@ -99,6 +151,51 @@ async function selfTest() {
     );
 
     assert.equal(workerResponse.status, 400);
+
+    const preflight = buildPreflight(
+      {
+        repository: "owner/repo",
+        commit: "a".repeat(40),
+        workflows: [{
+          id: "quick",
+          title: "Quick verification",
+          status: "READY",
+          steps: [{ id: "run", title: "Run", status: "DOCUMENTED", command: "cd repo && python test.py" }],
+        }],
+      },
+      "quick",
+      { available: true, engine: "Docker", version: "1" },
+    );
+    assert.equal(preflight.runnable, true);
+    assert.deepEqual(preflight.automatedSteps.map((step) => step.command), ["cd repo && python test.py"]);
+    const dockerArgs = buildDockerInvocation(preflight, "reprocheck-test");
+    assert.equal(dockerArgs.includes("--cap-drop"), true);
+    assert.equal(dockerArgs.includes("-v"), false);
+    assert.equal(dockerArgs.includes("10m"), true);
+    assert.match(dockerArgs.at(-1), /git -C \/workspace fetch.*a{40}/);
+    assert.match(dockerArgs.at(-1), /python test\.py/);
+    assert.doesNotMatch(dockerArgs.at(-1), /cd repo/);
+    assert.deepEqual(
+      summarizeSteps(
+        [{ id: "install", title: "Install" }, { id: "run", title: "Run" }],
+        "::reprocheck-step::install\nok\n::reprocheck-step::run\nfailed\n",
+        "FAILED",
+      ).steps.map((step) => step.status),
+      ["PASSED", "FAILED"],
+    );
+    assert.match(
+      diagnoseRun("FAILED", "No module named pytest", { title: "Run" }, 10),
+      /pytest.*dependencies/,
+    );
+    assert.match(
+      diagnoseRun("TIMED_OUT", "", { title: "Install" }, 10),
+      /Install exceeded 10 minutes/,
+    );
+
+    const missingRun = await fetch(`http://127.0.0.1:${port}/api/runs/missing`);
+    assert.equal(missingRun.status, 404);
+    const hostedRun = await worker.fetch(new Request("https://reprocheck.test/api/run"), {});
+    assert.equal(hostedRun.status, 501);
     console.log("PASS  API self-test");
   } finally {
     await new Promise((resolve) => server.close(resolve));
