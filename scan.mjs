@@ -34,11 +34,71 @@ function findInstallCommand(text) {
   );
 }
 
+function classifyRunCommand(command, section = "") {
+  const direct = command.toLowerCase();
+  const context = section.toLowerCase();
+  const script = direct.match(/(?:^|\s)([\w./-]+\.py)\b/)?.[1]?.split("/").at(-1) ?? "";
+  const scriptCategories = [
+    ["preprocess", /preprocess|prepare|tokeniz|dataset|data/],
+    ["evaluation", /^(?:eval|evaluate|benchmark|test)/],
+    ["training", /train|finetun|pretrain|sft|dpo|grpo|ppo|lora/],
+    ["inference", /infer|predict|generate|chat|conversation/],
+    ["demo", /demo|web|server|serve|gradio|streamlit/],
+  ];
+  const categories = [
+    ["preprocess", /preprocess|prepare|tokeniz|dataset|\bdata\b|预处理|数据|分词/],
+    ["evaluation", /eval|evaluate|benchmark|\btest\b|评估|测评|测试/],
+    ["inference", /infer|predict|generate|chat|conversation|推理|对话|聊天|生成/],
+    ["demo", /demo|web|server|serve|gradio|streamlit|演示|部署|服务/],
+    ["training", /train|finetun|fine[-_ ]?tun|sft|dpo|grpo|ppo|lora|训练|微调/],
+  ];
+
+  return scriptCategories.find(([, pattern]) => pattern.test(script))?.[0]
+    ?? categories.find(([, pattern]) => pattern.test(context))?.[0]
+    ?? categories.find(([, pattern]) => pattern.test(direct))?.[0]
+    ?? "other";
+}
+
+function findRunCommands(text) {
+  const lines = text.split(/\r?\n/);
+  const commands = [];
+  const seen = new Set();
+  let section = null;
+  let inCodeFence = false;
+
+  // ponytail: classify README commands by names and nearby headings; add a Markdown parser when measured accuracy needs nested context.
+  for (let index = 0; index < lines.length; index += 1) {
+    if (/^\s*(?:```|~~~)/.test(lines[index])) {
+      inCodeFence = !inCodeFence;
+      continue;
+    }
+
+    const heading = !inCodeFence
+      ? lines[index].match(/^\s*#{1,6}\s+(.+?)\s*$/)?.[1]
+      : null;
+    if (heading) section = heading;
+
+    const text = lines[index].trim();
+    const runnable = /^(?:[-*]\s+)?(?:[$>]\s*)?(?:(?:cd|pushd)\s+\S+\s*&&\s*)?(?:python3?(?:\s+-m\s+\S+|\s+\S+\.py\b)|torchrun\s+.*?\.py\b|accelerate\s+launch\s+.*?\.py\b)/i.test(text);
+    const placeholder = /(?:^|[/_.-])xxx(?:[/_.-]|$)|<[^>]+>|\{[^}]+\}/i.test(text);
+    if (!runnable || placeholder || seen.has(text)) continue;
+
+    commands.push({
+      line: index + 1,
+      text,
+      section,
+      category: classifyRunCommand(text, section ?? ""),
+    });
+    seen.add(text);
+    if (commands.length === 60) break;
+  }
+
+  return commands;
+}
+
 function findRunCommand(text) {
-  return findMatchingLine(
-    text,
-    /^\s*(?:[$>]\s*)?(?:python3?(?:\s+-m\s+\S+|\s+\S+\.py\b)|torchrun\s+\S+|accelerate\s+launch\s+\S+)/i,
-  );
+  const command = findRunCommands(text)[0];
+  return command ? { line: command.line, text: command.text } : null;
 }
 
 function findActionableInstruction(text, subjectPattern) {
@@ -256,13 +316,25 @@ function extractCommandReferences(command) {
 }
 
 function validateCommandReferences(commands, filePaths) {
-  return commands.flatMap(({ id, command }) =>
-    extractCommandReferences(command).map((path) => ({
-      step: id,
-      path,
-      exists: filePaths.includes(path),
-    })),
-  );
+  return commands.flatMap(({ id, command, section }) => {
+    const directory = command?.match(/\b(?:cd|pushd)\s+([^\s&]+)\s*&&/i)?.[1]
+      ?.replace(/^\.\//, "")
+      .replace(/\/$/, "");
+    const externalContext = /https?:\/\/github\.com\//i.test(section ?? "");
+
+    return extractCommandReferences(command).map((path) => {
+      const directCandidates = [path, directory ? `${directory}/${path}` : null];
+      const suffixMatches = filePaths.filter((candidate) => candidate.endsWith(`/${path}`));
+      const resolved = directCandidates.find((candidate) => candidate && filePaths.includes(candidate))
+        ?? (suffixMatches.length === 1 ? suffixMatches[0] : null);
+      return {
+        step: id,
+        path: resolved ?? path,
+        exists: resolved ? true : externalContext ? null : false,
+        ...(externalContext && !resolved ? { external: true } : {}),
+      };
+    });
+  });
 }
 
 function buildReproductionPlan({
@@ -316,7 +388,7 @@ function buildReproductionPlan({
       parameters,
     },
   ];
-  const missingReferences = references.filter((reference) => !reference.exists);
+  const missingReferences = references.filter((reference) => reference.exists === false);
   const gaps = [
     ...steps
       .filter((step) => step.status === "MISSING")
@@ -340,6 +412,74 @@ function buildReproductionPlan({
   };
 }
 
+function buildWorkflows(reproductionPlan, entrypoints) {
+  const entrypointStep = (entrypoint) => ({
+    id: entrypoint.id,
+    title: `${entrypoint.category[0].toUpperCase()}${entrypoint.category.slice(1)} entry point`,
+    status: entrypoint.references.some((reference) => reference.exists === false)
+      ? "BLOCKED"
+      : "DOCUMENTED",
+    command: entrypoint.command,
+    evidence: entrypoint.evidence,
+    references: entrypoint.references,
+    parameters: entrypoint.parameters,
+  });
+  const create = (id, title, prerequisiteIds, selected) => {
+    if (!selected.length) {
+      return { id, title, status: "UNAVAILABLE", steps: [] };
+    }
+
+    const steps = [
+      ...reproductionPlan.steps.filter((step) => prerequisiteIds.includes(step.id)),
+      ...selected.map(entrypointStep),
+    ];
+    return {
+      id,
+      title,
+      status: steps.some((step) => step.status === "BLOCKED")
+        ? "BLOCKED"
+        : steps.some((step) => step.status === "MISSING")
+          ? "INCOMPLETE"
+          : "READY",
+      steps,
+    };
+  };
+  const quick = [
+    entrypoints.find((entrypoint) => entrypoint.category === "inference")
+      ?? entrypoints.find((entrypoint) => entrypoint.category === "demo")
+      ?? entrypoints.find((entrypoint) => entrypoint.category === "evaluation")
+      ?? entrypoints.find((entrypoint) => entrypoint.category === "other")
+      ?? entrypoints[0],
+  ].filter(Boolean);
+  const trainingCandidates = entrypoints.filter((entrypoint) => entrypoint.category === "training");
+  const simplest = (candidates) => [...candidates].sort((left, right) => {
+    const score = (entrypoint) =>
+      (/from_resume|resume/i.test(entrypoint.command) ? 100 : 0)
+      + (/\b(?:torchrun|accelerate\s+launch)\b/i.test(entrypoint.command) ? 50 : 0)
+      + (entrypoint.references.some((reference) =>
+        reference.exists
+        && reference.path.includes("/")
+        && !entrypoint.command.includes(reference.path)
+        && !/\b(?:cd|pushd)\s+\S+\s*&&/i.test(entrypoint.command)
+      ) ? 20 : 0)
+      + entrypoint.command.length / 1000;
+    return score(left) - score(right);
+  })[0];
+  const training = [
+    entrypoints.find((entrypoint) => entrypoint.category === "preprocess"),
+    simplest(trainingCandidates.filter((entrypoint) => /pretrain/i.test(entrypoint.command))),
+    simplest(trainingCandidates.filter((entrypoint) => /full[_-]?sft|\bsft\b/i.test(entrypoint.command))),
+  ].filter(Boolean);
+  if (!training.length) training.push(simplest(trainingCandidates));
+  const evaluation = [entrypoints.find((entrypoint) => entrypoint.category === "evaluation")].filter(Boolean);
+
+  return [
+    create("quick", "Quick verification", ["environment", "install", "model"], quick),
+    create("training", "Training", ["environment", "install", "data", "model"], training),
+    create("evaluation", "Evaluation", ["environment", "install", "data", "model"], evaluation),
+  ];
+}
+
 function statusFor(failures, warnings) {
   if (failures > 0) return "BLOCKED";
   if (warnings > 0) return "NEEDS_WORK";
@@ -356,6 +496,8 @@ function standalonePlan(report) {
     commit: report.commit,
     ...report.reproductionPlan,
     experimentParameters: report.experimentParameters,
+    entrypoints: report.entrypoints,
+    workflows: report.workflows,
   };
 }
 
@@ -467,7 +609,17 @@ export async function scan(input, token) {
     readRepositoryFile(base, pythonVersion, commit.sha, token),
   ]);
   const installCommand = findInstallCommand(readmeText);
-  const runCommand = findRunCommand(readmeText);
+  const runCommands = findRunCommands(readmeText);
+  const runCommand = runCommands[0]
+    ? { line: runCommands[0].line, text: runCommands[0].text }
+    : null;
+  const entrypointSeeds = runCommands.map((command, index) => ({
+    id: `${command.category}-${index + 1}`,
+    category: command.category,
+    command: command.text,
+    section: command.section,
+    evidence: { file: readme, line: command.line },
+  }));
   const dataInstructions = findDataInstructions(readmeText);
   const modelInstructions = findModelInstructions(readmeText);
   const dependencyVersions = dependencies
@@ -479,10 +631,18 @@ export async function scan(input, token) {
   const commandReferences = validateCommandReferences(
     [
       { id: "install", command: installCommand?.text },
-      { id: "run", command: runCommand?.text },
+      ...entrypointSeeds.map((entrypoint) => ({
+        id: entrypoint.id,
+        command: entrypoint.command,
+        section: entrypoint.section,
+      })),
     ],
     filePaths,
   );
+  const entrypointsWithReferences = entrypointSeeds.map((entrypoint) => ({
+    ...entrypoint,
+    references: commandReferences.filter((reference) => reference.step === entrypoint.id),
+  }));
   // ponytail: inspect five likely source files; widen only when API usage and accuracy are measured.
   const codeCandidates = [
     ...new Set([
@@ -504,7 +664,15 @@ export async function scan(input, token) {
   const seedConfiguration = findSeedConfiguration(codeFiles);
   const experimentConfiguration = findExperimentConfiguration(filePaths, codeFiles);
   const experimentParameters = extractExperimentParameters(codeFiles);
-  const missingCommandReferences = commandReferences.filter((reference) => !reference.exists);
+  const entrypoints = entrypointsWithReferences.map((entrypoint) => ({
+    ...entrypoint,
+    parameters: experimentParameters.filter((parameter) =>
+      entrypoint.references.some((reference) => reference.path === parameter.file),
+    ),
+  }));
+  const missingCommandReferences = commandReferences.filter((reference) => reference.exists === false);
+  const externalCommandReferences = commandReferences.filter((reference) => reference.external);
+  const localCommandReferences = commandReferences.filter((reference) => !reference.external);
   const reproductionPlan = buildReproductionPlan({
     readme,
     installCommand,
@@ -513,9 +681,15 @@ export async function scan(input, token) {
     modelInstructions,
     pythonVersion,
     pythonVersionResult,
-    references: commandReferences,
-    parameters: experimentParameters,
+    references: [
+      ...commandReferences.filter((reference) => reference.step === "install"),
+      ...commandReferences
+        .filter((reference) => reference.step === entrypoints[0]?.id)
+        .map((reference) => ({ ...reference, step: "run" })),
+    ],
+    parameters: entrypoints[0]?.parameters ?? [],
   });
+  const workflows = buildWorkflows(reproductionPlan, entrypoints);
 
   const checks = [
     {
@@ -542,10 +716,10 @@ export async function scan(input, token) {
     },
     {
       id: "run_command",
-      status: runCommand ? "PASS" : "WARN",
-      message: runCommand
-        ? "Run command found in README"
-        : "Run command not found in README",
+      status: runCommands.length ? "PASS" : "WARN",
+      message: runCommands.length
+        ? `${runCommands.length} runnable command(s) found and categorized`
+        : "Runnable command not found in README",
       evidence: runCommand ? { file: readme, ...runCommand } : null,
       suggestion: runCommand
         ? null
@@ -690,18 +864,22 @@ export async function scan(input, token) {
       id: "command_references",
       status: missingCommandReferences.length
         ? "FAIL"
-        : commandReferences.length
+        : localCommandReferences.length
           ? "PASS"
           : "WARN",
       message: missingCommandReferences.length
         ? `${missingCommandReferences.length} command reference(s) do not exist in the repository`
-        : commandReferences.length
-          ? `All ${commandReferences.length} command reference(s) exist`
-          : "No local command references could be validated",
-      evidence: commandReferences[0] ? { file: commandReferences[0].path } : null,
+        : localCommandReferences.length
+          ? `All ${localCommandReferences.length} local command reference(s) exist${externalCommandReferences.length ? `; ${externalCommandReferences.length} external reference(s) identified` : ""}`
+          : externalCommandReferences.length
+            ? `${externalCommandReferences.length} external command reference(s) identified`
+            : "No local command references could be validated",
+      evidence: localCommandReferences.find((reference) => reference.exists)
+        ? { file: localCommandReferences.find((reference) => reference.exists).path }
+        : null,
       suggestion: missingCommandReferences.length
         ? `Fix missing paths: ${missingCommandReferences.map((reference) => reference.path).join(", ")}`
-        : commandReferences.length
+        : localCommandReferences.length || externalCommandReferences.length
           ? null
           : "Document commands that reference repository scripts or configuration files",
     },
@@ -718,6 +896,8 @@ export async function scan(input, token) {
     summary: { failures, warnings },
     checks,
     experimentParameters,
+    entrypoints,
+    workflows,
     reproductionPlan,
   };
 }
@@ -746,6 +926,25 @@ function main() {
       { line: 2, text: "$ python train.py --epochs 10" },
     );
     expectEqual(findRunCommand("This project requires Python 3.10"), null);
+    expectEqual(
+      findRunCommands("## Training\npython train.py --epochs 10\n## Evaluation\npython eval.py"),
+      [
+        {
+          line: 2,
+          text: "python train.py --epochs 10",
+          section: "Training",
+          category: "training",
+        },
+        {
+          line: 4,
+          text: "python eval.py",
+          section: "Evaluation",
+          category: "evaluation",
+        },
+      ],
+    );
+    expectEqual(classifyRunCommand("python eval_toolcall.py --weight full_sft", "Tool Calling"), "evaluation");
+    expectEqual(findRunCommands("torchrun --nproc_per_node N train_xxx.py"), []);
     expectEqual(findDataInstructions("## Download dataset\nDownload dataset from [files](https://example.com/data)"), {
       line: 2,
       text: "Download dataset from [files](https://example.com/data)",
@@ -835,6 +1034,35 @@ function main() {
         { step: "run", path: "missing.yaml", exists: false },
       ],
     );
+    expectEqual(
+      validateCommandReferences(
+        [{ id: "training-1", command: "cd scripts && python train.py" }],
+        ["scripts/train.py"],
+      ),
+      [{ step: "training-1", path: "scripts/train.py", exists: true }],
+    );
+    expectEqual(
+      validateCommandReferences(
+        [{ id: "training-1", command: "python train.py" }],
+        ["trainer/train.py"],
+      ),
+      [{ step: "training-1", path: "trainer/train.py", exists: true }],
+    );
+    expectEqual(
+      findRunCommands("# [External](https://github.com/example/tool)\n```bash\n# Run inside the tool directory\npython convert.py model\n```")[0].section,
+      "[External](https://github.com/example/tool)",
+    );
+    expectEqual(
+      validateCommandReferences(
+        [{
+          id: "inference-1",
+          command: "python convert.py model",
+          section: "[External](https://github.com/example/tool)",
+        }],
+        [],
+      ),
+      [{ step: "inference-1", path: "convert.py", exists: null, external: true }],
+    );
     const incompletePlan = buildReproductionPlan({
       readme: "README.md",
       installCommand: { line: 1, text: "pip install -r requirements.txt" },
@@ -860,6 +1088,65 @@ function main() {
         message: "missing.py does not exist in the repository",
       },
     ]);
+    const workflows = buildWorkflows(
+      {
+        steps: [
+          { id: "environment", status: "DOCUMENTED" },
+          { id: "install", status: "DOCUMENTED" },
+          { id: "model", status: "DOCUMENTED" },
+          { id: "data", status: "DOCUMENTED" },
+        ],
+      },
+      [
+        {
+          id: "training-1",
+          category: "training",
+          command: "python train.py",
+          evidence: { file: "README.md", line: 1 },
+          references: [{ path: "train.py", exists: true }],
+          parameters: [{ name: "--epochs", default: "3" }],
+        },
+        {
+          id: "evaluation-2",
+          category: "evaluation",
+          command: "python eval.py",
+          evidence: { file: "README.md", line: 2 },
+          references: [{ path: "eval.py", exists: true }],
+          parameters: [],
+        },
+      ],
+    );
+    expectEqual(
+      workflows.map((workflow) => ({
+        id: workflow.id,
+        status: workflow.status,
+        command: workflow.steps.at(-1)?.command ?? null,
+        parameterCount: workflow.steps.at(-1)?.parameters?.length ?? 0,
+      })),
+      [
+        { id: "quick", status: "READY", command: "python eval.py", parameterCount: 0 },
+        { id: "training", status: "READY", command: "python train.py", parameterCount: 1 },
+        { id: "evaluation", status: "READY", command: "python eval.py", parameterCount: 0 },
+      ],
+    );
+    const preferredWorkflows = buildWorkflows(
+      { steps: [] },
+      [
+        { id: "resume", category: "training", command: "python train_pretrain.py --from_resume 1", references: [], parameters: [] },
+        { id: "pretrain", category: "training", command: "cd trainer && python train_pretrain.py", references: [], parameters: [] },
+        { id: "sft", category: "training", command: "cd trainer && python train_full_sft.py", references: [], parameters: [] },
+        { id: "eval-1", category: "evaluation", command: "python eval.py model", references: [], parameters: [] },
+        { id: "eval-2", category: "evaluation", command: "python eval.py other", references: [], parameters: [] },
+      ],
+    );
+    expectEqual(
+      preferredWorkflows.find((workflow) => workflow.id === "training").steps.map((step) => step.id),
+      ["pretrain", "sft"],
+    );
+    expectEqual(
+      preferredWorkflows.find((workflow) => workflow.id === "evaluation").steps.map((step) => step.id),
+      ["eval-1"],
+    );
 
     expectEqual(statusFor(1, 0), "BLOCKED");
     expectEqual(statusFor(0, 1), "NEEDS_WORK");
@@ -873,6 +1160,8 @@ function main() {
         commit: "abc",
         reproductionPlan: { status: "READY", steps: [] },
         experimentParameters: [],
+        entrypoints: [],
+        workflows: [],
       }),
       {
         repository: "a/b",
@@ -880,6 +1169,8 @@ function main() {
         status: "READY",
         steps: [],
         experimentParameters: [],
+        entrypoints: [],
+        workflows: [],
       },
     );
 
