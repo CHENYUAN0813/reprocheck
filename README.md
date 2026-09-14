@@ -30,6 +30,12 @@ Discovered entry points are also grouped into quick verification, training, and 
 
 Open `http://127.0.0.1:5173`, submit a public GitHub repository URL, and download either the full report or the standalone reproduction plan.
 
+## Local isolated execution
+
+Start Docker Desktop, scan a repository, choose **Quick verification**, and select **Check local runner**. ReproCheck re-scans the pinned commit before allowing execution and shows every command for review.
+
+After explicit confirmation, commands run in a temporary `python:3.11` container with 2 CPUs, 2 GB of memory, a 10-minute timeout, a 256-process limit, no host filesystem mounts, and no host credentials. Network access remains enabled because public source code, dependencies, and model files may need to be downloaded. Runs can be monitored and cancelled from the page, with per-step status and the exact failure stage.
+
 ## Self-test
 
 `node scan.mjs --self-test`
@@ -58,4 +64,6 @@ GitHub Actions runs the self-tests and production build on every push and pull r
 
 - Public GitHub repositories only
 - README, the primary dependency file, and up to five likely training/configuration files are analyzed; other files are checked by path
-- Does not execute repository code
+- Only the Quick verification workflow can run, and only through the local Docker-backed server
+- Hosted Sites deployments provide static scanning but not Docker execution
+- Run records are stored in memory and are lost when the local server restarts; the container-enforced timeout still applies

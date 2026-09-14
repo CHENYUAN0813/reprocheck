@@ -470,11 +470,17 @@ function buildWorkflows(reproductionPlan, entrypoints) {
     simplest(trainingCandidates.filter((entrypoint) => /pretrain/i.test(entrypoint.command))),
     simplest(trainingCandidates.filter((entrypoint) => /full[_-]?sft|\bsft\b/i.test(entrypoint.command))),
   ].filter(Boolean);
-  if (!training.length) training.push(simplest(trainingCandidates));
+  const fallbackTraining = simplest(trainingCandidates);
+  if (!training.length && fallbackTraining) training.push(fallbackTraining);
   const evaluation = [entrypoints.find((entrypoint) => entrypoint.category === "evaluation")].filter(Boolean);
+  const quickPrerequisites = [
+    "environment",
+    "install",
+    ...(reproductionPlan.steps.some((step) => step.id === "model" && step.status === "DOCUMENTED") ? ["model"] : []),
+  ];
 
   return [
-    create("quick", "Quick verification", ["environment", "install", "model"], quick),
+    create("quick", "Quick verification", quickPrerequisites, quick),
     create("training", "Training", ["environment", "install", "data", "model"], training),
     create("evaluation", "Evaluation", ["environment", "install", "data", "model"], evaluation),
   ];
@@ -1146,6 +1152,17 @@ function main() {
     expectEqual(
       preferredWorkflows.find((workflow) => workflow.id === "evaluation").steps.map((step) => step.id),
       ["eval-1"],
+    );
+    expectEqual(
+      buildWorkflows({ steps: [] }, []).map((workflow) => workflow.status),
+      ["UNAVAILABLE", "UNAVAILABLE", "UNAVAILABLE"],
+    );
+    expectEqual(
+      buildWorkflows(
+        { steps: [{ id: "model", status: "MISSING" }] },
+        [{ id: "run", category: "other", command: "python -m pytest", references: [], parameters: [] }],
+      ).find((workflow) => workflow.id === "quick").steps.map((step) => step.id),
+      ["run"],
     );
 
     expectEqual(statusFor(1, 0), "BLOCKED");
