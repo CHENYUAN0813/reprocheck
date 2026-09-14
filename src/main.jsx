@@ -39,9 +39,30 @@ const exampleReport = {
       suggestion: null,
     },
     {
+      id: "data_instructions",
+      status: "PASS",
+      message: "Dataset instructions found in README",
+      evidence: { file: "README.md", line: 73, text: "## Dataset preparation" },
+      suggestion: null,
+    },
+    {
+      id: "model_instructions",
+      status: "PASS",
+      message: "Model or checkpoint instructions found in README",
+      evidence: { file: "README.md", line: 91, text: "Download pretrained weights" },
+      suggestion: null,
+    },
+    {
       id: "dependencies",
       status: "PASS",
       message: "Dependencies found: requirements.txt",
+      evidence: { file: "requirements.txt" },
+      suggestion: null,
+    },
+    {
+      id: "dependency_versions",
+      status: "PASS",
+      message: "All 12 dependencies are exactly pinned",
       evidence: { file: "requirements.txt" },
       suggestion: null,
     },
@@ -65,6 +86,27 @@ const exampleReport = {
       message: "Python version not clearly pinned",
       evidence: null,
       suggestion: "Pin Python with .python-version or runtime.txt",
+    },
+    {
+      id: "random_seed",
+      status: "PASS",
+      message: "Random seed setup found in code",
+      evidence: { file: "train.py", line: 18, text: "setup_seed(42)" },
+      suggestion: null,
+    },
+    {
+      id: "experiment_config",
+      status: "PASS",
+      message: "Reusable experiment configuration found",
+      evidence: { file: "configs/base.yaml" },
+      suggestion: null,
+    },
+    {
+      id: "continuous_integration",
+      status: "PASS",
+      message: "Continuous integration found: .github/workflows/ci.yml",
+      evidence: { file: ".github/workflows/ci.yml" },
+      suggestion: null,
     },
   ],
 };
@@ -104,6 +146,17 @@ function App() {
   function submit(event) {
     event.preventDefault();
     void runScan(url).catch(() => {});
+  }
+
+  function downloadReport() {
+    const blobUrl = URL.createObjectURL(
+      new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }),
+    );
+    const link = document.createElement("a");
+    link.href = blobUrl;
+    link.download = `reprocheck-${report.repository.replace("/", "-")}-${report.commit.slice(0, 7)}.json`;
+    link.click();
+    URL.revokeObjectURL(blobUrl);
   }
 
   useEffect(() => {
@@ -200,20 +253,27 @@ function App() {
               <p className="commit">Commit {report.commit}</p>
             </div>
 
-            <dl className="summary">
-              <div>
-                <dt>Files</dt>
-                <dd>{report.filesScanned}</dd>
-              </div>
-              <div>
-                <dt>Blockers</dt>
-                <dd>{report.summary.failures}</dd>
-              </div>
-              <div>
-                <dt>Warnings</dt>
-                <dd>{report.summary.warnings}</dd>
-              </div>
-            </dl>
+            <div className="report-tools">
+              <dl className="summary">
+                <div>
+                  <dt>Files</dt>
+                  <dd>{report.filesScanned}</dd>
+                </div>
+                <div>
+                  <dt>Blockers</dt>
+                  <dd>{report.summary.failures}</dd>
+                </div>
+                <div>
+                  <dt>Warnings</dt>
+                  <dd>{report.summary.warnings}</dd>
+                </div>
+              </dl>
+              {!isExample && (
+                <button className="download-button" type="button" onClick={downloadReport}>
+                  Download JSON
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="checks">
@@ -226,10 +286,16 @@ function App() {
                     {check.evidence && (
                       <p className="evidence">
                         <span>Evidence</span>
-                        <code>
-                          {check.evidence.file}
-                          {check.evidence.line ? `:${check.evidence.line}` : ""}
-                        </code>
+                        <a
+                          href={`https://github.com/${report.repository}/blob/${report.commit}/${check.evidence.file.split("/").map(encodeURIComponent).join("/")}${check.evidence.line ? `#L${check.evidence.line}` : ""}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          <code>
+                            {check.evidence.file}
+                            {check.evidence.line ? `:${check.evidence.line}` : ""}
+                          </code>
+                        </a>
                       </p>
                     )}
                   </div>

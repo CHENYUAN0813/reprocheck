@@ -189,6 +189,15 @@ button:disabled {
   margin: 9px 0 0;
 }
 
+.evidence a {
+  color: inherit;
+  text-underline-offset: 3px;
+}
+
+.evidence a:hover {
+  color: #9bb9ff;
+}
+
 .error {
   grid-column: 1 / -1;
   margin: -22px 0 0;
@@ -250,6 +259,22 @@ h2 {
 .commit {
   margin-bottom: 0;
   overflow-wrap: anywhere;
+}
+
+.report-tools {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.download-button {
+  border: 1px solid #384354;
+  color: #b9c9e8;
+  background: #101721;
+}
+
+.download-button:hover:not(:disabled) {
+  background: #182231;
 }
 
 .summary {
@@ -399,6 +424,10 @@ code {
     align-items: stretch;
     flex-direction: column;
     padding: 24px;
+  }
+
+  .report-tools {
+    flex-direction: column;
   }
 
   .check {
