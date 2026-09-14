@@ -22,6 +22,7 @@ For CI, add `--strict`; the command exits with code 1 when blockers or warnings 
 
 Each check includes evidence pinned to the scanned commit and a suggestion when action is needed.
 The JSON response also contains experiment parameters extracted from common `argparse` and configuration declarations, plus an ordered `reproductionPlan` with validated command references and explicit gaps.
+Discovered entry points are also grouped into quick verification, training, and evaluation workflows. The recommended routes prefer simple, self-contained commands and label scripts from linked external tools separately from missing repository files.
 
 ## Web interface
 
@@ -42,13 +43,14 @@ GitHub Actions runs the self-tests and production build on every push and pull r
 - Dependency versions are exactly pinned or locked
 - Python version is pinned
 - Install command exists in README
-- Run command exists in README
+- Runnable README commands are collected and categorized
 - Dataset acquisition or preparation is documented
 - Model weights or checkpoints are documented
 - Random seed setup exists in sampled training or configuration code
 - Reusable experiment parameters exist in config files or command-line arguments
 - GitHub Actions continuous integration workflow exists
 - README commands reference scripts and configuration files that exist
+- Every discovered runnable entry point includes its validated local references
 - License file exists
 - Test entry exists
 

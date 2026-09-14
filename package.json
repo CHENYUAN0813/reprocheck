@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
-    "dev": "node server.mjs",
+    "dev": "node --watch-preserve-output --watch-path=server.mjs --watch-path=scan.mjs --watch-path=worker.mjs server.mjs",
     "prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "vite build --outDir dist/client && vite build --ssr worker.mjs --outDir dist/server",
     "preview": "vite preview",
