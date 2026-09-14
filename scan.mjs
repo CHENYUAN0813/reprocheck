@@ -45,16 +45,20 @@ function findActionableInstruction(text, subjectPattern) {
   const lines = text.split(/\r?\n/);
   const actionPattern = /\b(?:download|prepare|fetch|place|copy|wget|curl|git clone|huggingface-cli|modelscope)\b|下载|获取|准备|放入|复制/i;
   const commandPattern = /\b(?:wget|curl|git clone|huggingface-cli|modelscope)\b/i;
-  const index = lines.findIndex(
-    (line) =>
+  const candidates = lines
+    .map((line, index) => ({ line, index }))
+    .filter(({ line }) =>
       subjectPattern.test(line) &&
       actionPattern.test(line) &&
       (/^\s*#{1,6}\s+/.test(line) || /https?:\/\/|\[[^\]]+\]\([^)]+\)/.test(line) || commandPattern.test(line)),
-  );
+    );
+  const match = candidates.find(({ line }) =>
+    /https?:\/\/|\[[^\]]+\]\([^)]+\)/.test(line) || commandPattern.test(line),
+  ) ?? candidates[0];
 
-  return index === -1
+  return !match
     ? null
-    : { line: index + 1, text: lines[index].trim() };
+    : { line: match.index + 1, text: match.line.trim() };
 }
 
 function findDataInstructions(text) {
@@ -181,6 +185,161 @@ function findExperimentConfiguration(paths, files) {
   return null;
 }
 
+function extractExperimentParameters(files) {
+  const parameters = [];
+  const seen = new Set();
+
+  // ponytail: parse common one-line declarations; use language parsers when multiline/nested coverage is required.
+  for (const { path, text } of files) {
+    const lines = text.split(/\r?\n/);
+    for (let index = 0; index < lines.length; index += 1) {
+      const argumentName = lines[index].match(/\.add_argument\(\s*["'](--[\w-]+)["']/)?.[1];
+      const configMatch = /\.py$/i.test(path)
+        ? null
+        : lines[index].match(/^\s*["']?([A-Za-z_][\w.-]*)["']?\s*[:=]\s*(.+?)\s*,?\s*$/);
+      const configName = configMatch?.[1];
+      const name = argumentName ?? (
+        configName && /(?:epoch|batch|learning[_-]?rate|^lr$|seed|model|data|device|max[_-]?(?:seq|length)|hidden)/i.test(configName)
+          ? configName
+          : null
+      );
+      const key = name?.replace(/^--/, "").replaceAll("-", "_");
+      if (!name || seen.has(key)) continue;
+
+      const rawDefault = argumentName
+        ? lines[index].match(/\bdefault\s*=\s*([^,)]+)/)?.[1].trim() ?? null
+        : configMatch[2].replace(/\s+#.*$/, "").replace(/,$/, "").trim();
+      parameters.push({
+        name,
+        default: rawDefault?.replace(/^["']|["']$/g, "") ?? null,
+        file: path,
+        line: index + 1,
+        source: argumentName ? "argparse" : "config",
+      });
+      seen.add(key);
+      if (parameters.length === 12) return parameters;
+    }
+  }
+
+  return parameters;
+}
+
+function extractCommandReferences(command) {
+  if (!command) return [];
+
+  const tokens = (command.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((token) =>
+    token.replace(/^['"]|['"]$/g, "").replace(/[;,)]+$/, "").replaceAll("\\", "/"),
+  );
+  const references = [];
+  const add = (path) => {
+    const normalized = path?.replace(/^\.\//, "");
+    if (normalized && !/^(?:https?:|\$|--?)/i.test(normalized)) references.push(normalized);
+  };
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index].toLowerCase();
+
+    if (["-r", "--requirement"].includes(token)) add(tokens[index + 1]);
+    if (token.startsWith("--requirement=")) add(tokens[index].split("=").slice(1).join("="));
+    if (["--config", "--config-file", "--cfg"].includes(token)) add(tokens[index + 1]);
+    if (/^--(?:config|config-file|cfg)=/.test(token)) add(tokens[index].split("=").slice(1).join("="));
+
+    const startsPython = /^(?:python3?|torchrun)$/.test(token);
+    const startsAccelerate = token === "accelerate" && tokens[index + 1]?.toLowerCase() === "launch";
+    if (startsPython || startsAccelerate) {
+      const script = tokens.slice(index + 1).find((part) => /\.py$/i.test(part));
+      add(script);
+    }
+  }
+
+  return [...new Set(references)];
+}
+
+function validateCommandReferences(commands, filePaths) {
+  return commands.flatMap(({ id, command }) =>
+    extractCommandReferences(command).map((path) => ({
+      step: id,
+      path,
+      exists: filePaths.includes(path),
+    })),
+  );
+}
+
+function buildReproductionPlan({
+  readme,
+  installCommand,
+  runCommand,
+  dataInstructions,
+  modelInstructions,
+  pythonVersion,
+  pythonVersionResult,
+  references,
+  parameters,
+}) {
+  const steps = [
+    {
+      id: "environment",
+      title: "Prepare Python environment",
+      status: pythonVersionResult ? "DOCUMENTED" : "MISSING",
+      instruction: pythonVersionResult ? `Use Python ${pythonVersionResult.value}` : null,
+      evidence: pythonVersionResult ? { file: pythonVersion, text: pythonVersionResult.value } : null,
+    },
+    {
+      id: "install",
+      title: "Install dependencies",
+      status: installCommand ? "DOCUMENTED" : "MISSING",
+      command: installCommand?.text ?? null,
+      evidence: installCommand ? { file: readme, ...installCommand } : null,
+      references: references.filter((reference) => reference.step === "install"),
+    },
+    {
+      id: "model",
+      title: "Get model or checkpoint",
+      status: modelInstructions ? "DOCUMENTED" : "MISSING",
+      instruction: modelInstructions?.text ?? null,
+      evidence: modelInstructions ? { file: readme, ...modelInstructions } : null,
+    },
+    {
+      id: "data",
+      title: "Get and prepare dataset",
+      status: dataInstructions ? "DOCUMENTED" : "MISSING",
+      instruction: dataInstructions?.text ?? null,
+      evidence: dataInstructions ? { file: readme, ...dataInstructions } : null,
+    },
+    {
+      id: "run",
+      title: "Run the experiment",
+      status: runCommand ? "DOCUMENTED" : "MISSING",
+      command: runCommand?.text ?? null,
+      evidence: runCommand ? { file: readme, ...runCommand } : null,
+      references: references.filter((reference) => reference.step === "run"),
+      parameters,
+    },
+  ];
+  const missingReferences = references.filter((reference) => !reference.exists);
+  const gaps = [
+    ...steps
+      .filter((step) => step.status === "MISSING")
+      .map((step) => ({ type: "missing_step", step: step.id, message: `${step.title} is not documented` })),
+    ...missingReferences.map((reference) => ({
+      type: "missing_reference",
+      step: reference.step,
+      path: reference.path,
+      message: `${reference.path} does not exist in the repository`,
+    })),
+  ];
+
+  return {
+    status: missingReferences.length
+      ? "BLOCKED"
+      : steps.some((step) => step.status === "MISSING")
+        ? "INCOMPLETE"
+        : "READY",
+    gaps,
+    steps,
+  };
+}
+
 function statusFor(failures, warnings) {
   if (failures > 0) return "BLOCKED";
   if (warnings > 0) return "NEEDS_WORK";
@@ -189,6 +348,15 @@ function statusFor(failures, warnings) {
 
 function strictExitCode(status) {
   return status === "READY_FOR_REVIEW" ? 0 : 1;
+}
+
+function standalonePlan(report) {
+  return {
+    repository: report.repository,
+    commit: report.commit,
+    ...report.reproductionPlan,
+    experimentParameters: report.experimentParameters,
+  };
 }
 
 function printReport(report) {
@@ -293,24 +461,10 @@ export async function scan(input, token) {
   const ciWorkflow = filePaths.find((path) =>
     /^\.github\/workflows\/.+\.ya?ml$/i.test(path),
   );
-  // ponytail: sample likely entry/config files; expand to blob-wide search when large-repo demand justifies the API cost.
-  const seedCandidates = filePaths
-    .filter((path) => {
-      const name = path.split("/").at(-1);
-      return /\.(?:py|ya?ml|toml|json)$/i.test(name) && /(?:seed|train|main|config)/i.test(name);
-    })
-    .slice(0, 5);
-
-  const [readmeText, dependencyText, pythonVersionText, seedFiles] = await Promise.all([
+  const [readmeText, dependencyText, pythonVersionText] = await Promise.all([
     readRepositoryFile(base, readme, commit.sha, token),
     readRepositoryFile(base, dependencies, commit.sha, token),
     readRepositoryFile(base, pythonVersion, commit.sha, token),
-    Promise.all(
-      seedCandidates.map(async (path) => ({
-        path,
-        text: await readRepositoryFile(base, path, commit.sha, token),
-      })),
-    ),
   ]);
   const installCommand = findInstallCommand(readmeText);
   const runCommand = findRunCommand(readmeText);
@@ -322,8 +476,46 @@ export async function scan(input, token) {
   const pythonVersionResult = pythonVersion
     ? analyzePythonVersion(pythonVersion, pythonVersionText)
     : null;
-  const seedConfiguration = findSeedConfiguration(seedFiles);
-  const experimentConfiguration = findExperimentConfiguration(filePaths, seedFiles);
+  const commandReferences = validateCommandReferences(
+    [
+      { id: "install", command: installCommand?.text },
+      { id: "run", command: runCommand?.text },
+    ],
+    filePaths,
+  );
+  // ponytail: inspect five likely source files; widen only when API usage and accuracy are measured.
+  const codeCandidates = [
+    ...new Set([
+      ...commandReferences
+        .filter((reference) => reference.exists && /\.(?:py|ya?ml|toml|json)$/i.test(reference.path))
+        .map((reference) => reference.path),
+      ...filePaths.filter((path) => {
+        const name = path.split("/").at(-1);
+        return /\.(?:py|ya?ml|toml|json)$/i.test(name) && /(?:seed|train|main|config)/i.test(name);
+      }),
+    ]),
+  ].slice(0, 5);
+  const codeFiles = await Promise.all(
+    codeCandidates.map(async (path) => ({
+      path,
+      text: await readRepositoryFile(base, path, commit.sha, token),
+    })),
+  );
+  const seedConfiguration = findSeedConfiguration(codeFiles);
+  const experimentConfiguration = findExperimentConfiguration(filePaths, codeFiles);
+  const experimentParameters = extractExperimentParameters(codeFiles);
+  const missingCommandReferences = commandReferences.filter((reference) => !reference.exists);
+  const reproductionPlan = buildReproductionPlan({
+    readme,
+    installCommand,
+    runCommand,
+    dataInstructions,
+    modelInstructions,
+    pythonVersion,
+    pythonVersionResult,
+    references: commandReferences,
+    parameters: experimentParameters,
+  });
 
   const checks = [
     {
@@ -494,6 +686,25 @@ export async function scan(input, token) {
         ? null
         : "Add a GitHub Actions workflow that installs dependencies and runs tests",
     },
+    {
+      id: "command_references",
+      status: missingCommandReferences.length
+        ? "FAIL"
+        : commandReferences.length
+          ? "PASS"
+          : "WARN",
+      message: missingCommandReferences.length
+        ? `${missingCommandReferences.length} command reference(s) do not exist in the repository`
+        : commandReferences.length
+          ? `All ${commandReferences.length} command reference(s) exist`
+          : "No local command references could be validated",
+      evidence: commandReferences[0] ? { file: commandReferences[0].path } : null,
+      suggestion: missingCommandReferences.length
+        ? `Fix missing paths: ${missingCommandReferences.map((reference) => reference.path).join(", ")}`
+        : commandReferences.length
+          ? null
+          : "Document commands that reference repository scripts or configuration files",
+    },
   ];
 
   const failures = checks.filter((check) => check.status === "FAIL").length;
@@ -506,6 +717,8 @@ export async function scan(input, token) {
     status: statusFor(failures, warnings),
     summary: { failures, warnings },
     checks,
+    experimentParameters,
+    reproductionPlan,
   };
 }
 
@@ -533,15 +746,15 @@ function main() {
       { line: 2, text: "$ python train.py --epochs 10" },
     );
     expectEqual(findRunCommand("This project requires Python 3.10"), null);
-    expectEqual(findDataInstructions("## Download dataset\nUse it for training"), {
-      line: 1,
-      text: "## Download dataset",
+    expectEqual(findDataInstructions("## Download dataset\nDownload dataset from [files](https://example.com/data)"), {
+      line: 2,
+      text: "Download dataset from [files](https://example.com/data)",
     });
     expectEqual(findDataInstructions("The dataset contains training examples"), null);
     expectEqual(findDataInstructions("Avoid dataset download confusion"), null);
-    expectEqual(findModelInstructions("### 下载模型"), {
-      line: 1,
-      text: "### 下载模型",
+    expectEqual(findModelInstructions("### 下载模型\nmodelscope download --model lab/base"), {
+      line: 2,
+      text: "modelscope download --model lab/base",
     });
     expectEqual(findModelInstructions("Use the pretrained checkpoint"), null);
 
@@ -579,6 +792,74 @@ function main() {
       ),
       { file: "train.py", line: 1, text: "parser.add_argument('--epochs')" },
     );
+    expectEqual(
+      extractExperimentParameters([
+        {
+          path: "train.py",
+          text: "parser.add_argument('--epochs', default=3, type=int)\nparser.add_argument('--model', default='small')",
+        },
+      ]),
+      [
+        { name: "--epochs", default: "3", file: "train.py", line: 1, source: "argparse" },
+        { name: "--model", default: "small", file: "train.py", line: 2, source: "argparse" },
+      ],
+    );
+    expectEqual(
+      extractExperimentParameters([
+        {
+          path: "configs/base.yaml",
+          text: "epochs: 20\nbatch_size: 32\noptimizer: adamw\nlearning_rate: 0.001",
+        },
+      ]),
+      [
+        { name: "epochs", default: "20", file: "configs/base.yaml", line: 1, source: "config" },
+        { name: "batch_size", default: "32", file: "configs/base.yaml", line: 2, source: "config" },
+        { name: "learning_rate", default: "0.001", file: "configs/base.yaml", line: 4, source: "config" },
+      ],
+    );
+    expectEqual(
+      extractCommandReferences("python train.py --config configs/base.yaml"),
+      ["train.py", "configs/base.yaml"],
+    );
+    expectEqual(
+      extractCommandReferences("pip install -r requirements.txt"),
+      ["requirements.txt"],
+    );
+    expectEqual(
+      validateCommandReferences(
+        [{ id: "run", command: "python train.py --config missing.yaml" }],
+        ["train.py"],
+      ),
+      [
+        { step: "run", path: "train.py", exists: true },
+        { step: "run", path: "missing.yaml", exists: false },
+      ],
+    );
+    const incompletePlan = buildReproductionPlan({
+      readme: "README.md",
+      installCommand: { line: 1, text: "pip install -r requirements.txt" },
+      runCommand: { line: 2, text: "python missing.py" },
+      dataInstructions: { line: 3, text: "Download data from https://example.com" },
+      modelInstructions: { line: 4, text: "Download model from https://example.com" },
+      pythonVersion: null,
+      pythonVersionResult: null,
+      references: [{ step: "run", path: "missing.py", exists: false }],
+      parameters: [],
+    });
+    expectEqual(incompletePlan.status, "BLOCKED");
+    expectEqual(incompletePlan.gaps, [
+      {
+        type: "missing_step",
+        step: "environment",
+        message: "Prepare Python environment is not documented",
+      },
+      {
+        type: "missing_reference",
+        step: "run",
+        path: "missing.py",
+        message: "missing.py does not exist in the repository",
+      },
+    ]);
 
     expectEqual(statusFor(1, 0), "BLOCKED");
     expectEqual(statusFor(0, 1), "NEEDS_WORK");
@@ -586,6 +867,21 @@ function main() {
     expectEqual(strictExitCode("READY_FOR_REVIEW"), 0);
     expectEqual(strictExitCode("NEEDS_WORK"), 1);
     expectEqual(strictExitCode("BLOCKED"), 1);
+    expectEqual(
+      standalonePlan({
+        repository: "a/b",
+        commit: "abc",
+        reproductionPlan: { status: "READY", steps: [] },
+        experimentParameters: [],
+      }),
+      {
+        repository: "a/b",
+        commit: "abc",
+        status: "READY",
+        steps: [],
+        experimentParameters: [],
+      },
+    );
 
     expectEqual(
       analyzeDependencyVersions(
@@ -621,12 +917,14 @@ function main() {
   const input = args.find((arg) => !arg.startsWith("--"));
 
   if (!input) {
-    console.error("用法：node scan.mjs https://github.com/owner/repo [--json]");
+    console.error("用法：node scan.mjs https://github.com/owner/repo [--json|--plan] [--strict]");
     process.exitCode = 1;
   } else {
     scan(input, process.env.GITHUB_TOKEN)
       .then((report) => {
-        if (args.includes("--json")) {
+        if (args.includes("--plan")) {
+          console.log(JSON.stringify(standalonePlan(report), null, 2));
+        } else if (args.includes("--json")) {
           console.log(JSON.stringify(report, null, 2));
         } else {
           printReport(report);
