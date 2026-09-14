@@ -294,7 +294,7 @@ function App() {
     }
   }
 
-  async function startExecution() {
+  async function startExecution(packageIndex = "readme") {
     setRunLoading(true);
     setPreflightError("");
 
@@ -306,6 +306,7 @@ function App() {
           url: `https://github.com/${report.repository}`,
           commit: report.commit,
           workflowId: activeWorkflow.id,
+          packageIndex,
           confirmUnknownCode: true,
         }),
       });
@@ -627,7 +628,7 @@ function App() {
                 </label>
                 <button
                   type="button"
-                  onClick={startExecution}
+                  onClick={() => startExecution("readme")}
                   disabled={!preflight.runnable || !runConfirmed || runLoading || runJob?.status === "RUNNING"}
                 >
                   {runLoading ? "Starting…" : "Run Quick verification"}
@@ -640,7 +641,9 @@ function App() {
             {runJob && (
               <div className="run-log" aria-live="polite">
                 <div>
-                  <strong>Run {runJob.status.replaceAll("_", " ")}</strong>
+                  <strong>
+                    Run {runJob.status.replaceAll("_", " ")} · {runJob.packageIndex === "pypi" ? "Official PyPI" : "README package source"}
+                  </strong>
                   {runJob.status === "RUNNING" && (
                     <button className="download-button" type="button" onClick={cancelExecution}>Cancel</button>
                   )}
@@ -656,6 +659,13 @@ function App() {
                   <p className="runner-error">Stopped at: {runJob.failureStep.title}</p>
                 )}
                 {runJob.diagnosis && <p className="run-diagnosis">{runJob.diagnosis}</p>}
+                {["FAILED", "TIMED_OUT"].includes(runJob.status)
+                  && runJob.failureStep?.id === "install"
+                  && runJob.packageIndex === "readme" && (
+                    <button type="button" onClick={() => startExecution("pypi")} disabled={runLoading}>
+                      {runLoading ? "Starting…" : "Retry with official PyPI"}
+                    </button>
+                )}
                 <pre>{runJob.log || "Starting isolated container…"}</pre>
               </div>
             )}

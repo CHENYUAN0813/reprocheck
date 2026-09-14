@@ -25,7 +25,7 @@ export async function inspectRuntime() {
   }
 }
 
-export function buildPreflight(report, workflowId, runtime) {
+export function buildPreflight(report, workflowId, runtime, packageIndex = "readme") {
   const workflow = report.workflows?.find((candidate) => candidate.id === workflowId);
   if (!workflow) throw new Error("A valid reproduction workflow is required");
 
@@ -54,6 +54,7 @@ export function buildPreflight(report, workflowId, runtime) {
     repository: report.repository,
     commit: report.commit,
     workflow: { id: workflow.id, title: workflow.title, status: workflow.status },
+    packageIndex,
     runtime,
     runnable: runtime.available && automatedSteps.length > 0 && blockers.length === 0,
     automatedSteps,
@@ -75,6 +76,15 @@ function normalizeCommand(command, repository) {
   return command.replace(new RegExp(`^\\s*(?:cd|pushd)\\s+(?:\\./)?${name}\\s*&&\\s*`, "i"), "");
 }
 
+export function rewritePackageIndex(command, packageIndex) {
+  if (packageIndex !== "pypi" || !/\bpip3?\s+install\b/i.test(command)) return command;
+  const withoutIndexes = command.replace(
+    /\s+(?:-i|--index-url|--extra-index-url)(?:\s+|=)(?:"[^"]*"|'[^']*'|\S+)/gi,
+    "",
+  );
+  return `${withoutIndexes} --index-url https://pypi.org/simple`;
+}
+
 export function buildDockerInvocation(preflight, containerName) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(preflight.repository)) throw new Error("Invalid repository identity");
   if (!/^[a-f\d]{40}$/i.test(preflight.commit)) throw new Error("Invalid commit identity");
@@ -88,7 +98,7 @@ export function buildDockerInvocation(preflight, containerName) {
     ...preflight.automatedSteps.flatMap((step) => [
       `echo ::reprocheck-step::${step.id.replace(/[^\w.-]/g, "-")}`,
       "cd /workspace",
-      normalizeCommand(step.command, preflight.repository),
+      rewritePackageIndex(normalizeCommand(step.command, preflight.repository), preflight.packageIndex),
     ]),
   ].join("\n");
 
@@ -133,9 +143,10 @@ export function summarizeSteps(steps, log, runStatus) {
   };
 }
 
-export function diagnoseRun(status, log, failureStep, timeoutMinutes) {
+export function diagnoseRun(status, log, failureStep, timeoutMinutes, packageIndex = "readme") {
   if (status === "TIMED_OUT") {
-    return `${failureStep?.title ?? "The run"} exceeded ${timeoutMinutes} minutes; check download speed or use a smaller environment.`;
+    const retryHint = failureStep?.id === "install" && packageIndex === "readme" ? "retry with official PyPI or " : "";
+    return `${failureStep?.title ?? "The run"} exceeded ${timeoutMinutes} minutes; ${retryHint}use a smaller environment.`;
   }
   if (status === "FAILED") {
     const missingModule = log.match(/No module named ['"]?([\w.-]+)/i)?.[1];
@@ -152,13 +163,20 @@ function publicJob(job) {
     repository: job.repository,
     commit: job.commit,
     workflowId: job.workflowId,
+    packageIndex: job.packageIndex,
     status: job.status,
     log: job.log,
     exitCode: job.exitCode,
     startedAt: job.startedAt,
     finishedAt: job.finishedAt,
     ...progress,
-    diagnosis: diagnoseRun(job.status, job.log, progress.failureStep, job.timeoutMinutes),
+    diagnosis: diagnoseRun(
+      job.status,
+      job.log,
+      progress.failureStep,
+      job.timeoutMinutes,
+      job.packageIndex,
+    ),
   };
 }
 
@@ -174,6 +192,7 @@ export function startRun(preflight) {
     repository: preflight.repository,
     commit: preflight.commit,
     workflowId: preflight.workflow.id,
+    packageIndex: preflight.packageIndex ?? "readme",
     steps: preflight.automatedSteps.map(({ id, title }) => ({ id, title })),
     timeoutMinutes: preflight.limits.timeoutMinutes,
     status: "RUNNING",

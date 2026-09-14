@@ -8,6 +8,7 @@ import {
   diagnoseRun,
   getRun,
   inspectRuntime,
+  rewritePackageIndex,
   startRun,
   summarizeSteps,
 } from "./runner.mjs";
@@ -86,7 +87,11 @@ async function handleApi(request, response) {
       return true;
     }
 
-    const preflight = buildPreflight(report, input.workflowId, await inspectRuntime());
+    const packageIndex = input.packageIndex ?? "readme";
+    if (!["readme", "pypi"].includes(packageIndex)) {
+      throw new Error("Package index must be readme or pypi");
+    }
+    const preflight = buildPreflight(report, input.workflowId, await inspectRuntime(), packageIndex);
     if (url.pathname === "/api/preflight") {
       sendJson(response, 200, preflight);
       return true;
@@ -168,6 +173,10 @@ async function selfTest() {
     );
     assert.equal(preflight.runnable, true);
     assert.deepEqual(preflight.automatedSteps.map((step) => step.command), ["cd repo && python test.py"]);
+    assert.equal(
+      rewritePackageIndex("pip install -r requirements.txt -i https://slow.example/simple", "pypi"),
+      "pip install -r requirements.txt --index-url https://pypi.org/simple",
+    );
     const dockerArgs = buildDockerInvocation(preflight, "reprocheck-test");
     assert.equal(dockerArgs.includes("--cap-drop"), true);
     assert.equal(dockerArgs.includes("-v"), false);
@@ -188,8 +197,8 @@ async function selfTest() {
       /pytest.*dependencies/,
     );
     assert.match(
-      diagnoseRun("TIMED_OUT", "", { title: "Install" }, 10),
-      /Install exceeded 10 minutes/,
+      diagnoseRun("TIMED_OUT", "", { id: "install", title: "Install" }, 10, "readme"),
+      /Install exceeded 10 minutes.*official PyPI/,
     );
 
     const missingRun = await fetch(`http://127.0.0.1:${port}/api/runs/missing`);
