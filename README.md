@@ -12,17 +12,22 @@ For structured JSON output:
 
 `node scan.mjs https://github.com/owner/repository --json`
 
+For the standalone reproduction plan:
+
+`node scan.mjs https://github.com/owner/repository --plan`
+
 For CI, add `--strict`; the command exits with code 1 when blockers or warnings remain:
 
 `node scan.mjs https://github.com/owner/repository --strict`
 
 Each check includes evidence pinned to the scanned commit and a suggestion when action is needed.
+The JSON response also contains experiment parameters extracted from common `argparse` and configuration declarations, plus an ordered `reproductionPlan` with validated command references and explicit gaps.
 
 ## Web interface
 
 `npm run dev`
 
-Open `http://127.0.0.1:5173`, submit a public GitHub repository URL, and download the structured JSON report if needed.
+Open `http://127.0.0.1:5173`, submit a public GitHub repository URL, and download either the full report or the standalone reproduction plan.
 
 ## Self-test
 
@@ -43,6 +48,7 @@ GitHub Actions runs the self-tests and production build on every push and pull r
 - Random seed setup exists in sampled training or configuration code
 - Reusable experiment parameters exist in config files or command-line arguments
 - GitHub Actions continuous integration workflow exists
+- README commands reference scripts and configuration files that exist
 - License file exists
 - Test entry exists
 
