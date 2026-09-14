@@ -203,6 +203,11 @@ function App() {
   const [isExample, setIsExample] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [selectedWorkflow, setSelectedWorkflow] = useState("quick");
+  const activeWorkflow = report.workflows?.find((workflow) => workflow.id === selectedWorkflow)
+    ?? report.workflows?.[0]
+    ?? null;
+  const displayedPlan = activeWorkflow ?? report.reproductionPlan;
 
   const runScan = useCallback(async (targetUrl) => {
     setLoading(true);
@@ -246,7 +251,7 @@ function App() {
       {
         repository: report.repository,
         commit: report.commit,
-        ...report.reproductionPlan,
+        ...displayedPlan,
         experimentParameters: report.experimentParameters,
       },
       `reprocheck-plan-${report.repository.replace("/", "-")}-${report.commit.slice(0, 7)}.json`,
@@ -393,16 +398,36 @@ function App() {
           </div>
         </section>
 
-        {report.reproductionPlan && (
+        {displayedPlan && (
           <section className="plan" aria-labelledby="plan-title">
             <div className="plan-heading">
               <div>
-                <p className="eyebrow">Reproduction plan</p>
-                <h2 id="plan-title">From repository to first run</h2>
+                <p className="eyebrow">
+                  {report.workflows ? "Reproduction workflows" : "Reproduction plan"}
+                </p>
+                <h2 id="plan-title">
+                  {activeWorkflow?.title ?? "From repository to first run"}
+                </h2>
+                {report.workflows && (
+                  <div className="workflow-tabs" role="tablist" aria-label="Reproduction workflow">
+                    {report.workflows.map((workflow) => (
+                      <button
+                        className={`workflow-tab${workflow.id === activeWorkflow?.id ? " workflow-tab-active" : ""}`}
+                        type="button"
+                        role="tab"
+                        aria-selected={workflow.id === activeWorkflow?.id}
+                        onClick={() => setSelectedWorkflow(workflow.id)}
+                        key={workflow.id}
+                      >
+                        {workflow.title}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="plan-actions">
-                <span className={`status status-${report.reproductionPlan.status.toLowerCase()}`}>
-                  {report.reproductionPlan.status}
+                <span className={`status status-${displayedPlan.status.toLowerCase()}`}>
+                  {displayedPlan.status}
                 </span>
                 {!isExample && (
                   <button className="download-button" type="button" onClick={downloadPlan}>
@@ -413,7 +438,7 @@ function App() {
             </div>
 
             <ol className="plan-steps">
-              {report.reproductionPlan.steps.map((step, index) => (
+              {displayedPlan.steps.map((step, index) => (
                 <li className={`plan-step plan-step-${step.status.toLowerCase()}`} key={step.id}>
                   <span className="step-number">{index + 1}</span>
                   <div>
@@ -435,8 +460,8 @@ function App() {
                     {step.references?.length > 0 && (
                       <div className="plan-tags" aria-label="Validated command references">
                         {step.references.map((reference) => (
-                          <code className={reference.exists ? "tag-valid" : "tag-missing"} key={reference.path}>
-                            {reference.exists ? "Found" : "Missing"} · {reference.path}
+                          <code className={reference.exists === false ? "tag-missing" : "tag-valid"} key={reference.path}>
+                            {reference.external ? "External" : reference.exists ? "Found" : "Unknown"} · {reference.path}
                           </code>
                         ))}
                       </div>
@@ -453,6 +478,9 @@ function App() {
                   </div>
                 </li>
               ))}
+              {displayedPlan.steps.length === 0 && (
+                <li className="workflow-empty">No matching entry point was found in the README.</li>
+              )}
             </ol>
           </section>
         )}

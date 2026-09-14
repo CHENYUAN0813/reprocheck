@@ -251,6 +251,12 @@ button:disabled {
   background: #2a0e14;
 }
 
+.status-unavailable {
+  border-color: #4a5360;
+  color: #9ba6b5;
+  background: #151a22;
+}
+
 h2 {
   margin-bottom: 5px;
   color: #f7f9fc;
@@ -424,6 +430,29 @@ code {
   margin-bottom: 5px;
 }
 
+.workflow-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 16px;
+}
+
+.workflow-tab {
+  min-height: 34px;
+  border: 1px solid #303a48;
+  padding: 5px 10px;
+  color: #93a0b2;
+  background: #0a0f16;
+  font-size: 0.76rem;
+}
+
+.workflow-tab:hover:not(:disabled),
+.workflow-tab-active {
+  border-color: #557edc;
+  color: #c9d8fa;
+  background: #14203a;
+}
+
 .plan-actions {
   display: flex;
   align-items: center;
@@ -514,6 +543,11 @@ code {
 
 .plan-tags .tag-missing {
   border-color: #7c6425;
+}
+
+.workflow-empty {
+  padding: 28px 34px;
+  color: #8d99aa;
 }
 
 @media (max-width: 800px) {
