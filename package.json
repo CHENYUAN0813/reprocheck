@@ -3,13 +3,14 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
-    "dev": "node --watch-preserve-output --watch-path=server.mjs --watch-path=scan.mjs --watch-path=runner.mjs --watch-path=run-store.mjs --watch-path=collect-evidence.py --watch-path=examples --watch-path=worker.mjs server.mjs",
+    "dev": "node --watch-preserve-output --watch-path=server.mjs --watch-path=scan.mjs --watch-path=evaluation-config.mjs --watch-path=runner.mjs --watch-path=run-store.mjs --watch-path=collect-evidence.py --watch-path=examples --watch-path=worker.mjs server.mjs",
     "prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "vite build --outDir dist/client && vite build --ssr worker.mjs --outDir dist/server",
     "preview": "vite preview",
-    "test": "node scan.mjs --self-test && node server.mjs --self-test && node test-runner.mjs && node test-benchmark.mjs",
+    "test": "node scan.mjs --self-test && node server.mjs --self-test && node test-runner.mjs && node test-benchmark.mjs && node test-candidates.mjs",
     "test:docker": "node test-runner.mjs --docker",
-    "test:benchmark": "node test-benchmark.mjs --docker"
+    "test:benchmark": "node test-benchmark.mjs --docker",
+    "test:candidates": "node test-candidates.mjs --docker"
   },
   "keywords": [],
   "author": "",

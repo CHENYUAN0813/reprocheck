@@ -619,6 +619,10 @@ code {
   font-size: 0.9rem;
 }
 
+.candidate-config select { display: block; width: 100%; margin-top: 8px; }
+.candidate-config details { margin-top: 20px; }
+.candidate-config { overflow-wrap: anywhere; }
+
 .metric-options {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);

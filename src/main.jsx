@@ -4,6 +4,7 @@ import "./styles.css";
 import cpuEvaluationSource from "../examples/evaluate-micrograd.py?raw";
 import publishedBenchmark from "../examples/bthowen-iris.json";
 import publishedEvaluationSource from "../examples/evaluate-bthowen.py?raw";
+import { candidateOptions, candidateWorkflow } from "../evaluation-config.mjs";
 
 const emptyAcceptance = { expectedText: "", outputFile: "", metricKey: "", metricOperator: "gte", metricTarget: "", metricTolerance: "0", dataset: "", model: "", reference: "", assetsInEntry: false };
 const cpuEvaluationCommand = `python -c 'exec(${JSON.stringify(cpuEvaluationSource).replaceAll("'", "'\"'\"'")})'`;
@@ -204,6 +205,59 @@ function downloadJson(data, filename) {
   URL.revokeObjectURL(blobUrl);
 }
 
+function CandidateConfig({ report, disabled, onApply }) {
+  const draft = report.evaluationDraft;
+  function selections(entryId) {
+    const related = draft.references.filter((reference) => reference.entryId === entryId);
+    const outputs = draft.outputs.filter((output) => output.entryIds.includes(entryId));
+    return { entryId, referenceId: related.length === 1 ? related[0].id : draft.references.length === 1 && (!draft.references[0].entryId || draft.references[0].entryId === entryId) ? draft.references[0].id : null,
+      outputId: outputs.length === 1 ? outputs[0].id : null, confirmed: false };
+  }
+  const [review, setReview] = useState(() => selections(draft.entries[0]?.id ?? ""));
+  let options;
+  let failure;
+  if (review.entryId) {
+    try { options = candidateOptions(report, review); } catch (error) { failure = error.message; }
+  }
+  const entry = draft.entries.find((entry) => entry.id === review.entryId);
+  const reference = draft.references.find((reference) => reference.id === review.referenceId);
+  const output = draft.outputs.find((output) => output.id === review.outputId);
+  const missing = options ? [!options.outputFile && "Result capture/output file", !options.metricKey && "Numeric metric key",
+    options.metricTarget === null && "Reference value", !options.evaluation.dataset && "Dataset / split", !options.evaluation.model && "Model / checkpoint",
+    !options.evaluation.reference && "Reference source"].filter(Boolean) : [];
+  return <section className="runner candidate-config" aria-labelledby="candidate-title">
+    <div className="runner-heading"><div><p className="eyebrow">Generated configuration · Needs review</p><h2 id="candidate-title">Build an Evaluation from this scan</h2>
+      <p>Choose source-backed candidates, then review or complete the editable form. This does not execute code.</p></div></div>
+    {draft.entries.length === 0 ? <p className="runner-note">No suitable entry candidate was found in the sampled files. Supply a custom Evaluation below; no command or benchmark is invented.</p> : <fieldset className="run-options" disabled={disabled}>
+      <legend>Source-backed candidate choices</legend>
+      <label>Candidate entry<select value={review.entryId} onChange={(event) => setReview(selections(event.target.value))}>
+        {draft.entries.map((entry) => <option value={entry.id} key={entry.id}>{entry.command}{entry.origin ? " · inferred, review arguments" : ""}</option>)}
+      </select></label>
+      {entry && <p className="evidence"><span>Entry source</span><EvidenceLink report={report} evidence={entry.evidence} /></p>}
+      {entry?.note && <p className="runner-note">{entry.note}</p>}
+      <label>Result capture<select value={review.outputId ?? ""} onChange={(event) => setReview((current) => ({ ...current, outputId: event.target.value || null }))}>
+        <option value="">Not selected — complete manually</option>
+        {draft.outputs.filter((output) => output.entryIds.includes(review.entryId)).map((output) => <option value={output.id} key={output.id}>{output.kind === "stdout" ? `Labelled stdout: ${output.label} · ${output.unit}` : `JSON: ${output.path}`}</option>)}
+      </select></label>
+      {output && <p className="evidence"><span>Output source</span><EvidenceLink report={report} evidence={output.evidence} /></p>}
+      <label>README reference candidate<select value={review.referenceId ?? ""} onChange={(event) => setReview((current) => ({ ...current, referenceId: event.target.value || null }))}>
+        <option value="">Not selected — supply a declared target</option>
+        {draft.references.filter((reference) => !reference.entryId || reference.entryId === review.entryId).map((reference) => <option value={reference.id} key={reference.id}>{reference.label}: {reference.value} · {reference.unit} · line {reference.evidence.line}</option>)}
+      </select></label>
+      {reference && <p className="evidence"><span>Reference source</span><EvidenceLink report={report} evidence={reference.evidence} /></p>}
+      {failure && <p className="runner-error" role="alert">{failure}</p>}
+      {options && <>
+        <p className="hint">Proposed output: {options.outputFile || "missing"} · metric: {options.metricKey || "missing"} · reference: {options.metricTarget ?? "missing"} · tolerance: 0.</p>
+        {missing.length > 0 && <p className="runner-note">Complete in the form: {missing.join("; ")}.</p>}
+        {output?.kind === "stdout" && <p className="hint">A generic adapter runs the original command and records its actual printed score as JSON. It never substitutes the reference value; missing/duplicate scores fail.</p>}
+        <button type="button" onClick={() => onApply(options)}>Use candidates in Evaluation form</button>
+      </>}
+    </fieldset>}
+    <details><summary>Candidate sources and coverage limits</summary><pre className="evaluation-source">{JSON.stringify(draft, null, 2)}</pre></details>
+    <p className="runner-note">README values may be example output. You must confirm the selected dataset, split, model and metric correspond; they are not automatically verified paper claims.</p>
+  </section>;
+}
+
 function ExecutionEvidence({ job, onPrepareReplay, replayDisabled }) {
   const labels = { VERIFIED: "Configured checks passed", FAILED: "Output checks failed", INCOMPLETE: "Verification incomplete",
     NOT_CONFIGURED: "No output checks configured", PENDING: "Waiting for execution" };
@@ -237,6 +291,7 @@ function ExecutionEvidence({ job, onPrepareReplay, replayDisabled }) {
         </>}
         {job.evaluation.output && <details><summary>Reported metrics and asset identifiers</summary><pre>{JSON.stringify(job.evaluation.output, null, 2)}</pre></details>}
       </div>}
+      {job.candidate && <details><summary>Reviewed scan candidates and manual changes</summary><pre>{JSON.stringify(job.candidate, null, 2)}</pre></details>}
       <details>
         <summary>Environment and actual commands</summary>
         <pre>{JSON.stringify({ environment: job.environment, limits: job.limits, commandOverride: job.commandOverride,
@@ -341,14 +396,26 @@ function App() {
   }
   useEffect(() => { if (runJob?.status !== "RUNNING") void refreshHistory(); }, [runJob?.status]);
   function updateAcceptance(field, value) {
-    setAcceptance((current) => ({ ...current, [field]: value }));
+    setAcceptance((current) => ({ ...current, [field]: value, ...(field !== "candidateReview" && current.candidateReview
+      ? { candidateReview: { ...current.candidateReview, confirmed: false } } : {}) }));
     setPreflight(null);
     setRunConfirmed(false);
   }
   const activeWorkflow = report.workflows?.find((workflow) => workflow.id === selectedWorkflow)
     ?? report.workflows?.[0]
     ?? null;
-  const displayedPlan = activeWorkflow ?? report.reproductionPlan;
+  const selectedCandidate = report.evaluationDraft?.entries.find((entry) => entry.id === acceptance.candidateReview?.entryId);
+  const displayedPlan = selectedCandidate ? candidateWorkflow(report, selectedCandidate) : activeWorkflow ?? report.reproductionPlan;
+
+  function applyCandidate(options) {
+    setSelectedWorkflow("evaluation");
+    setQuickCommand(options.quickCommand);
+    setAcceptance({ ...emptyAcceptance, ...options.evaluation, expectedText: options.expectedText, outputFile: options.outputFile,
+      metricKey: options.metricKey, metricOperator: options.metricOperator, metricTarget: options.metricTarget === null ? "" : String(options.metricTarget),
+      candidateReview: options.candidateReview });
+    setPreflight(null); setRunConfirmed(false); setRunJob(null); setPreflightError("");
+    document.getElementById("runner-title")?.focus();
+  }
 
   const runScan = useCallback(async (targetUrl, benchmarkId) => {
     setLoading(true);
@@ -448,6 +515,7 @@ function App() {
           workflowId: activeWorkflow.id,
           executionOptions: acceptance.benchmarkId ? { benchmarkId: acceptance.benchmarkId } : { quickCommand, expectedText: acceptance.expectedText, outputFile: acceptance.outputFile, metricKey: acceptance.metricKey,
             metricOperator: acceptance.metricOperator, metricTarget: acceptance.metricTarget === "" ? null : Number(acceptance.metricTarget), metricTolerance: acceptance.metricOperator === "eq" ? Number(acceptance.metricTolerance) : 0,
+            ...(acceptance.candidateReview ? { candidateReview: acceptance.candidateReview } : {}),
             evaluation: activeWorkflow.id === "evaluation" ? { dataset: acceptance.dataset, model: acceptance.model, reference: acceptance.reference, assetsInEntry: acceptance.assetsInEntry } : null },
         }),
       });
@@ -670,7 +738,7 @@ function App() {
                   {report.workflows ? "Reproduction workflows" : "Reproduction plan"}
                 </p>
                 <h2 id="plan-title">
-                  {activeWorkflow?.title ?? "From repository to first run"}
+                  {displayedPlan.title ?? activeWorkflow?.title ?? "From repository to first run"}
                 </h2>
                 {report.workflows && (
                   <div className="workflow-tabs" role="tablist" aria-label="Reproduction workflow">
@@ -757,15 +825,17 @@ function App() {
           </section>
         )}
 
+        {!isExample && report.evaluationDraft && !acceptance.benchmarkId && <CandidateConfig key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onApply={applyCandidate} />}
+
         {!isExample && activeWorkflow && (
           <section className="runner" aria-labelledby="runner-title">
             <div className="runner-heading">
               <div>
                 <p className="eyebrow">Isolated execution preview</p>
-                <h2 id="runner-title">Check before running unknown code</h2>
+                <h2 id="runner-title" tabIndex={-1}>Check before running unknown code</h2>
                 <p>Re-scan the pinned commit and inspect the local Docker runner.</p>
               </div>
-              <button type="button" onClick={checkPreflight} disabled={executionBusy}>
+              <button type="button" onClick={checkPreflight} disabled={executionBusy || (acceptance.candidateReview && !acceptance.candidateReview.confirmed)}>
                 {preflightLoading ? "Checking…" : "Check local runner"}
               </button>
             </div>
@@ -788,7 +858,7 @@ function App() {
                 <input id="quick-command" value={quickCommand} maxLength={6000}
                   placeholder="Leave blank to use the README entry point"
                   disabled={optionsLocked}
-                  onChange={(event) => { setQuickCommand(event.target.value); setPreflight(null); setRunConfirmed(false); }} />
+                  onChange={(event) => { setQuickCommand(event.target.value); if (acceptance.candidateReview) updateAcceptance("candidateReview", { ...acceptance.candidateReview, confirmed: false }); setPreflight(null); setRunConfirmed(false); }} />
                 <p className="hint">Replaces the final entry point, not dependency installation. Evaluation can use an explicit reviewed entry when none was detected. Review every effective command below.</p>
                 {quickCommand === cpuEvaluationCommand && <details><summary>Review CPU evaluation example source</summary><pre className="evaluation-source">{cpuEvaluationSource}</pre></details>}
                 <label htmlFor="expected-text">Expected text in the entry output (optional)</label>
@@ -817,6 +887,8 @@ function App() {
                   <label className="runner-confirm"><input type="checkbox" checked={acceptance.assetsInEntry} disabled={optionsLocked}
                     onChange={(event) => updateAcceptance("assetsInEntry", event.target.checked)} />My reviewed entry handles dataset and model preparation; replace separate data/model steps explicitly.</label>
                   <p className="hint">Required: a new/changed JSON file and numeric metric. Use 0.95 for 95% if the output uses fractions. Context is user-declared; CPU/2 GB/10 minute limits still apply.</p>
+                  {acceptance.candidateReview && <label className="runner-confirm"><input type="checkbox" checked={acceptance.candidateReview.confirmed}
+                    onChange={(event) => updateAcceptance("candidateReview", { ...acceptance.candidateReview, confirmed: event.target.checked })} />I reviewed the candidate sources, completed missing fields, and confirmed this command, dataset/split, model and reference correspond. Editing any field requires review again.</label>}
                 </>}
               </fieldset>
             )}
@@ -830,6 +902,7 @@ function App() {
                 {preflight.commandOverride && <p className="runner-note">User-reviewed override · original: {preflight.commandOverride.original}</p>}
                 {preflight.preparationOverride && <details><summary>Explicit dataset/model preparation override</summary><pre>{JSON.stringify(preflight.preparationOverride, null, 2)}</pre></details>}
                 {preflight.benchmark && <details><summary>Reviewed compatibility profile, hash locks and original README steps</summary><pre className="evaluation-source">{JSON.stringify(preflight.benchmark, null, 2)}</pre></details>}
+                {preflight.candidate && <details><summary>Reviewed generated configuration and manual changes</summary><pre className="evaluation-source">{JSON.stringify(preflight.candidate, null, 2)}</pre></details>}
                 <ol>
                   {preflight.automatedSteps.map((step) => (
                     <li key={step.id}><span>{step.title}</span><code className="command">{step.effectiveCommand ?? step.command}</code></li>
@@ -942,6 +1015,7 @@ function App() {
               <p className="runner-note">{replayPreview.benchmark.compatibility.note}</p>
               <details><summary>Frozen benchmark input hashes and pinned reference</summary><pre>{JSON.stringify(replayPreview.benchmark, null, 2)}</pre></details>
             </>}
+            {replayPreview.candidate && <details><summary>Frozen reviewed candidate sources</summary><pre>{JSON.stringify(replayPreview.candidate, null, 2)}</pre></details>}
             <ol>{replayPreview.automatedSteps.map((step) => <li key={step.id}><strong>{step.title}</strong><code className="command">{step.command}</code></li>)}</ol>
             <details><summary>Locked dependencies and output expectations</summary><pre>{JSON.stringify({ dependencies: replayPreview.recipe.dependencies, expectations: replayPreview.executionOptions }, null, 2)}</pre></details>
             {replayPreview.recipe.warnings.map((warning) => <p className="runner-note" key={warning}>{warning}</p>)}

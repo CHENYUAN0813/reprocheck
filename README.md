@@ -60,6 +60,28 @@ The new run keeps its own evidence and a comparison with its baseline. **SAME** 
 
 This version replays local recipes from saved records, not arbitrary uploaded JSON. It supports index packages and the container's default Python entry point; direct/editable/VCS dependencies and alternate environment managers need stronger artifact locks. Version pins are not wheel hashes or a guarantee of identical package binaries/build tools. External datasets/checkpoints, hardware and random state are not automatically frozen. A recipe helps repeat and compare a small experiment; it does not certify full paper reproduction.
 
+### Scan-generated Evaluation candidates
+
+Normal scans now include an `evaluationDraft` without a repository-specific preset. It reuses the bounded source sample to associate runnable README commands (or clearly labelled inferred evaluation scripts), literal JSON outputs or labelled printed metrics, exact numeric README lines/flat table columns, and dataset/model/split declarations. Every candidate carries a pinned file/line. Narrative ranges, arbitrary Python semantics, tables embedded in images and paper protocol equivalence are not inferred.
+
+On the page, choose **Build an Evaluation from this scan**, select the matching entry/output/reference, then **Use candidates in Evaluation form**. Missing fields remain empty. Review the source and complete/correct dataset, split, model and reference declarations. If the original entry prepares its own data/model, explicitly select that existing preparation override. Confirm candidate correspondence before **Check local runner**; any field edit resets this confirmation. The separate unknown-code execution confirmation is still required. Choosing/loading/reviewing candidates never starts a container.
+
+The generic labelled-stdout adapter executes the original reviewed command, forwards its output, and saves its actual printed metric in a fresh `reprocheck-evaluation.json`. It does not copy the reference into observations. It requires exactly one complete finite labelled score with the reviewed units; absent/duplicate scores, unit changes and entry failures fail rather than guessing. Percent/fraction values are not silently converted. Native JSON candidates still require verification of the correct key and repository-relative output path. Choosing a reference explicitly associated with a different README command is rejected.
+
+The local backend regenerates the candidate selections from its scan, rejects unknown source IDs/unconfirmed configurations, and records sources plus manual changes in preflight, execution evidence and frozen recipes. Frozen replay retains the saved source context/commands instead of regenerating a new candidate. Source correspondence is **user-reviewed, not independently verified**: README example output is not necessarily a published paper result, and generic candidates do not acquire the reviewed Iris case's dataset/checkpoint hash gates.
+
+`npm run test:candidates` opts into real public downloads and the bounded Docker runner. It derives the KNN case in [KTS-o7/AIML-Lab](https://github.com/KTS-o7/AIML-Lab) from its own README/source, compares its actual printed accuracy with the README candidate, checks frozen replay, tests independent score observation and duplicate-score rejection, and scans BTHOWeN/MiniMind to check incomplete candidate coverage. It does not use an AIML-specific execution adapter or add an AIML preset. Only the KNN case executes; other repository scans do not claim reproduction. Ordinary `npm test` covers candidate extraction/review/provenance offline.
+
+Measured locally on 2026-09-15 (coverage depends on the pinned source and five-file sample):
+
+| Repository / pinned commit | Observed candidate coverage / outcome |
+| --- | --- |
+| `KTS-o7/AIML-Lab` · `0a5250ac2c4610fc354eea3bd645fc253cae4439` | KNN command, stdout label, builtin Iris/split/model declarations and README line 99 extracted; original entry printed `0.9778`, matching the README example with zero tolerance. Frozen replay was `SAME`. This is an educational software example, not a paper benchmark. |
+| `ZSusskind/BTHOWeN` · `94e33e4ce3e46e8e88a409dcca044e5f7544858d` | One inferred evaluation script and 11 table references, including Iris `0.98`; no literal supported output capture. Generic configuration remains incomplete; the separately reviewed Iris preset still supplies stronger input locks and compatibility preparation. |
+| `jingyaogong/minimind` · `7a9137d2e90294df80ce9178b89e82657e19f5a7` | 13 possible entry commands, no exact supported reference value or output capture in the sample. Scan-only; model/data preparation and metric extraction still require explicit review. |
+
+The KNN run and frozen replay each took about 18 seconds on this computer; these are observations, not download/execution speed guarantees. Negative checks reject unconfirmed/unknown source selections and duplicate scores; a controlled probe observed `0.41` independently of a `0.91` target. The existing reviewed Iris case and Micrograd runner regressions also passed. Local run archives remain ignored by Git.
+
 ### Small CPU Evaluation
 
 Evaluation requires a fresh JSON output file, numeric metric/target, and explicit dataset/split, model/checkpoint and reference-source declarations. Conditions can be thresholds or `reference ± absolute tolerance`; values must use the same units (for example, `0.95` versus `95`). Reports separate command success from **MATCHED_REFERENCE**, **OUTSIDE_REFERENCE** and **INCOMPLETE**. A missing/invalid metric or failed text/file check never counts as a matched reference.
@@ -113,10 +135,10 @@ For the opt-in published Iris case, run `npm run test:benchmark` with the local 
 ## Current limitations
 
 - Public GitHub repositories only
-- README, the primary dependency file, and up to five likely training/configuration files are analyzed; other files are checked by path
+- README, the primary dependency file, and up to five likely evaluation/training/configuration files are analyzed; other files are checked by path
 - Quick verification and CPU-limited Evaluation can run only through the local Docker-backed server; Training remains disabled
 - Hosted Sites deployments provide static scanning but not Docker execution
 - Local run history is single-user JSON storage; interrupted runs cannot recover their final outcome after a server restart
 - Official PyPI override supports a single pip install command, not arbitrary compound shell/Poetry/uv installs
-- Output checks require explicit expectations; paper metrics and binary artifacts are not automatically inferred or reproduced
+- Output checks require explicit reviewed expectations; literal metric candidates can assist configuration but do not establish paper protocol equivalence or export binary artifacts
 - Recipe replay requires the observed local image and index packages available as wheels; downloaded recipe JSON is not an import/execution interface
