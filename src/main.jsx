@@ -197,7 +197,7 @@ function downloadJson(data, filename) {
   URL.revokeObjectURL(blobUrl);
 }
 
-function ExecutionEvidence({ job }) {
+function ExecutionEvidence({ job, onPrepareReplay, replayDisabled }) {
   const labels = { VERIFIED: "Configured checks passed", FAILED: "Output checks failed", INCOMPLETE: "Verification incomplete",
     NOT_CONFIGURED: "No output checks configured", PENDING: "Waiting for execution" };
   return (
@@ -222,6 +222,21 @@ function ExecutionEvidence({ job }) {
       {job.status !== "RUNNING" && (
         <a className="download-button evidence-download" href={`/api/runs/${job.id}?download=1`} download={`reprocheck-run-${job.id}.json`}>Download execution evidence</a>
       )}
+      {job.recipe && <div className="recipe-actions">
+        <a className="download-button evidence-download" href={`/api/runs/${job.id}/recipe?download=1`} download={`reprocheck-recipe-${job.id}.json`}>Download frozen recipe</a>
+        <button type="button" onClick={() => onPrepareReplay(job.id)} disabled={replayDisabled}>Review frozen recipe</button>
+      </div>}
+      {!job.recipe && job.status === "SUCCEEDED" && <p className="runner-note">Recipe unavailable: {job.recipeUnavailableReason ?? "This record predates recipe capture; run again."}</p>}
+      {job.comparison && <div className="run-comparison">
+        <h3>Compared with baseline · {job.comparison.status}</h3>
+        <p className="hint">Baseline {job.comparison.baselineRunId}. Exact observed comparison, not proof of paper reproduction or full stdout equality.</p>
+        <ul className="verification-checks">
+          {job.comparison.rows.map((row) => <li key={row.id}>
+            <strong>{row.status}</strong> · {row.id}{row.key && ` (${row.key})`}{row.delta !== undefined && ` · delta: ${row.delta ?? "unknown"}`}
+            <details><summary>Baseline / replay values</summary><pre>{JSON.stringify({ baseline: row.baseline, replay: row.current }, null, 2)}</pre></details>
+          </li>)}
+        </ul>
+      </div>}
     </div>
   );
 }
@@ -245,6 +260,43 @@ function App() {
   const [history, setHistory] = useState([]);
   const [historyError, setHistoryError] = useState("");
   const [archivedJob, setArchivedJob] = useState(null);
+  const [replayPreview, setReplayPreview] = useState(null);
+  const [replayConfirmed, setReplayConfirmed] = useState(false);
+  const [replayLoading, setReplayLoading] = useState(false);
+  const [replayError, setReplayError] = useState("");
+  const executionBusy = loading || preflightLoading || runLoading || replayLoading || runJob?.status === "RUNNING";
+  useEffect(() => { if (replayPreview) document.getElementById("recipe-title")?.focus(); }, [replayPreview]);
+  useEffect(() => { if (runJob?.id) document.getElementById("current-execution")?.focus(); }, [runJob?.id]);
+  async function prepareReplay(id) {
+    setReplayLoading(true);
+    setReplayError("");
+    setReplayConfirmed(false);
+    setReplayPreview(null);
+    try {
+      const response = await fetch(`/api/runs/${id}/replay-preflight`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to prepare the recipe");
+      setReplayPreview(result);
+    } catch (failure) { setReplayError(failure.message); }
+    finally { setReplayLoading(false); }
+  }
+  async function startReplay() {
+    setRunLoading(true);
+    setReplayError("");
+    try {
+      const response = await fetch(`/api/runs/${replayPreview.replayOf}/replay`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmUnknownCode: true, recipeFingerprint: replayPreview.recipe.fingerprint }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to start replay");
+      setRunJob(result);
+      setReplayConfirmed(false);
+      setRunConfirmed(false);
+    } catch (failure) { setReplayError(failure.message); }
+    finally { setRunLoading(false); }
+  }
   async function refreshHistory() {
     try {
       const response = await fetch("/api/runs");
@@ -484,7 +536,7 @@ function App() {
                 placeholder="https://github.com/owner/repository"
                 required
               />
-              <button type="submit" disabled={loading || runLoading || runJob?.status === "RUNNING"}>
+              <button type="submit" disabled={executionBusy}>
                 {loading ? "Scanning…" : "Scan repository"}
               </button>
             </div>
@@ -571,7 +623,7 @@ function App() {
                         type="button"
                         role="tab"
                         aria-selected={workflow.id === activeWorkflow?.id}
-                        disabled={runLoading || runJob?.status === "RUNNING"}
+                        disabled={executionBusy}
                         onClick={() => {
                           setSelectedWorkflow(workflow.id);
                           setPreflight(null);
@@ -656,7 +708,7 @@ function App() {
                 <h2 id="runner-title">Check before running unknown code</h2>
                 <p>Re-scan the pinned commit and inspect the local Docker runner.</p>
               </div>
-              <button type="button" onClick={checkPreflight} disabled={preflightLoading || runLoading || runJob?.status === "RUNNING"}>
+              <button type="button" onClick={checkPreflight} disabled={executionBusy}>
                 {preflightLoading ? "Checking…" : "Check local runner"}
               </button>
             </div>
@@ -725,7 +777,7 @@ function App() {
                 <button
                   type="button"
                   onClick={() => startExecution("readme")}
-                  disabled={!preflight.runnable || !runConfirmed || optionsLocked}
+                  disabled={!preflight.runnable || !runConfirmed || executionBusy}
                 >
                   {runLoading ? "Starting…" : "Run Quick verification"}
                 </button>
@@ -734,11 +786,14 @@ function App() {
                 )}
               </div>
             )}
+          </section>
+        )}
             {runJob && (
+              <section className="runner" id="current-execution" tabIndex={-1} aria-label="Current execution">
               <div className="run-log" aria-live="polite">
                 <div>
                   <strong>
-                    Execution {runJob.status.replaceAll("_", " ")} · {runJob.packageIndex === "pypi" ? "Official PyPI" : "README package source"}
+                    Execution {runJob.status.replaceAll("_", " ")} · {runJob.replayOf ? "Locked recipe" : runJob.packageIndex === "pypi" ? "Official PyPI" : "README package source"}
                   </strong>
                   {runJob.status === "RUNNING" && (
                     <button className="download-button" type="button" onClick={cancelExecution}>Cancel</button>
@@ -757,17 +812,16 @@ function App() {
                 {runJob.diagnosis && <p className="run-diagnosis">{runJob.diagnosis}</p>}
                 {["FAILED", "TIMED_OUT"].includes(runJob.status)
                   && runJob.failureStep?.id === "install"
-                  && runJob.packageIndex === "readme" && (
-                    <button type="button" onClick={() => startExecution("pypi", runJob)} disabled={runLoading || !runConfirmed}>
+                  && !runJob.replayOf && runJob.packageIndex === "readme" && (
+                    <button type="button" onClick={() => startExecution("pypi", runJob)} disabled={executionBusy || !runConfirmed || !!runJob.replayOf}>
                       {runLoading ? "Starting…" : "Retry with official PyPI"}
                     </button>
                 )}
-                <ExecutionEvidence job={runJob} />
+                <ExecutionEvidence job={runJob} onPrepareReplay={prepareReplay} replayDisabled={executionBusy} />
                 <pre>{runJob.log || "Starting isolated container…"}</pre>
               </div>
+              </section>
             )}
-          </section>
-        )}
         <section className="runner run-history" aria-labelledby="history-title">
           <div className="runner-heading">
             <div><p className="eyebrow">Local evidence archive</p><h2 id="history-title">Recent executions</h2>
@@ -786,10 +840,29 @@ function App() {
             <div><strong>{archivedJob.repository} · {archivedJob.status}</strong><button className="download-button" type="button" onClick={() => setArchivedJob(null)}>Close record</button></div>
             <p className="commit">{archivedJob.id} · Commit {archivedJob.commit}</p>
             {archivedJob.diagnosis && <p className="run-diagnosis">{archivedJob.diagnosis}</p>}
-            <ExecutionEvidence job={archivedJob} />
+            <ExecutionEvidence job={archivedJob} onPrepareReplay={prepareReplay} replayDisabled={executionBusy} />
             <pre>{archivedJob.log || "No log captured."}</pre>
           </div>}
         </section>
+        {(replayPreview || replayLoading || replayError) && <section className="runner recipe-preview" aria-labelledby="recipe-title">
+          <div className="runner-heading"><div><p className="eyebrow">Frozen reproduction recipe</p><h2 id="recipe-title" tabIndex={-1}>Review before replaying</h2></div>
+            <button className="download-button" type="button" disabled={executionBusy} onClick={() => { setReplayPreview(null); setReplayError(""); setReplayConfirmed(false); }}>Close recipe</button></div>
+          {replayLoading && <p role="status">Checking the exact local image…</p>}
+          {replayError && <p className="runner-error" role="alert">{replayError}</p>}
+          {replayPreview && <>
+            <p>{replayPreview.repository} · pinned commit {replayPreview.commit}</p>
+            <p className="hint">The saved commit is fetched directly; changes to the latest GitHub branch do not change this recipe.</p>
+            <p className="commit">Image {replayPreview.recipe.imageId} · Python {replayPreview.recipe.python}</p>
+            <p className="hint">{replayPreview.limits.cpus} CPUs · {replayPreview.limits.memory} · {replayPreview.limits.timeoutMinutes} minute limit · no host mounts</p>
+            <ol>{replayPreview.automatedSteps.map((step) => <li key={step.id}><strong>{step.title}</strong><code className="command">{step.command}</code></li>)}</ol>
+            <details><summary>Locked dependencies and output expectations</summary><pre>{JSON.stringify({ dependencies: replayPreview.recipe.dependencies, expectations: replayPreview.executionOptions }, null, 2)}</pre></details>
+            {replayPreview.recipe.warnings.map((warning) => <p className="runner-note" key={warning}>{warning}</p>)}
+            {!replayPreview.runnable && <p className="runner-error" role="alert">{replayPreview.reason}</p>}
+            <label className="runner-confirm"><input type="checkbox" checked={replayConfirmed} disabled={executionBusy}
+              onChange={(event) => setReplayConfirmed(event.target.checked)} />I reviewed this frozen recipe and understand it re-runs untrusted code with network access in a new temporary container.</label>
+            <button type="button" disabled={!replayPreview.runnable || !replayConfirmed || executionBusy} onClick={startReplay}>{runLoading ? "Starting…" : "Replay frozen recipe"}</button>
+          </>}
+        </section>}
       </main>
     </div>
   );

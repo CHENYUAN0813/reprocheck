@@ -90,6 +90,7 @@ a:focus-visible {
 
 main {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 24px;
   padding-top: 48px;
 }
@@ -629,6 +630,31 @@ code {
   margin: 16px 0;
 }
 
+.recipe-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.run-comparison {
+  margin-top: 24px;
+}
+
+.recipe-preview {
+  overflow-wrap: anywhere;
+}
+
+.recipe-preview li {
+  margin-top: 16px;
+}
+
+.recipe-preview pre {
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
 .history-list {
   display: grid;
   gap: 12px;
@@ -698,6 +724,7 @@ code {
 }
 
 .runner-confirm input {
+  flex-shrink: 0;
   width: 18px;
   height: 18px;
   margin-top: 3px;
@@ -724,6 +751,7 @@ code {
 
 .run-log > div {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 16px;

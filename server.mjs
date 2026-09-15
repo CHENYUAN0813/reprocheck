@@ -4,10 +4,12 @@ import { createServer as createViteServer } from "vite";
 import {
   buildDockerInvocation,
   buildPreflight,
+  buildReplayPreflight,
   cancelRun,
   diagnoseRun,
   getRun,
   inspectRuntime,
+  inspectLockedImage,
   listRuns,
   rewritePackageIndex,
   startRun,
@@ -51,6 +53,42 @@ async function handleApi(request, response) {
       sendJson(response, 403, { error: "Local API requests must come from this ReproCheck origin" });
       return true;
     }
+  }
+  const recipeRoute = url.pathname.match(/^\/api\/runs\/([\w-]+)\/(recipe|replay-preflight|replay)$/);
+  if (recipeRoute) {
+    const [, id, action] = recipeRoute;
+    const allowedMethod = action === "recipe" ? "GET" : "POST";
+    if (request.method !== allowedMethod) {
+      response.setHeader("Allow", allowedMethod);
+      sendJson(response, 405, { error: "Method not allowed" });
+      return true;
+    }
+    try {
+      const baseline = getRun(id);
+      if (!baseline) { sendJson(response, 404, { error: "Baseline run not found" }); return true; }
+      if (!baseline.recipe) { sendJson(response, 409, { error: baseline.recipeUnavailableReason ?? "This record predates recipe capture; run again" }); return true; }
+      if (action === "recipe") {
+        if (url.searchParams.get("download") === "1") response.setHeader("Content-Disposition", `attachment; filename="reprocheck-recipe-${id}.json"`);
+        sendJson(response, 200, baseline.recipe);
+        return true;
+      }
+      if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) throw new Error("API POST requests must use application/json");
+      const input = await readJson(request);
+      if (!input || typeof input !== "object" || Array.isArray(input)
+        || Object.keys(input).some((key) => !["confirmUnknownCode", "recipeFingerprint"].includes(key))) throw new Error("Replay conditions are frozen; only the recipe fingerprint and execution confirmation are accepted");
+      if (action === "replay" && input.confirmUnknownCode !== true) throw new Error("Explicit confirmation is required before replaying unknown code");
+      const runtime = await inspectRuntime();
+      const imageAvailable = runtime.available && await inspectLockedImage(baseline.recipe.imageId);
+      const preflight = buildReplayPreflight(baseline, runtime, imageAvailable);
+      if (action === "replay" && input.recipeFingerprint !== preflight.recipe.fingerprint) {
+        sendJson(response, 409, { error: "Recipe fingerprint changed or was not reviewed; review the frozen recipe again" });
+        return true;
+      }
+      if (action === "replay-preflight") sendJson(response, 200, preflight);
+      else if (!preflight.runnable) sendJson(response, 409, { error: preflight.reason, preflight });
+      else sendJson(response, 202, startRun(preflight));
+    } catch (error) { sendJson(response, 400, { error: error.message ?? "Unable to prepare the locked recipe" }); }
+    return true;
   }
   if (url.pathname === "/api/runs") {
     if (request.method !== "GET") {
@@ -254,6 +292,9 @@ async function selfTest() {
     assert.equal(history.status, 200);
     assert.ok(Array.isArray((await history.json()).runs));
     assert.equal((await worker.fetch(new Request("https://reprocheck.test/api/runs"), {})).status, 501);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/api/runs/missing/recipe`)).status, 404);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/api/runs/missing/recipe`, { method: "POST" })).status, 405);
+    assert.equal((await worker.fetch(new Request("https://reprocheck.test/api/runs/missing/replay"), {})).status, 501);
     console.log("PASS  API self-test");
   } finally {
     await new Promise((resolve) => server.close(resolve));
