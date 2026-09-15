@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { rewritePackageIndex, validateExecutionOptions, verifyOutcome } from "./runner.mjs";
+import { buildDockerInvocation, buildReplayPreflight, compareRuns, createRecipe, rewritePackageIndex, validateExecutionOptions, verifyOutcome } from "./runner.mjs";
 import { getSavedRun, listSavedRuns, saveRun } from "./run-store.mjs";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -24,7 +24,40 @@ assert.equal(verifyOutcome({ ...sample, log: sample.log.replace('"fresh":true', 
 assert.equal(verifyOutcome({ ...sample, log: sample.log.replace('"value":0.95', '"value":0.5') }).status, "FAILED");
 assert.equal(verifyOutcome({ ...sample, status: "FAILED" }).status, "INCOMPLETE");
 assert.equal(verifyOutcome({ ...sample, executionOptions: {} }).status, "NOT_CONFIGURED");
+assert.equal(verifyOutcome({ ...sample, log: sample.log.replace('"value":0.95', '"value":1e400') }).status, "FAILED");
+assert.equal(verifyOutcome({ ...sample, log: '::reprocheck-evidence::{"dependencies":{}}\n' }).status, "INCOMPLETE");
 console.log("PASS  output verification self-test");
+
+const frozen = { ...sample, id: randomUUID(), repository: "owner/repo", commit: "a".repeat(40), workflowId: "quick", packageIndex: "readme",
+  steps: [{ id: "install", title: "Install", command: "pip install example==1.0" }, { id: "run", title: "Run", command: "python demo.py" }],
+  environment: { imageId: `sha256:${"b".repeat(64)}`, python: "3.11.9", platform: "Linux-test", capture: "before-entry", unlockedDependencies: [] },
+  dependencies: ["example==1.0", "pip==24.0"], artifact: { sha256: "c".repeat(64) }, metric: { value: 0.95 }, verification: verifyOutcome(sample),
+  limits: { cpus: 2, memory: "2 GB", timeoutMinutes: 10, hostMounts: false, networkAccess: true, image: "python:3.11" },
+};
+const recipe = createRecipe(frozen);
+assert.match(recipe.fingerprint, /^[a-f\d]{64}$/);
+assert.equal(recipe.fingerprint, createRecipe(frozen).fingerprint);
+assert.equal(recipe.imageId, frozen.environment.imageId);
+assert.deepEqual(recipe.executionOptions, validateExecutionOptions(sample.executionOptions));
+assert.throws(() => createRecipe({ ...frozen, status: "FAILED" }), /Pass configured/);
+assert.throws(() => createRecipe({ ...frozen, environment: { ...frozen.environment, imageId: "python:3.11" } }), /exact Docker/);
+assert.throws(() => createRecipe({ ...frozen, environment: { ...frozen.environment, capture: "after-failure" } }), /pre-entry/);
+assert.throws(() => createRecipe({ ...frozen, dependencies: ["pip==24.0\n--index-url evil"] }), /safely restored/);
+assert.throws(() => createRecipe({ ...frozen, environment: { ...frozen.environment, unlockedDependencies: ["local-project"] } }), /artifact lock/);
+const replayPreview = buildReplayPreflight(frozen, { available: true }, true);
+assert.equal(replayPreview.runnable, true);
+assert.equal(buildReplayPreflight(frozen, { available: true }, false).runnable, false);
+const replayArgs = buildDockerInvocation(replayPreview, "reprocheck-test");
+assert.ok(replayArgs.includes(frozen.environment.imageId));
+assert.ok(replayArgs.includes("never"));
+assert.match(replayArgs.at(-1), /PIP_CONSTRAINT/);
+assert.match(replayArgs.at(-1), /example==1\.0/);
+assert.equal(compareRuns(frozen, frozen).status, "SAME");
+assert.equal(compareRuns(frozen, { ...frozen, artifact: { sha256: "d".repeat(64) }, metric: { value: 0.96 } }).status, "DIFFERENT");
+assert.equal(compareRuns(frozen, { ...frozen, status: "FAILED" }).status, "INCOMPLETE");
+assert.equal(compareRuns(frozen, { ...frozen, metric: null }).status, "INCOMPLETE");
+assert.equal(compareRuns(frozen, { ...frozen, status: "RUNNING" }).status, "PENDING");
+console.log("PASS  locked recipe and comparison self-test");
 
 const directory = mkdtempSync(join(tmpdir(), "reprocheck-record-test-"));
 try {
@@ -35,6 +68,8 @@ try {
   saveRun({ ...record, status: "RUNNING" }, directory);
   assert.equal(getSavedRun(record.id, directory).status, "INTERRUPTED");
   assert.equal(getSavedRun(record.id, directory).verification.status, "INCOMPLETE");
+  saveRun({ ...record, status: "RUNNING", comparison: { status: "PENDING", baselineRunId: frozen.id, rows: [] } }, directory);
+  assert.equal(getSavedRun(record.id, directory).comparison.status, "INCOMPLETE");
   assert.equal(getSavedRun("../../secret", directory), null);
   assert.throws(() => saveRun({ id: "../../secret" }, directory), /Invalid/);
   writeFileSync(join(directory, `${randomUUID()}.json`), "null");
@@ -100,6 +135,66 @@ if (process.argv.includes("--docker")) {
   assert.match(attachment.headers.get("content-disposition"), /attachment; filename="reprocheck-run-/);
   assert.equal((await attachment.json()).id, job.id);
   console.log("PASS  completed evidence recovered from a new process");
+  assert.equal(job.environment.capture, "before-entry");
+  assert.ok(job.recipe, job.recipeUnavailableReason);
+  const recipeDownload = await fetch(`${base}/api/runs/${job.id}/recipe?download=1`);
+  assert.equal(recipeDownload.status, 200);
+  assert.match(recipeDownload.headers.get("content-disposition"), /attachment/);
+  const downloadedRecipe = await recipeDownload.json();
+  assert.equal(downloadedRecipe.imageId, job.environment.imageId);
+  assert.equal(downloadedRecipe.fingerprint, job.recipe.fingerprint);
+  const frozenPreview = await request(`/api/runs/${job.id}/replay-preflight`, {});
+  assert.equal(frozenPreview.runnable, true);
+  const noConfirm = await fetch(`${base}/api/runs/${job.id}/replay`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  assert.equal(noConfirm.status, 400);
+  const changedRecipe = await fetch(`${base}/api/runs/${job.id}/replay`, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmUnknownCode: true, recipeFingerprint: "changed" }) });
+  assert.equal(changedRecipe.status, 409);
+  const overrideRecipe = await fetch(`${base}/api/runs/${job.id}/replay`, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmUnknownCode: true, quickCommand: "python changed.py" }) });
+  assert.equal(overrideRecipe.status, 400);
+  async function replayRecord(baselineJob) {
+    let result = await request(`/api/runs/${baselineJob.id}/replay`, { confirmUnknownCode: true, recipeFingerprint: baselineJob.recipe.fingerprint });
+    const deadline = Date.now() + 120_000;
+    while (result.status === "RUNNING" && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      result = await request(`/api/runs/${result.id}`);
+    }
+    if (result.status === "RUNNING") {
+      await fetch(`${base}/api/runs/${result.id}`, { method: "DELETE" });
+      assert.fail("Replay exceeded its test deadline and was cancelled");
+    }
+    return result;
+  }
+  const repeated = await replayRecord(job);
+  assert.equal(repeated.status, "SUCCEEDED", repeated.log);
+  assert.equal(repeated.verification.status, "VERIFIED");
+  assert.equal(repeated.replayOf, job.id);
+  assert.equal(repeated.environment.imageId, job.environment.imageId);
+  assert.deepEqual(repeated.dependencies, job.dependencies);
+  assert.equal(repeated.comparison.status, "SAME", JSON.stringify(repeated.comparison));
+  assert.ok(repeated.comparison.rows.every((row) => row.status === "SAME"));
+  console.log("PASS  frozen source/image/dependencies replay with matching output hash and metric");
+  const collector = readFileSync(new URL("./collect-evidence.py", import.meta.url), "utf8");
+  await assert.rejects(promisify(execFile)("docker", ["run", "--rm", "--pull", "never", "--cpus", "2", "--memory", "2g",
+    "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--network", "none", job.environment.imageId,
+    "python", "-c", collector, JSON.stringify({ lockedEnvironment: { python: job.environment.python, dependencies: ["missing-lock-package==1.0"] } }), "environment"],
+    { timeout: 15_000, windowsHide: true }), (error) => /Locked Python\/dependency environment does not match/.test(error.stderr));
+  console.log("PASS  actual container refuses an inconsistent pre-entry dependency lock");
+  const recoveredReplay = JSON.parse((await promisify(execFile)(process.execPath, ["--input-type=module", "-e",
+    `import { getRun } from './runner.mjs'; console.log(JSON.stringify(getRun('${repeated.id}')));`], { windowsHide: true })).stdout);
+  assert.equal(recoveredReplay.comparison.status, "SAME");
+  assert.equal(recoveredReplay.recipe.fingerprint, repeated.recipe.fingerprint);
+
+  const varying = await execute({ ...executionOptions, quickCommand: executionOptions.quickCommand.replace('json.dump({"value":c.data', 'import time; json.dump({"nonce":time.time_ns(),"value":c.data') });
+  assert.equal(varying.verification.status, "VERIFIED");
+  const changedOutput = await replayRecord(varying);
+  assert.equal(changedOutput.status, "SUCCEEDED", changedOutput.log);
+  assert.equal(changedOutput.verification.status, "VERIFIED");
+  assert.equal(changedOutput.comparison.status, "DIFFERENT");
+  assert.equal(changedOutput.comparison.rows.find((row) => row.id === "output-hash").status, "DIFFERENT");
+  assert.equal(changedOutput.comparison.rows.find((row) => row.id === "metric").status, "SAME");
+  console.log("PASS  varying outputs are reported different even when metric expectations pass");
   const incorrect = await execute({ ...executionOptions, expectedText: "wrong-expectation", metricTarget: 4 });
   assert.equal(incorrect.status, "SUCCEEDED");
   assert.equal(incorrect.verification.status, "FAILED");

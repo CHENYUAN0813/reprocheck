@@ -50,13 +50,23 @@ The downloadable JSON evidence includes the source commit, original/reviewed/eff
 
 Snapshots are atomically saved under `.reprocheck/runs/` on this computer (ignored by Git). **Recent executions** lists the latest 30 records and lets you reopen/download them after a restart. If the server restarts during a run, the saved snapshot is marked **INTERRUPTED** with an unknown final outcome rather than falsely reporting success or failure. Log storage retains the last 200,000 characters; a save failure is displayed so the evidence can still be downloaded from memory.
 
+### Frozen recipes and replay comparisons
+
+A successful Quick run with passing output checks now embeds a **frozen recipe** in its local evidence record. The recipe contains the exact Git commit, observed Docker image ID, default Python version and dependency versions captured **before the entry point**, original/effective commands, resource limits, expectations, baseline file/metric observations, and a SHA-256 fingerprint. Older records without a pre-entry snapshot cannot be frozen; run them again first.
+
+Open a saved record, choose **Review frozen recipe**, review its steps and expectations, then explicitly confirm and select **Replay frozen recipe**. Replay fetches the saved commit directly instead of re-scanning the latest branch. It requires the exact image to remain locally available, uses `--pull never`, restores pinned packages from official PyPI with wheels only, and applies pip constraints to the saved preparation commands. It checks the default Python version and the complete installed-version set before allowing the entry point to run. It never silently substitutes a newer image or package version. The reviewed fingerprint must still match when execution starts. Pip constraints limit versions but do not install packages themselves; the separate restore step does that ([pip documentation](https://pip.pypa.io/en/stable/user_guide/#constraints-files)). Docker supports content-addressed image references ([Docker documentation](https://docs.docker.com/engine/containers/run/)).
+
+The new run keeps its own evidence and a comparison with its baseline. **SAME** means the configured observations matched exactly, **DIFFERENT** lists observed differences, and **INCOMPLETE** means execution/checks failed or required observations are missing. Comparisons cover source, image, Python, reported platform, installed versions, saved commands, limits, expectations, expected-text check outcome, output file hash and numeric metric delta. Passing a threshold alone does not imply identical results. Text comparison compares the expected-text check, not entire stdout; numeric metrics use exact equality, without an implicit tolerance. Comparison evidence survives server restarts too.
+
+This version replays local recipes from saved records, not arbitrary uploaded JSON. It supports index packages and the container's default Python entry point; direct/editable/VCS dependencies and alternate environment managers need stronger artifact locks. Version pins are not wheel hashes or a guarantee of identical package binaries/build tools. External datasets/checkpoints, hardware and random state are not automatically frozen. A recipe helps repeat and compare a small experiment; it does not certify full paper reproduction.
+
 ## Self-test
 
 `node scan.mjs --self-test`
 
 GitHub Actions runs the self-tests and production build on every push and pull request.
 
-For the opt-in real Docker integration check, start the local server and run `npm run test:docker`. It scans the pinned Micrograd source, executes a reviewed scalar-autodiff example, verifies text/file/gradient evidence, reloads the evidence in a new process, and checks that deliberately incorrect expectations fail. It does not run Micrograd's default pytest suite or reproduce a published benchmark.
+For the opt-in real Docker integration check, start the local server and run `npm run test:docker`. It scans the pinned Micrograd source, executes a reviewed scalar-autodiff example, verifies text/file/gradient evidence, reloads the evidence in a new process, replays the frozen recipe with matching output, reports deliberately varying output as different, and checks that deliberately incorrect expectations fail. It does not run Micrograd's default pytest suite or reproduce a published benchmark.
 
 ## Current checks
 
@@ -85,3 +95,4 @@ For the opt-in real Docker integration check, start the local server and run `np
 - Local run history is single-user JSON storage; interrupted runs cannot recover their final outcome after a server restart
 - Official PyPI override supports a single pip install command, not arbitrary compound shell/Poetry/uv installs
 - Output checks require explicit expectations; paper metrics and binary artifacts are not automatically inferred or reproduced
+- Recipe replay requires the observed local image and index packages available as wheels; downloaded recipe JSON is not an import/execution interface
