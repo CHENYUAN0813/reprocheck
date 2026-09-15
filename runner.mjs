@@ -3,11 +3,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual, promisify } from "node:util";
 import { readFileSync } from "node:fs";
 import { getSavedRun, listSavedRuns, saveRun } from "./run-store.mjs";
-import { candidateWorkflow, reviewedCandidate } from "./evaluation-config.mjs";
+import { candidateWorkflow, captureMetricCommand, reviewedCandidate } from "./evaluation-config.mjs";
+import { MODEL_EXPORT_LIMIT, validateExperiment } from "./experiment-config.mjs";
 
 const execFileAsync = promisify(execFile);
 const jobs = new Map();
-const LOG_LIMIT = 200_000;
+const LOG_LIMIT = 900_000;
 const collector = readFileSync(new URL("./collect-evidence.py", import.meta.url), "utf8");
 export const reviewedBenchmark = JSON.parse(readFileSync(new URL("./examples/bthowen-iris.json", import.meta.url), "utf8"));
 const trainingProfile = JSON.parse(readFileSync(new URL("./examples/bthowen-training.json", import.meta.url), "utf8"));
@@ -66,6 +67,8 @@ export function validateExecutionOptions(input = {}) {
   const metricTolerance = input.metricTolerance ?? 0;
   const evaluation = input.evaluation ?? null;
   const candidateReview = input.candidateReview ?? null;
+  const experiment = input.experiment == null ? null : validateExperiment(input.experiment);
+  if (experiment && (benchmarkId || candidateReview)) throw new Error("A custom experiment cannot be mixed with a reviewed preset/candidate");
   if (candidateReview !== null && (benchmarkId || typeof candidateReview !== "object" || Array.isArray(candidateReview)
     || Object.keys(candidateReview).some((key) => !["entryId", "referenceId", "outputId", "confirmed", "argumentValues"].includes(key))
     || (candidateReview.argumentValues !== undefined && (!candidateReview.argumentValues || typeof candidateReview.argumentValues !== "object" || Array.isArray(candidateReview.argumentValues)
@@ -91,20 +94,23 @@ export function validateExecutionOptions(input = {}) {
       || ["dataset", "model", "reference"].some((key) => typeof evaluation[key] !== "string" || !evaluation[key].trim() || evaluation[key].length > 500 || /\0/.test(evaluation[key]))
       || typeof evaluation.assetsInEntry !== "boolean") throw new Error("Evaluation needs dataset, model, reference source and an explicit asset-preparation choice");
   }
-  return { ...(benchmarkId ? { benchmarkId } : {}), ...(candidateReview ? { candidateReview: { ...candidateReview } } : {}), quickCommand: quickCommand.trim(), expectedText, outputFile, metricKey, metricOperator, metricTarget, metricTolerance,
+  if (experiment && (!quickCommand.trim() || !evaluation || evaluation.assetsInEntry || !metricKey || metricTarget === null || outputFile === experiment.checkpoint)) throw new Error("Experiment needs a separate evaluator, metric output and declared evaluation context; checkpoint and score paths must differ");
+  return { ...(benchmarkId ? { benchmarkId } : {}), ...(candidateReview ? { candidateReview: { ...candidateReview } } : {}), ...(experiment ? { experiment } : {}), quickCommand: quickCommand.trim(), expectedText, outputFile, metricKey, metricOperator, metricTarget, metricTolerance,
     evaluation: evaluation ? { dataset: evaluation.dataset.trim(), model: evaluation.model.trim(), reference: evaluation.reference.trim(), assetsInEntry: evaluation.assetsInEntry } : null };
 }
 
 export function buildPreflight(report, workflowId, runtime, packageIndex = "readme", options = {}) {
   const executionOptions = validateExecutionOptions(options);
   const { quickCommand } = executionOptions;
+  const experiment = executionOptions.experiment;
+  if (experiment && (workflowId !== "training" || experiment.repository !== report.repository || experiment.commit !== report.commit)) throw new Error("Custom experiment requires Training and its reviewed pinned repository/commit");
   if (executionOptions.candidateReview && workflowId !== "evaluation") throw new Error("Generated candidates apply only to Evaluation");
   const candidate = executionOptions.candidateReview ? reviewedCandidate(report, executionOptions.candidateReview, executionOptions) : null;
   let workflow = report.workflows?.find((candidate) => candidate.id === workflowId);
   if (!workflow) throw new Error("A valid reproduction workflow is required");
   if (candidate) workflow = candidateWorkflow(report, candidate.entry);
   const benchmark = executionOptions.benchmarkId ? { ...(executionOptions.benchmarkId === reviewedTraining.id ? reviewedTraining : reviewedBenchmark), originalSteps: report.reproductionPlan?.steps ?? [] } : null;
-  const reviewedTrainingRun = workflowId === "training" && !!benchmark?.training;
+  const reviewedTrainingRun = workflowId === "training" && (!!benchmark?.training || !!experiment);
   if (benchmark) {
     if (!isDeepStrictEqual(executionOptions, benchmarkOptions(benchmark.id))) throw new Error("Reviewed benchmark commands and reference conditions are fixed; use a custom Evaluation instead");
     if (workflowId !== (benchmark.training ? "training" : "evaluation") || report.repository !== benchmark.repository || report.commit !== benchmark.commit) throw new Error("Reviewed benchmark requires its pinned repository, commit and matching Training/Evaluation workflow");
@@ -115,6 +121,12 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
       { id: "evaluation-benchmark", title: benchmark.training ? "Evaluate newly trained checkpoint with the original entry" : "Run original Iris evaluation entry and collect its score", status: "DOCUMENTED", command: benchmarkCommand("evaluate") },
     ] };
   }
+  if (experiment) workflow = { id: "training", title: experiment.title, status: "USER_REVIEWED_EXPERIMENT", steps: [
+    ...(experiment.installCommand.trim() ? [{ id: "install", title: "Install reviewed experiment dependencies", status: "DOCUMENTED", command: experiment.installCommand }] : []),
+    ...(experiment.prepareCommand.trim() ? [{ id: "prepare-data", title: "Prepare experiment data", status: "DOCUMENTED", command: experiment.prepareCommand }] : []),
+    { id: "train", title: "Train and save a new model", status: "DOCUMENTED", command: experiment.trainCommand },
+    { id: "evaluate", title: "Evaluate the new model", status: "DOCUMENTED", command: captureMetricCommand(normalizeCommand(quickCommand, report.repository), experiment.capture, executionOptions.metricKey, executionOptions.outputFile) },
+  ] };
   if (quickCommand && !["quick", "evaluation"].includes(workflowId) && !reviewedTrainingRun) throw new Error("Only Quick and Evaluation support a reviewed command");
   if (workflowId === "evaluation" && (!executionOptions.evaluation || !executionOptions.metricKey || executionOptions.metricTarget === null)) throw new Error("Evaluation requires an output JSON/CSV metric and a declared dataset, model and reference source");
   if (workflowId !== "evaluation" && executionOptions.evaluation && !reviewedTrainingRun) throw new Error("Evaluation context is only accepted for Evaluation workflows");
@@ -126,7 +138,7 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
     : workflow.steps;
   const entry = originalSteps.at(-1);
   if (quickCommand && !entry) throw new Error("No Quick entry point is available to replace");
-  const steps = originalSteps.filter((step) => !assetsInEntry || !["data", "model"].includes(step.id)).map((step) => step === entry && quickCommand
+  const steps = originalSteps.filter((step) => !assetsInEntry || !["data", "model"].includes(step.id)).map((step) => step === entry && quickCommand && !experiment
     ? { ...step, command: quickCommand, instruction: null, status: "REVIEWED_OVERRIDE" }
     : step);
 
@@ -160,11 +172,11 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
     executionOptions,
     benchmark,
     candidate,
-    commandOverride: quickCommand && !benchmark ? { original: entry.command, actual: quickCommand, origin: "user-reviewed" } : null,
+    commandOverride: quickCommand && !benchmark && !experiment ? { original: entry.command, actual: quickCommand, origin: "user-reviewed" } : null,
     runtime,
     preparationOverride: assetsInEntry ? { origin: "user-reviewed", instruction: "Dataset and model preparation are handled by the reviewed entry command", originalSteps: originalSteps.filter((step) => ["data", "model"].includes(step.id)) } : null,
     runnable: (["quick", "evaluation"].includes(workflowId) || reviewedTrainingRun) && runtime.available && automatedSteps.length > 0 && blockers.length === 0,
-    reason: !["quick", "evaluation"].includes(workflowId) && !reviewedTrainingRun ? "Training requires the reviewed Iris training case; arbitrary Training execution is not enabled"
+    reason: !["quick", "evaluation"].includes(workflowId) && !reviewedTrainingRun ? "Training requires a confirmed custom experiment configuration or the reviewed Iris case"
       : !runtime.available ? runtime.reason : blockers.length ? "The workflow has missing or blocked steps"
         : !automatedSteps.length ? "No executable commands were found" : null,
     automatedSteps: automatedSteps.map((step) => ({ ...step,
@@ -212,7 +224,8 @@ function sourceSteps(job) {
 
 export function createRecipe(job) {
   if (job.status !== "SUCCEEDED" || job.verification?.status !== "VERIFIED") throw new Error("Pass configured output checks before freezing a recipe");
-  if ((!["quick", "evaluation"].includes(job.workflowId) && !(job.workflowId === "training" && job.benchmark?.training)) || !/^[\w.-]+\/[\w.-]+$/.test(job.repository) || !/^[a-f\d]{40}$/i.test(job.commit)) throw new Error("Invalid executable source identity");
+  if ((!["quick", "evaluation"].includes(job.workflowId) && !(job.workflowId === "training" && (job.benchmark?.training || job.executionOptions?.experiment))) || !/^[\w.-]+\/[\w.-]+$/.test(job.repository) || !/^[a-f\d]{40}$/i.test(job.commit)) throw new Error("Invalid executable source identity");
+  if (job.executionOptions?.experiment && (job.executionOptions.experiment.repository !== job.repository || job.executionOptions.experiment.commit !== job.commit)) throw new Error("Experiment source context does not match the saved record");
   if (job.executionOptions?.benchmarkId && (job.benchmark?.id !== job.executionOptions.benchmarkId || job.benchmark.repository !== job.repository
     || job.benchmark.commit !== job.commit)) throw new Error("Reviewed benchmark asset/source locks are missing from the saved record");
   if (job.executionOptions?.candidateReview && (job.candidate?.repository !== job.repository || job.candidate?.commit !== job.commit)) throw new Error("Reviewed candidate source context is missing from the saved record");
@@ -263,7 +276,7 @@ export function buildReplayPreflight(baseline, runtime, imageAvailable) {
     automatedSteps: [
       { id: "restore-lock", title: "Restore pinned dependency versions", command: "python -m pip install --no-deps --only-binary=:all: --index-url https://pypi.org/simple -r /tmp/reprocheck-lock.txt" },
       ...recipe.commands.flatMap((step, index) => [
-        ...((recipe.benchmark?.training ? step.id === "training-benchmark" : index === recipe.commands.length - 1)
+        ...((recipe.benchmark?.training ? step.id === "training-benchmark" : recipe.executionOptions.experiment ? step.id === "train" : index === recipe.commands.length - 1)
           ? [{ id: "verify-lock", title: "Verify Python and dependency lock", command: "Verify the observed pre-entry environment against the recipe" }] : []),
         step,
       ]),
@@ -289,6 +302,7 @@ export function compareRuns(baseline, current) {
   compare("dependencies", normalize(baseline.dependencies), normalize(current.dependencies));
   compare("commands", sourceSteps(baseline).map((step) => step.command), sourceSteps(current).map((step) => step.command));
   compare("expectations", validateExecutionOptions(baseline.executionOptions), validateExecutionOptions(current.executionOptions));
+  if (baseline.executionOptions?.experiment) compare("trained-checkpoint", baseline.trainingCheckpoint?.sha256, current.trainingCheckpoint?.sha256);
   if (baseline.candidate) compare("candidate-sources", baseline.candidate, current.candidate);
   compare("limits", baseline.limits && { ...baseline.limits, image: undefined }, current.limits && { ...current.limits, image: undefined });
   if (baseline.executionOptions?.expectedText) compare("text-check", baseline.verification?.checks?.find((check) => check.id === "text")?.status,
@@ -332,7 +346,8 @@ export function buildDockerInvocation(preflight, containerName) {
       "export PIP_CONSTRAINT=/tmp/reprocheck-lock.txt PIP_ONLY_BINARY=:all:",
     ] : []),
     ...preflight.automatedSteps.flatMap((step) => [
-      ...(!preflight.recipe && (preflight.benchmark?.training ? step.id === "training-benchmark" : step === preflight.automatedSteps.at(-1)) ? ["collect environment"] : []),
+      ...(!preflight.recipe && (preflight.benchmark?.training ? step.id === "training-benchmark" : options.experiment ? step.id === "train" : step === preflight.automatedSteps.at(-1)) ? ["collect environment"] : []),
+      ...(options.experiment && step.id === "evaluate" ? ["collect checkpoint"] : []),
       ...(preflight.benchmark?.training && step.id === "evaluation-benchmark" ? ["collect inputs"] : []),
       `echo ::reprocheck-step::${step.id.replace(/[^\w.-]/g, "-")}`,
       "cd /workspace",
@@ -411,9 +426,9 @@ export function readEvidence(log) {
     if (evidence.referenceEvidence != null && (typeof evidence.referenceEvidence !== "object" || Array.isArray(evidence.referenceEvidence))) return null;
     if (evidence.trainingCheckpoint?.base64) {
       const model = evidence.trainingCheckpoint;
-      if (typeof model.base64 !== "string" || model.base64.length > 87384 || !/^[A-Za-z0-9+/]+={0,2}$/.test(model.base64)) return null;
+      if (typeof model.base64 !== "string" || model.base64.length > Math.ceil(MODEL_EXPORT_LIMIT / 3) * 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(model.base64)) return null;
       const bytes = Buffer.from(model.base64, "base64");
-      if (bytes.length !== model.size || bytes.length > 65536 || createHash("sha256").update(bytes).digest("hex") !== model.sha256) return null;
+      if (bytes.length !== model.size || bytes.length > MODEL_EXPORT_LIMIT || bytes.toString("base64") !== model.base64 || createHash("sha256").update(bytes).digest("hex") !== model.sha256) return null;
     }
     return evidence;
   } catch { return null; }
@@ -450,6 +465,12 @@ export function verifyOutcome(job) {
     status: !evidence ? "UNKNOWN" : !evidence.metric?.error && metricMatches(evidence.metric?.value, options) ? "PASSED" : "FAILED",
     observed: evidence?.metric ?? null,
   });
+  if (options.experiment) {
+    const observed = evidence?.trainingCheckpoint;
+    checks.push({ id: "trained-checkpoint", expected: `New ${options.experiment.checkpoint}, saved during training and unchanged during evaluation`,
+      status: !observed ? "UNKNOWN" : observed.path === options.experiment.checkpoint && observed.fresh === true && observed.status === "PASSED" && !!observed.base64 ? "PASSED" : "FAILED",
+      observed: observed ? { ...observed, base64: undefined } : null });
+  }
   if (job.benchmark) {
     if (job.benchmark.training) {
       const observed = evidence?.trainingCheckpoint;
@@ -489,6 +510,7 @@ function publicJob(job) {
     assets: evidence?.assets ?? null,
     referenceEvidence: evidence?.referenceEvidence ?? null,
     trainingCheckpoint: evidence?.trainingCheckpoint ?? null,
+    experiment: job.executionOptions?.experiment ?? null,
     commandOverride: job.commandOverride,
     preparationOverride: job.preparationOverride ?? null,
     environment: { ...evidence?.environment, image: job.limits.image, imageId: job.imageId ?? null, docker: job.runtime },
@@ -541,7 +563,7 @@ function persist(job) {
 }
 
 export function startRun(preflight) {
-  if (!["quick", "evaluation"].includes(preflight.workflow.id) && !(preflight.workflow.id === "training" && preflight.benchmark?.training)) throw new Error("Only Quick, Evaluation and reviewed Iris Training can run in this version");
+  if (!["quick", "evaluation"].includes(preflight.workflow.id) && !(preflight.workflow.id === "training" && (preflight.benchmark?.training || preflight.executionOptions?.experiment))) throw new Error("Training requires a confirmed experiment or reviewed Iris case");
   if (!preflight.runnable) throw new Error("The selected workflow is not ready to run");
 
   const id = randomUUID();

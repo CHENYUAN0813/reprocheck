@@ -7,6 +7,7 @@ import json
 import platform
 import re
 import sys
+import time
 from pathlib import Path
 
 options = json.loads(sys.argv[1])
@@ -15,6 +16,10 @@ baseline = Path("/tmp/reprocheck-baseline.json")
 environment_file = Path("/tmp/reprocheck-environment.json")
 assets_file = Path("/tmp/reprocheck-assets.json")
 checkpoint_baseline = Path("/tmp/reprocheck-checkpoint-before.json")
+experiment = options.get("experiment")
+checkpoint_after = Path("/tmp/reprocheck-checkpoint-after.json")
+training_started = Path("/tmp/reprocheck-training-started.json")
+model_export_limit = 512 * 1024
 
 
 def observe_environment():
@@ -74,7 +79,17 @@ def observe_benchmark():
 
 
 artifact = observe_file()
-if sys.argv[2] == "inputs":
+if sys.argv[2] == "checkpoint":
+    # Gate evaluation on a newly produced, bounded model. Never delete a preset model.
+    initial = json.loads(checkpoint_baseline.read_text())
+    observed = observe_file(experiment["checkpoint"])
+    if initial["exists"] or observed.get("error") or not 0 < observed.get("size", 0) <= model_export_limit:
+        raise RuntimeError("Training must produce a new model file up to 512 KiB before evaluation")
+    observed["trainingSeconds"] = time.monotonic() - json.loads(training_started.read_text())
+    checkpoint_after.write_text(json.dumps(observed))
+    # A score created by training is not proof that evaluation produced a result.
+    baseline.write_text(json.dumps(artifact), encoding="utf-8")
+elif sys.argv[2] == "inputs":
     identities = observe_benchmark()
     if identities and (any(asset["status"] != "PASSED" for asset in identities["assets"]) or identities["referenceEvidence"]["status"] != "PASSED"):
         raise RuntimeError("Reviewed inputs changed after training; evaluation entry was not run")
@@ -84,6 +99,12 @@ elif sys.argv[2] == "environment":
     # Preparation output is not evidence that the final entry produced anything.
     baseline.write_text(json.dumps(artifact), encoding="utf-8")
     training = (options.get("benchmark") or {}).get("training")
+    if experiment:
+        initial = observe_file(experiment["checkpoint"])
+        checkpoint_baseline.write_text(json.dumps(initial))
+        training_started.write_text(json.dumps(time.monotonic()))
+        if initial["exists"] or initial.get("error"):
+            raise RuntimeError("Custom training must start without an existing output checkpoint")
     if training:
         initial = observe_file(training["checkpoint"])
         checkpoint_baseline.write_text(json.dumps(initial))
@@ -160,6 +181,20 @@ else:
             identities["referenceEvidence"]["status"] = "UNKNOWN" if not before else "FAILED"
     training_checkpoint = None
     training = (options.get("benchmark") or {}).get("training")
+    if experiment:
+        training_checkpoint = {**observe_file(experiment["checkpoint"]), "status": "FAILED"}
+        try:
+            initial = json.loads(checkpoint_baseline.read_text())
+            trained = json.loads(checkpoint_after.read_text())
+            if initial["exists"] or training_checkpoint.get("error") or not 0 < training_checkpoint.get("size", 0) <= model_export_limit:
+                raise ValueError("Expected a new model file up to 512 KiB")
+            model_bytes = (root / experiment["checkpoint"]).resolve().read_bytes()
+            if hashlib.sha256(model_bytes).hexdigest() != trained["sha256"] or len(model_bytes) != trained["size"]:
+                raise ValueError("New checkpoint changed during evaluation")
+            training_checkpoint.update(fresh=True, status="PASSED", trainingSeconds=trained["trainingSeconds"],
+                                       base64=base64.b64encode(model_bytes).decode())
+        except Exception as error:
+            training_checkpoint["error"] = str(error)
     if training:
         training_checkpoint = {**observe_file(training["checkpoint"]), "status": "FAILED"}
         try:
@@ -181,5 +216,5 @@ else:
         "evaluationOutput": evaluation_output,
         **({"trainingCheckpoint": training_checkpoint} if training_checkpoint else {}),
     }
-    # ponytail: only this reviewed <=64 KiB model is exported; no generic directory/archive export.
+    # ponytail: one <=512 KiB experiment model (reviewed Iris <=64 KiB); directories/large models need streamed artifact storage.
     print("\n::reprocheck-evidence::" + json.dumps(evidence, allow_nan=False))
