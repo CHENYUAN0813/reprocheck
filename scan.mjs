@@ -1,3 +1,5 @@
+import { buildEvaluationDraft } from "./evaluation-config.mjs";
+
 function expectEqual(actual, expected) {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
@@ -504,6 +506,7 @@ function standalonePlan(report) {
     experimentParameters: report.experimentParameters,
     entrypoints: report.entrypoints,
     workflows: report.workflows,
+    evaluationDraft: report.evaluationDraft,
   };
 }
 
@@ -653,6 +656,9 @@ export async function scan(input, token, pinnedCommit) {
   // ponytail: inspect five likely source files; widen only when API usage and accuracy are measured.
   const codeCandidates = [
     ...new Set([
+      ...entrypointsWithReferences.filter((entry) => entry.category === "evaluation").flatMap((entry) => entry.references)
+        .filter((reference) => reference.exists && /\.py$/i.test(reference.path)).map((reference) => reference.path),
+      ...filePaths.filter((path) => /(?:^|\/)(?:eval(?:uate)?|benchmark)[\w-]*\.py$/i.test(path)).slice(0, 2),
       ...commandReferences
         .filter((reference) => reference.exists && /\.(?:py|ya?ml|toml|json)$/i.test(reference.path))
         .map((reference) => reference.path),
@@ -697,6 +703,7 @@ export async function scan(input, token, pinnedCommit) {
     parameters: entrypoints[0]?.parameters ?? [],
   });
   const workflows = buildWorkflows(reproductionPlan, entrypoints);
+  const evaluationDraft = buildEvaluationDraft({ readme, readmeText, entrypoints, files: codeFiles });
 
   const checks = [
     {
@@ -906,6 +913,7 @@ export async function scan(input, token, pinnedCommit) {
     entrypoints,
     workflows,
     reproductionPlan,
+    evaluationDraft,
   };
 }
 
