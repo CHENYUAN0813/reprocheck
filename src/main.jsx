@@ -197,6 +197,35 @@ function downloadJson(data, filename) {
   URL.revokeObjectURL(blobUrl);
 }
 
+function ExecutionEvidence({ job }) {
+  const labels = { VERIFIED: "Configured checks passed", FAILED: "Output checks failed", INCOMPLETE: "Verification incomplete",
+    NOT_CONFIGURED: "No output checks configured", PENDING: "Waiting for execution" };
+  return (
+    <div className="execution-evidence">
+      <h3>Output verification · {labels[job.verification?.status] ?? "Not available"}</h3>
+      <p className="hint">Execution success alone does not prove paper reproducibility. These checks validate only the expectations you supplied.</p>
+      {job.persistenceError && <p className="runner-error" role="alert">{job.persistenceError} — download the evidence now.</p>}
+      {job.logTruncated && <p className="runner-note">Only the last 200,000 log characters are retained.</p>}
+      <ul className="verification-checks">
+        {job.verification?.checks?.map((check) => (
+          <li key={check.id}><strong>{check.status}</strong> · {check.id}: <code>{check.expected}</code>
+            {check.observed && <pre>{JSON.stringify(check.observed, null, 2)}</pre>}
+          </li>
+        ))}
+      </ul>
+      <details>
+        <summary>Environment and actual commands</summary>
+        <pre>{JSON.stringify({ environment: job.environment, limits: job.limits, commandOverride: job.commandOverride,
+          commands: job.steps, dependencies: job.dependencies, experimentParameters: job.experimentParameters,
+          note: "Extracted parameter defaults are not proof of the values or seeds actually used." }, null, 2)}</pre>
+      </details>
+      {job.status !== "RUNNING" && (
+        <a className="download-button evidence-download" href={`/api/runs/${job.id}?download=1`} download={`reprocheck-run-${job.id}.json`}>Download execution evidence</a>
+      )}
+    </div>
+  );
+}
+
 function App() {
   const [url, setUrl] = useState("");
   const [report, setReport] = useState(exampleReport);
@@ -210,6 +239,36 @@ function App() {
   const [runConfirmed, setRunConfirmed] = useState(false);
   const [runJob, setRunJob] = useState(null);
   const [runLoading, setRunLoading] = useState(false);
+  const optionsLocked = preflightLoading || runLoading || runJob?.status === "RUNNING";
+  const [quickCommand, setQuickCommand] = useState("");
+  const [acceptance, setAcceptance] = useState({ expectedText: "", outputFile: "", metricKey: "", metricOperator: "gte", metricTarget: "" });
+  const [history, setHistory] = useState([]);
+  const [historyError, setHistoryError] = useState("");
+  const [archivedJob, setArchivedJob] = useState(null);
+  async function refreshHistory() {
+    try {
+      const response = await fetch("/api/runs");
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to load history");
+      setHistory(result.runs);
+      setHistoryError("");
+    } catch (historyFailure) { setHistoryError(historyFailure.message); }
+  }
+  async function openHistory(id) {
+    try {
+      const response = await fetch(`/api/runs/${id}`);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Unable to load the record");
+      setArchivedJob(result);
+      setHistoryError("");
+    } catch (historyFailure) { setHistoryError(historyFailure.message); }
+  }
+  useEffect(() => { if (runJob?.status !== "RUNNING") void refreshHistory(); }, [runJob?.status]);
+  function updateAcceptance(field, value) {
+    setAcceptance((current) => ({ ...current, [field]: value }));
+    setPreflight(null);
+    setRunConfirmed(false);
+  }
   const activeWorkflow = report.workflows?.find((workflow) => workflow.id === selectedWorkflow)
     ?? report.workflows?.[0]
     ?? null;
@@ -235,6 +294,8 @@ function App() {
       setPreflight(null);
       setRunConfirmed(false);
       setRunJob(null);
+      setQuickCommand("");
+      setAcceptance({ expectedText: "", outputFile: "", metricKey: "", metricOperator: "gte", metricTarget: "" });
       return result;
     } catch (scanError) {
       setError(scanError.message || "Unable to scan this repository");
@@ -282,6 +343,7 @@ function App() {
           url: `https://github.com/${report.repository}`,
           commit: report.commit,
           workflowId: activeWorkflow.id,
+          executionOptions: { quickCommand, ...acceptance, metricTarget: acceptance.metricTarget === "" ? null : Number(acceptance.metricTarget) },
         }),
       });
       const result = await response.json();
@@ -294,7 +356,7 @@ function App() {
     }
   }
 
-  async function startExecution(packageIndex = "readme") {
+  async function startExecution(packageIndex = "readme", previousJob = null) {
     setRunLoading(true);
     setPreflightError("");
 
@@ -303,10 +365,11 @@ function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          url: `https://github.com/${report.repository}`,
-          commit: report.commit,
-          workflowId: activeWorkflow.id,
+          url: `https://github.com/${previousJob?.repository ?? report.repository}`,
+          commit: previousJob?.commit ?? report.commit,
+          workflowId: previousJob?.workflowId ?? activeWorkflow.id,
           packageIndex,
+          executionOptions: previousJob?.executionOptions ?? preflight.executionOptions,
           confirmUnknownCode: true,
         }),
       });
@@ -421,7 +484,7 @@ function App() {
                 placeholder="https://github.com/owner/repository"
                 required
               />
-              <button type="submit" disabled={loading}>
+              <button type="submit" disabled={loading || runLoading || runJob?.status === "RUNNING"}>
                 {loading ? "Scanning…" : "Scan repository"}
               </button>
             </div>
@@ -508,11 +571,14 @@ function App() {
                         type="button"
                         role="tab"
                         aria-selected={workflow.id === activeWorkflow?.id}
+                        disabled={runLoading || runJob?.status === "RUNNING"}
                         onClick={() => {
                           setSelectedWorkflow(workflow.id);
                           setPreflight(null);
                           setRunConfirmed(false);
                           setRunJob(null);
+                          setQuickCommand("");
+                          setAcceptance({ expectedText: "", outputFile: "", metricKey: "", metricOperator: "gte", metricTarget: "" });
                         }}
                         key={workflow.id}
                       >
@@ -590,12 +656,36 @@ function App() {
                 <h2 id="runner-title">Check before running unknown code</h2>
                 <p>Re-scan the pinned commit and inspect the local Docker runner.</p>
               </div>
-              <button type="button" onClick={checkPreflight} disabled={preflightLoading}>
+              <button type="button" onClick={checkPreflight} disabled={preflightLoading || runLoading || runJob?.status === "RUNNING"}>
                 {preflightLoading ? "Checking…" : "Check local runner"}
               </button>
             </div>
 
             {preflightError && <p className="runner-error" role="alert">{preflightError}</p>}
+            {activeWorkflow.id === "quick" && (
+              <div className="run-options">
+                <label htmlFor="quick-command">Reviewed Quick command (optional)</label>
+                <input id="quick-command" value={quickCommand} maxLength={2000}
+                  placeholder="Leave blank to use the README entry point"
+                  disabled={optionsLocked}
+                  onChange={(event) => { setQuickCommand(event.target.value); setPreflight(null); setRunConfirmed(false); }} />
+                <p className="hint">Replaces only the Quick entry point, not dependencies. Review the actual commands below before confirming.</p>
+                <label htmlFor="expected-text">Expected text in the Quick entry output (optional)</label>
+                <input id="expected-text" value={acceptance.expectedText} maxLength={300} disabled={optionsLocked}
+                  placeholder="For example: autodiff-ok" onChange={(event) => updateAcceptance("expectedText", event.target.value)} />
+                <label htmlFor="output-file">Expected new or changed output file (optional)</label>
+                <input id="output-file" value={acceptance.outputFile} maxLength={240} disabled={optionsLocked}
+                  placeholder="results/metrics.json — relative to the repository" onChange={(event) => updateAcceptance("outputFile", event.target.value)} />
+                <div className="metric-options">
+                  <label>JSON metric key (optional)<input value={acceptance.metricKey} maxLength={100} disabled={optionsLocked}
+                    placeholder="accuracy or evaluation.accuracy" onChange={(event) => updateAcceptance("metricKey", event.target.value)} /></label>
+                  <label>Condition<select value={acceptance.metricOperator} disabled={optionsLocked}
+                    onChange={(event) => updateAcceptance("metricOperator", event.target.value)}><option value="gte">At least (≥)</option><option value="lte">At most (≤)</option></select></label>
+                  <label>Target<input type="number" step="any" value={acceptance.metricTarget} disabled={optionsLocked}
+                    onChange={(event) => updateAcceptance("metricTarget", event.target.value)} /></label>
+                </div>
+              </div>
+            )}
             {preflight && (
               <div className="runner-result" aria-live="polite">
                 <div className={`runner-state ${preflight.runtime.available ? "runner-ready" : "runner-unavailable"}`}>
@@ -603,9 +693,10 @@ function App() {
                   <span>{preflight.limits.cpus} CPUs · {preflight.limits.memory} · {preflight.limits.timeoutMinutes} minute limit · no host mounts</span>
                 </div>
                 <h3>Automated steps</h3>
+                {preflight.commandOverride && <p className="runner-note">User-reviewed override · original: {preflight.commandOverride.original}</p>}
                 <ol>
                   {preflight.automatedSteps.map((step) => (
-                    <li key={step.id}><span>{step.title}</span><code className="command">{step.command}</code></li>
+                    <li key={step.id}><span>{step.title}</span><code className="command">{step.effectiveCommand ?? step.command}</code></li>
                   ))}
                 </ol>
                 {preflight.manualSteps.length > 0 && (
@@ -618,10 +709,15 @@ function App() {
                     </ul>
                   </>
                 )}
+                <p className="runner-note">Output checks: {preflight.executionOptions.expectedText || preflight.executionOptions.outputFile
+                  ? [preflight.executionOptions.expectedText && `text: ${preflight.executionOptions.expectedText}`, preflight.executionOptions.outputFile && `new/changed file: ${preflight.executionOptions.outputFile}`,
+                    preflight.executionOptions.metricKey && `metric: ${preflight.executionOptions.metricKey} ${preflight.executionOptions.metricOperator === "gte" ? ">=" : "<="} ${preflight.executionOptions.metricTarget}`].filter(Boolean).join(" · ")
+                  : "none — execution exit code only"}</p>
                 <label className="runner-confirm">
                   <input
                     type="checkbox"
                     checked={runConfirmed}
+                    disabled={optionsLocked}
                     onChange={(event) => setRunConfirmed(event.target.checked)}
                   />
                   I understand this runs untrusted code with network access inside a temporary Docker container.
@@ -629,12 +725,12 @@ function App() {
                 <button
                   type="button"
                   onClick={() => startExecution("readme")}
-                  disabled={!preflight.runnable || !runConfirmed || runLoading || runJob?.status === "RUNNING"}
+                  disabled={!preflight.runnable || !runConfirmed || optionsLocked}
                 >
                   {runLoading ? "Starting…" : "Run Quick verification"}
                 </button>
                 {!preflight.runnable && (
-                  <p className="runner-note">Start Docker Desktop, then check the local runner again.</p>
+                  <p className="runner-note">{preflight.reason ?? "The workflow is not ready to execute."}</p>
                 )}
               </div>
             )}
@@ -642,7 +738,7 @@ function App() {
               <div className="run-log" aria-live="polite">
                 <div>
                   <strong>
-                    Run {runJob.status.replaceAll("_", " ")} · {runJob.packageIndex === "pypi" ? "Official PyPI" : "README package source"}
+                    Execution {runJob.status.replaceAll("_", " ")} · {runJob.packageIndex === "pypi" ? "Official PyPI" : "README package source"}
                   </strong>
                   {runJob.status === "RUNNING" && (
                     <button className="download-button" type="button" onClick={cancelExecution}>Cancel</button>
@@ -662,15 +758,38 @@ function App() {
                 {["FAILED", "TIMED_OUT"].includes(runJob.status)
                   && runJob.failureStep?.id === "install"
                   && runJob.packageIndex === "readme" && (
-                    <button type="button" onClick={() => startExecution("pypi")} disabled={runLoading}>
+                    <button type="button" onClick={() => startExecution("pypi", runJob)} disabled={runLoading || !runConfirmed}>
                       {runLoading ? "Starting…" : "Retry with official PyPI"}
                     </button>
                 )}
+                <ExecutionEvidence job={runJob} />
                 <pre>{runJob.log || "Starting isolated container…"}</pre>
               </div>
             )}
           </section>
         )}
+        <section className="runner run-history" aria-labelledby="history-title">
+          <div className="runner-heading">
+            <div><p className="eyebrow">Local evidence archive</p><h2 id="history-title">Recent executions</h2>
+              <p>Records stay on this computer and survive server restarts. They are not uploaded to GitHub.</p></div>
+            <button className="download-button" type="button" onClick={refreshHistory}>Refresh history</button>
+          </div>
+          {historyError && <p className="runner-note" role="status">{historyError}</p>}
+          {history.length === 0 && !historyError && <p className="hint">No saved executions yet.</p>}
+          <ul className="history-list">
+            {history.map((entry) => <li key={entry.id}>
+              <div><strong>{entry.repository}</strong><p className="hint">Execution: {entry.status} · Output checks: {entry.verificationStatus} · commit {entry.commit.slice(0, 7)} · {new Date(entry.startedAt).toLocaleString()}</p></div>
+              <button className="download-button" type="button" onClick={() => openHistory(entry.id)}>View record</button>
+            </li>)}
+          </ul>
+          {archivedJob && <div className="run-log">
+            <div><strong>{archivedJob.repository} · {archivedJob.status}</strong><button className="download-button" type="button" onClick={() => setArchivedJob(null)}>Close record</button></div>
+            <p className="commit">{archivedJob.id} · Commit {archivedJob.commit}</p>
+            {archivedJob.diagnosis && <p className="run-diagnosis">{archivedJob.diagnosis}</p>}
+            <ExecutionEvidence job={archivedJob} />
+            <pre>{archivedJob.log || "No log captured."}</pre>
+          </div>}
+        </section>
       </main>
     </div>
   );

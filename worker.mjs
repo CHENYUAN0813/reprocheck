@@ -45,7 +45,7 @@ export default {
   fetch(request, env) {
     const pathname = new URL(request.url).pathname;
     if (pathname === "/api/scan") return handleScan(request, env);
-    if (pathname === "/api/preflight" || pathname === "/api/run" || pathname.startsWith("/api/runs/")) {
+    if (pathname === "/api/preflight" || pathname === "/api/run" || pathname === "/api/runs" || pathname.startsWith("/api/runs/")) {
       return json({ error: "The Docker runner is available only on the local ReproCheck server" }, 501);
     }
     return env.ASSETS.fetch(request);

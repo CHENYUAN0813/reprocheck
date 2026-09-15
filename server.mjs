@@ -8,9 +8,11 @@ import {
   diagnoseRun,
   getRun,
   inspectRuntime,
+  listRuns,
   rewritePackageIndex,
   startRun,
   summarizeSteps,
+  validateExecutionOptions,
 } from "./runner.mjs";
 import { scan } from "./scan.mjs";
 import worker from "./worker.mjs";
@@ -41,12 +43,36 @@ async function readJson(request) {
 
 async function handleApi(request, response) {
   const url = new URL(request.url || "/", "http://localhost");
+  if (url.pathname.startsWith("/api/")) {
+    const localOrigin = `http://${request.headers.host}`;
+    let localHost = false;
+    try { localHost = ["127.0.0.1", "localhost", "[::1]"].includes(new URL(localOrigin).hostname); } catch {}
+    if (!localHost || (request.headers.origin && request.headers.origin !== localOrigin)) {
+      sendJson(response, 403, { error: "Local API requests must come from this ReproCheck origin" });
+      return true;
+    }
+  }
+  if (url.pathname === "/api/runs") {
+    if (request.method !== "GET") {
+      response.setHeader("Allow", "GET");
+      sendJson(response, 405, { error: "Method not allowed" });
+    } else {
+      try { sendJson(response, 200, { runs: listRuns() }); }
+      catch { sendJson(response, 500, { error: "Unable to read local run history" }); }
+    }
+    return true;
+  }
   const runId = url.pathname.match(/^\/api\/runs\/([\w-]+)$/)?.[1];
 
   if (runId) {
     if (request.method === "GET") {
-      const job = getRun(runId);
-      sendJson(response, job ? 200 : 404, job ?? { error: "Run not found" });
+      try {
+        const job = getRun(runId);
+        if (job && url.searchParams.get("download") === "1") {
+          response.setHeader("Content-Disposition", `attachment; filename="reprocheck-run-${runId}.json"`);
+        }
+        sendJson(response, job ? 200 : 404, job ?? { error: "Run not found" });
+      } catch { sendJson(response, 500, { error: "Unable to read local run evidence" }); }
       return true;
     }
     if (request.method === "DELETE") {
@@ -68,11 +94,16 @@ async function handleApi(request, response) {
   }
 
   try {
+    if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+      throw new Error("API POST requests must use application/json");
+    }
     const input = await readJson(request);
 
     if (typeof input.url !== "string") {
       throw new Error("A GitHub repository URL is required");
     }
+
+    const executionOptions = validateExecutionOptions(input.executionOptions);
 
     const report = await scan(input.url, process.env.GITHUB_TOKEN);
     if (url.pathname === "/api/scan") {
@@ -91,7 +122,7 @@ async function handleApi(request, response) {
     if (!["readme", "pypi"].includes(packageIndex)) {
       throw new Error("Package index must be readme or pypi");
     }
-    const preflight = buildPreflight(report, input.workflowId, await inspectRuntime(), packageIndex);
+    const preflight = buildPreflight(report, input.workflowId, await inspectRuntime(), packageIndex, executionOptions);
     if (url.pathname === "/api/preflight") {
       sendJson(response, 200, preflight);
       return true;
@@ -100,7 +131,7 @@ async function handleApi(request, response) {
       throw new Error("Explicit confirmation is required before running unknown code");
     }
     if (!preflight.runnable) {
-      sendJson(response, 409, { error: preflight.runtime.reason ?? "The workflow is not ready", preflight });
+      sendJson(response, 409, { error: preflight.reason ?? "The workflow is not ready", preflight });
       return true;
     }
     sendJson(response, 202, startRun(preflight));
@@ -145,6 +176,13 @@ async function selfTest() {
 
     assert.equal(response.status, 400);
     assert.match(result.error, /github\.com/i);
+    const crossOrigin = await fetch(`http://127.0.0.1:${port}/api/run`, {
+      method: "POST", headers: { Origin: "https://other-site.example", "Content-Type": "application/json" }, body: "{}",
+    });
+    assert.equal(crossOrigin.status, 403);
+    const plainPost = await fetch(`http://127.0.0.1:${port}/api/run`, { method: "POST", body: "{}" });
+    assert.equal(plainPost.status, 400);
+    assert.match((await plainPost.json()).error, /application\/json/);
 
     const workerResponse = await worker.fetch(
       new Request("https://reprocheck.test/api/scan", {
@@ -172,6 +210,13 @@ async function selfTest() {
       { available: true, engine: "Docker", version: "1" },
     );
     assert.equal(preflight.runnable, true);
+    assert.throws(() => validateExecutionOptions({ quickCommand: "python test.py\nrm -rf /workspace" }), /single line/);
+    const reviewed = buildPreflight({
+      repository: "owner/repo", commit: "a".repeat(40),
+      workflows: [{ id: "quick", title: "Quick", status: "READY", steps: [{ id: "run", title: "Run", status: "DOCUMENTED", command: "python test.py" }] }],
+    }, "quick", { available: true }, "readme", { quickCommand: "python demo.py" });
+    assert.equal(reviewed.automatedSteps.at(-1).command, "python demo.py");
+    assert.equal(reviewed.commandOverride.original, "python test.py");
     assert.deepEqual(preflight.automatedSteps.map((step) => step.command), ["cd repo && python test.py"]);
     assert.equal(
       rewritePackageIndex("pip install -r requirements.txt -i https://slow.example/simple", "pypi"),
@@ -205,6 +250,10 @@ async function selfTest() {
     assert.equal(missingRun.status, 404);
     const hostedRun = await worker.fetch(new Request("https://reprocheck.test/api/run"), {});
     assert.equal(hostedRun.status, 501);
+    const history = await fetch(`http://127.0.0.1:${port}/api/runs`);
+    assert.equal(history.status, 200);
+    assert.ok(Array.isArray((await history.json()).runs));
+    assert.equal((await worker.fetch(new Request("https://reprocheck.test/api/runs"), {})).status, 501);
     console.log("PASS  API self-test");
   } finally {
     await new Promise((resolve) => server.close(resolve));

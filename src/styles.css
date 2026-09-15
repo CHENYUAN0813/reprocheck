@@ -23,12 +23,14 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
 button:focus-visible,
 input:focus-visible,
+select:focus-visible,
 a:focus-visible {
   outline: 3px solid #7aa2ff;
   outline-offset: 2px;
@@ -146,7 +148,8 @@ form label {
   gap: 10px;
 }
 
-input {
+input,
+select {
   width: 100%;
   min-width: 0;
   border: 1px solid #384354;
@@ -555,6 +558,20 @@ code {
   padding: 34px;
 }
 
+.runner button,
+.evidence-download {
+  min-height: 44px;
+}
+
+.evidence-download {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 10px;
+  padding: 8px 18px;
+  font-weight: 750;
+  text-decoration: none;
+}
+
 .runner-heading,
 .runner-state {
   display: flex;
@@ -577,6 +594,65 @@ code {
   margin-top: 28px;
   border-top: 1px solid #252d39;
   padding-top: 24px;
+}
+
+.run-options {
+  display: grid;
+  gap: 8px;
+  margin-top: 24px;
+}
+
+.run-options label {
+  color: #c8d0dc;
+  font-size: 0.9rem;
+}
+
+.metric-options {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.metric-options label {
+  display: grid;
+  gap: 8px;
+}
+
+.execution-evidence {
+  display: block !important;
+  margin: 24px 0 0;
+  border-top: 1px solid #252d39;
+  padding-top: 20px;
+}
+
+.execution-evidence details {
+  margin: 16px 0;
+}
+
+.history-list {
+  display: grid;
+  gap: 12px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.history-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  border-top: 1px solid #252d39;
+  padding-top: 12px;
+}
+
+.history-list li > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.verification-checks {
+  padding-left: 24px;
+  overflow-wrap: anywhere;
 }
 
 .runner-state {
@@ -748,6 +824,13 @@ code {
 }
 
 @media (max-width: 520px) {
+  .metric-options {
+    grid-template-columns: 1fr;
+  }
+
+  .history-list li {
+    flex-direction: column;
+  }
   .topbar {
     min-height: 62px;
   }
