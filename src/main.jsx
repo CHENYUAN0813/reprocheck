@@ -1,6 +1,10 @@
 import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
+import cpuEvaluationSource from "../examples/evaluate-micrograd.py?raw";
+
+const emptyAcceptance = { expectedText: "", outputFile: "", metricKey: "", metricOperator: "gte", metricTarget: "", metricTolerance: "0", dataset: "", model: "", reference: "", assetsInEntry: false };
+const cpuEvaluationCommand = `python -c 'exec(${JSON.stringify(cpuEvaluationSource).replaceAll("'", "'\"'\"'")})'`;
 
 const exampleParameters = [
   { name: "--epochs", default: "20", file: "train.py", line: 24 },
@@ -213,6 +217,18 @@ function ExecutionEvidence({ job, onPrepareReplay, replayDisabled }) {
           </li>
         ))}
       </ul>
+      {job.evaluation && <div className="run-comparison">
+        <h3>Evaluation report · {job.evaluation.status.replaceAll("_", " ")}</h3>
+        <p className="hint">Dataset, model and reference source below are user declarations, not independently verified paper claims.</p>
+        <dl className="evaluation-summary">
+          <dt>Dataset / split</dt><dd>{job.evaluation.dataset}</dd>
+          <dt>Model / checkpoint</dt><dd>{job.evaluation.model}</dd>
+          <dt>Reference source</dt><dd>{job.evaluation.reference}</dd>
+          <dt>Observed / reference</dt><dd>{job.evaluation.observedValue ?? "unknown"} / {job.evaluation.referenceValue} · {job.evaluation.metricKey}</dd>
+          <dt>Difference / tolerance</dt><dd>{job.evaluation.delta ?? "unknown"} / {job.evaluation.tolerance} · condition {job.evaluation.operator}</dd>
+        </dl>
+        {job.evaluation.output && <details><summary>Reported metrics and asset identifiers</summary><pre>{JSON.stringify(job.evaluation.output, null, 2)}</pre></details>}
+      </div>}
       <details>
         <summary>Environment and actual commands</summary>
         <pre>{JSON.stringify({ environment: job.environment, limits: job.limits, commandOverride: job.commandOverride,
@@ -256,7 +272,7 @@ function App() {
   const [runLoading, setRunLoading] = useState(false);
   const optionsLocked = preflightLoading || runLoading || runJob?.status === "RUNNING";
   const [quickCommand, setQuickCommand] = useState("");
-  const [acceptance, setAcceptance] = useState({ expectedText: "", outputFile: "", metricKey: "", metricOperator: "gte", metricTarget: "" });
+  const [acceptance, setAcceptance] = useState(emptyAcceptance);
   const [history, setHistory] = useState([]);
   const [historyError, setHistoryError] = useState("");
   const [archivedJob, setArchivedJob] = useState(null);
@@ -347,7 +363,7 @@ function App() {
       setRunConfirmed(false);
       setRunJob(null);
       setQuickCommand("");
-      setAcceptance({ expectedText: "", outputFile: "", metricKey: "", metricOperator: "gte", metricTarget: "" });
+      setAcceptance(emptyAcceptance);
       return result;
     } catch (scanError) {
       setError(scanError.message || "Unable to scan this repository");
@@ -360,6 +376,20 @@ function App() {
   function submit(event) {
     event.preventDefault();
     void runScan(url).catch(() => {});
+  }
+
+  async function loadCpuEvaluation() {
+    const targetUrl = "https://github.com/karpathy/micrograd";
+    setUrl(targetUrl);
+    try {
+      await runScan(targetUrl);
+      setSelectedWorkflow("evaluation");
+      setQuickCommand(cpuEvaluationCommand);
+      setAcceptance({ ...emptyAcceptance, expectedText: "evaluation-ok", outputFile: "evaluation-result.json", metricKey: "accuracy", metricOperator: "eq", metricTarget: "1", metricTolerance: "0.05",
+        dataset: "Synthetic separated-sign-x-v1; train 32 (seed 101), held-out test 48 (seed 202); generated and hashed in entry",
+        model: "Micrograd MLP [2,4,1]; seed 7, SGD 40 epochs, lr 0.1; checkpoint saved and reloaded in entry",
+        reference: "ReproCheck synthetic fixture target: accuracy 1.0 ± 0.05; NOT Micrograd moon data or a published benchmark", assetsInEntry: true });
+    } catch { /* The scan error is already displayed. */ }
   }
 
   function downloadReport() {
@@ -395,7 +425,9 @@ function App() {
           url: `https://github.com/${report.repository}`,
           commit: report.commit,
           workflowId: activeWorkflow.id,
-          executionOptions: { quickCommand, ...acceptance, metricTarget: acceptance.metricTarget === "" ? null : Number(acceptance.metricTarget) },
+          executionOptions: { quickCommand, expectedText: acceptance.expectedText, outputFile: acceptance.outputFile, metricKey: acceptance.metricKey,
+            metricOperator: acceptance.metricOperator, metricTarget: acceptance.metricTarget === "" ? null : Number(acceptance.metricTarget), metricTolerance: acceptance.metricOperator === "eq" ? Number(acceptance.metricTolerance) : 0,
+            evaluation: activeWorkflow.id === "evaluation" ? { dataset: acceptance.dataset, model: acceptance.model, reference: acceptance.reference, assetsInEntry: acceptance.assetsInEntry } : null },
         }),
       });
       const result = await response.json();
@@ -541,6 +573,8 @@ function App() {
               </button>
             </div>
             <p className="hint">Public repositories only · Results pinned to a commit</p>
+            <button className="download-button" type="button" onClick={loadCpuEvaluation} disabled={executionBusy}>Load CPU evaluation example</button>
+            <p className="hint">Small synthetic held-out dataset + trained checkpoint. Loads a reviewed command; does not start execution.</p>
           </form>
 
           {error && <p className="error" role="alert">{error}</p>}
@@ -630,7 +664,7 @@ function App() {
                           setRunConfirmed(false);
                           setRunJob(null);
                           setQuickCommand("");
-                          setAcceptance({ expectedText: "", outputFile: "", metricKey: "", metricOperator: "gte", metricTarget: "" });
+                          setAcceptance(emptyAcceptance);
                         }}
                         key={workflow.id}
                       >
@@ -694,7 +728,7 @@ function App() {
                 </li>
               ))}
               {displayedPlan.steps.length === 0 && (
-                <li className="workflow-empty">No matching entry point was found in the README.</li>
+                <li className="workflow-empty">No matching entry point was found in the README.{activeWorkflow?.id === "evaluation" && " You can explicitly supply and review an Evaluation entry below; it is not a discovered README command."}</li>
               )}
             </ol>
           </section>
@@ -714,15 +748,16 @@ function App() {
             </div>
 
             {preflightError && <p className="runner-error" role="alert">{preflightError}</p>}
-            {activeWorkflow.id === "quick" && (
+            {["quick", "evaluation"].includes(activeWorkflow.id) && (
               <div className="run-options">
-                <label htmlFor="quick-command">Reviewed Quick command (optional)</label>
-                <input id="quick-command" value={quickCommand} maxLength={2000}
+                <label htmlFor="quick-command">Reviewed {activeWorkflow.id === "evaluation" ? "Evaluation" : "Quick"} command (optional)</label>
+                <input id="quick-command" value={quickCommand} maxLength={6000}
                   placeholder="Leave blank to use the README entry point"
                   disabled={optionsLocked}
                   onChange={(event) => { setQuickCommand(event.target.value); setPreflight(null); setRunConfirmed(false); }} />
-                <p className="hint">Replaces only the Quick entry point, not dependencies. Review the actual commands below before confirming.</p>
-                <label htmlFor="expected-text">Expected text in the Quick entry output (optional)</label>
+                <p className="hint">Replaces the final entry point, not dependency installation. Evaluation can use an explicit reviewed entry when none was detected. Review every effective command below.</p>
+                {quickCommand === cpuEvaluationCommand && <details><summary>Review CPU evaluation example source</summary><pre className="evaluation-source">{cpuEvaluationSource}</pre></details>}
+                <label htmlFor="expected-text">Expected text in the entry output (optional)</label>
                 <input id="expected-text" value={acceptance.expectedText} maxLength={300} disabled={optionsLocked}
                   placeholder="For example: autodiff-ok" onChange={(event) => updateAcceptance("expectedText", event.target.value)} />
                 <label htmlFor="output-file">Expected new or changed output file (optional)</label>
@@ -732,10 +767,23 @@ function App() {
                   <label>JSON metric key (optional)<input value={acceptance.metricKey} maxLength={100} disabled={optionsLocked}
                     placeholder="accuracy or evaluation.accuracy" onChange={(event) => updateAcceptance("metricKey", event.target.value)} /></label>
                   <label>Condition<select value={acceptance.metricOperator} disabled={optionsLocked}
-                    onChange={(event) => updateAcceptance("metricOperator", event.target.value)}><option value="gte">At least (≥)</option><option value="lte">At most (≤)</option></select></label>
+                    onChange={(event) => updateAcceptance("metricOperator", event.target.value)}><option value="gte">At least (≥)</option><option value="lte">At most (≤)</option><option value="eq">Match reference (±)</option></select></label>
                   <label>Target<input type="number" step="any" value={acceptance.metricTarget} disabled={optionsLocked}
                     onChange={(event) => updateAcceptance("metricTarget", event.target.value)} /></label>
                 </div>
+                {acceptance.metricOperator === "eq" && <label>Absolute tolerance<input type="number" min="0" step="any" value={acceptance.metricTolerance} disabled={optionsLocked}
+                  onChange={(event) => updateAcceptance("metricTolerance", event.target.value)} /></label>}
+                {activeWorkflow.id === "evaluation" && <>
+                  <label>Dataset / evaluation split (required)<input value={acceptance.dataset} maxLength={500} disabled={optionsLocked} placeholder="Dataset version, held-out split, acquisition path"
+                    onChange={(event) => updateAcceptance("dataset", event.target.value)} /></label>
+                  <label>Model / checkpoint (required)<input value={acceptance.model} maxLength={500} disabled={optionsLocked} placeholder="Architecture, checkpoint version, source"
+                    onChange={(event) => updateAcceptance("model", event.target.value)} /></label>
+                  <label>Reference metric source (required)<input value={acceptance.reference} maxLength={500} disabled={optionsLocked} placeholder="Pinned README/table/paper URL, or explicitly user-defined target"
+                    onChange={(event) => updateAcceptance("reference", event.target.value)} /></label>
+                  <label className="runner-confirm"><input type="checkbox" checked={acceptance.assetsInEntry} disabled={optionsLocked}
+                    onChange={(event) => updateAcceptance("assetsInEntry", event.target.checked)} />My reviewed entry handles dataset and model preparation; replace separate data/model steps explicitly.</label>
+                  <p className="hint">Required: a new/changed JSON file and numeric metric. Use 0.95 for 95% if the output uses fractions. Context is user-declared; CPU/2 GB/10 minute limits still apply.</p>
+                </>}
               </div>
             )}
             {preflight && (
@@ -746,6 +794,7 @@ function App() {
                 </div>
                 <h3>Automated steps</h3>
                 {preflight.commandOverride && <p className="runner-note">User-reviewed override · original: {preflight.commandOverride.original}</p>}
+                {preflight.preparationOverride && <details><summary>Explicit dataset/model preparation override</summary><pre>{JSON.stringify(preflight.preparationOverride, null, 2)}</pre></details>}
                 <ol>
                   {preflight.automatedSteps.map((step) => (
                     <li key={step.id}><span>{step.title}</span><code className="command">{step.effectiveCommand ?? step.command}</code></li>
@@ -763,7 +812,7 @@ function App() {
                 )}
                 <p className="runner-note">Output checks: {preflight.executionOptions.expectedText || preflight.executionOptions.outputFile
                   ? [preflight.executionOptions.expectedText && `text: ${preflight.executionOptions.expectedText}`, preflight.executionOptions.outputFile && `new/changed file: ${preflight.executionOptions.outputFile}`,
-                    preflight.executionOptions.metricKey && `metric: ${preflight.executionOptions.metricKey} ${preflight.executionOptions.metricOperator === "gte" ? ">=" : "<="} ${preflight.executionOptions.metricTarget}`].filter(Boolean).join(" · ")
+                    preflight.executionOptions.metricKey && `metric: ${preflight.executionOptions.metricKey} ${preflight.executionOptions.metricOperator === "eq" ? "=" : preflight.executionOptions.metricOperator === "gte" ? ">=" : "<="} ${preflight.executionOptions.metricTarget}${preflight.executionOptions.metricOperator === "eq" ? ` ± ${preflight.executionOptions.metricTolerance}` : ""}`].filter(Boolean).join(" · ")
                   : "none — execution exit code only"}</p>
                 <label className="runner-confirm">
                   <input
@@ -779,7 +828,7 @@ function App() {
                   onClick={() => startExecution("readme")}
                   disabled={!preflight.runnable || !runConfirmed || executionBusy}
                 >
-                  {runLoading ? "Starting…" : "Run Quick verification"}
+                  {runLoading ? "Starting…" : activeWorkflow.id === "evaluation" ? "Run Evaluation" : "Run Quick verification"}
                 </button>
                 {!preflight.runnable && (
                   <p className="runner-note">{preflight.reason ?? "The workflow is not ready to execute."}</p>
@@ -832,7 +881,7 @@ function App() {
           {history.length === 0 && !historyError && <p className="hint">No saved executions yet.</p>}
           <ul className="history-list">
             {history.map((entry) => <li key={entry.id}>
-              <div><strong>{entry.repository}</strong><p className="hint">Execution: {entry.status} · Output checks: {entry.verificationStatus} · commit {entry.commit.slice(0, 7)} · {new Date(entry.startedAt).toLocaleString()}</p></div>
+              <div><strong>{entry.repository}</strong><p className="hint">{entry.workflowId ?? "quick"} · Execution: {entry.status} · Output checks: {entry.verificationStatus}{entry.evaluationStatus && ` · Evaluation: ${entry.evaluationStatus}`} · commit {entry.commit.slice(0, 7)} · {new Date(entry.startedAt).toLocaleString()}</p></div>
               <button className="download-button" type="button" onClick={() => openHistory(entry.id)}>View record</button>
             </li>)}
           </ul>

@@ -641,6 +641,17 @@ code {
   margin-top: 24px;
 }
 
+.evaluation-summary {
+  display: grid;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+
+.evaluation-summary dt { color: #8d99aa; }
+.evaluation-summary dd { margin: 0 0 12px; }
+
+.evaluation-source { max-height: 400px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+
 .recipe-preview {
   overflow-wrap: anywhere;
 }
