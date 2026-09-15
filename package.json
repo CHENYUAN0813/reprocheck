@@ -7,10 +7,11 @@
     "prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "vite build --outDir dist/client && vite build --ssr worker.mjs --outDir dist/server",
     "preview": "vite preview",
-    "test": "node scan.mjs --self-test && node server.mjs --self-test && node test-runner.mjs && node test-benchmark.mjs && node test-candidates.mjs",
+    "test": "node scan.mjs --self-test && node server.mjs --self-test && node test-runner.mjs && node test-benchmark.mjs && node test-candidates.mjs && node test-training.mjs",
     "test:docker": "node test-runner.mjs --docker",
     "test:benchmark": "node test-benchmark.mjs --docker",
-    "test:candidates": "node test-candidates.mjs --docker"
+    "test:candidates": "node test-candidates.mjs --docker",
+    "test:training": "node test-training.mjs --docker"
   },
   "keywords": [],
   "author": "",

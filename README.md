@@ -32,7 +32,7 @@ Open `http://127.0.0.1:5173`, submit a public GitHub repository URL, and downloa
 
 ## Local isolated execution
 
-Start Docker Desktop, scan a repository, choose **Quick verification** or **Evaluation**, and select **Check local runner**. ReproCheck re-scans the pinned commit before allowing execution and shows every command for review. Training execution remains disabled.
+Start Docker Desktop, scan a repository, choose **Quick verification** or **Evaluation**, and select **Check local runner**. ReproCheck re-scans the pinned commit before allowing execution and shows every command for review. **Load Iris training reproduction** additionally enables one reviewed real-paper Training case; arbitrary Training remains disabled.
 
 After explicit confirmation, commands run in a temporary `python:3.11` container with 2 CPUs, 2 GB of memory, a 10-minute timeout, a 256-process limit, no host filesystem mounts, and no host credentials. Network access remains enabled because public source code, dependencies, and model files may need to be downloaded. Runs can be monitored and cancelled from the page, with per-step status and the exact failure stage.
 
@@ -46,13 +46,13 @@ Before checking the runner, you can specify expected text in the final entry poi
 
 **Execution SUCCEEDED** means the commands exited normally. **Configured checks passed** means the supplied output expectations also passed. Neither proves that a paper's benchmark was reproduced; absent expectations are explicitly labelled as not configured.
 
-The downloadable JSON evidence includes the source commit, original/reviewed/effective commands, package-source override, Python and Docker environment, observed image ID when available, installed dependency versions, extracted parameter defaults, output file size/hash, logs, exit code and verification results. Parameter defaults are not a record of actual seed/argument values. Observations are produced inside an untrusted container and are not a security attestation; binary output files are not exported.
+The downloadable JSON evidence includes the source commit, original/reviewed/effective commands, package-source override, Python and Docker environment, observed image ID when available, installed dependency versions, extracted parameter defaults, output file size/hash, logs, exit code and verification results. Parameter defaults are not a record of actual seed/argument values. Observations are produced inside an untrusted container and are not a security attestation. Only the reviewed Iris training checkpoint (up to 64 KiB) is exported; arbitrary binary files are not.
 
 Snapshots are atomically saved under `.reprocheck/runs/` on this computer (ignored by Git). **Recent executions** lists the latest 30 records and lets you reopen/download them after a restart. If the server restarts during a run, the saved snapshot is marked **INTERRUPTED** with an unknown final outcome rather than falsely reporting success or failure. Log storage retains the last 200,000 characters; a save failure is displayed so the evidence can still be downloaded from memory.
 
 ### Frozen recipes and replay comparisons
 
-A successful Quick or Evaluation run with passing output checks now embeds a **frozen recipe** in its local evidence record. The recipe contains the exact Git commit, observed Docker image ID, default Python version and dependency versions captured **before the entry point**, original/effective commands, resource limits, expectations, baseline file/metric observations, and a SHA-256 fingerprint. Older records without a pre-entry snapshot cannot be frozen; run them again first.
+A successful Quick, Evaluation or reviewed Iris Training run with passing output checks now embeds a **frozen recipe** in its local evidence record. The recipe contains the exact Git commit, observed Docker image ID, default Python version and dependency versions captured **before the entry point** (before training for Iris Training), original/effective commands, resource limits, expectations, baseline file/metric observations, and a SHA-256 fingerprint. Older records without a pre-entry snapshot cannot be frozen; run them again first. A completed training run outside the reference retains its model and evidence, but cannot be frozen as a passing-reference recipe.
 
 Open a saved record, choose **Review frozen recipe**, review its steps and expectations, then explicitly confirm and select **Replay frozen recipe**. Replay fetches the saved commit directly instead of re-scanning the latest branch. It requires the exact image to remain locally available, uses `--pull never`, restores pinned packages from official PyPI with wheels only, and applies pip constraints to the saved preparation commands. It checks the default Python version and the complete installed-version set before allowing the entry point to run. It never silently substitutes a newer image or package version. The reviewed fingerprint must still match when execution starts. Pip constraints limit versions but do not install packages themselves; the separate restore step does that ([pip documentation](https://pip.pypa.io/en/stable/user_guide/#constraints-files)). Docker supports content-addressed image references ([Docker documentation](https://docs.docker.com/engine/containers/run/)).
 
@@ -108,6 +108,20 @@ The authors documented Python 3.8.10 and older dependencies. This case uses an e
 
 The local acceptance run on 2026-09-15 obtained **49/50 = 0.98**, matching the README with zero numeric tolerance. The first run took about 27 seconds and its locked replay about 22 seconds on this computer; exact output, asset hashes and the recorded reference matched (`SAME`). These times are observations, not speed guarantees. See `examples/BTHOWEN-IRIS.md` for the measured case report. Container observations remain untrusted evidence, not a security attestation; asset hashes identify bytes but do not make pickle/code safe. The existing isolated CPU/memory/time limits and explicit confirmation still apply.
 
+### Reviewed real-paper training: BTHOWeN / Iris
+
+**Load Iris training reproduction** selects the Training workflow and a separate fixed run profile in `examples/bthowen-training.json`. Review **Check local runner**, explicitly confirm unknown-code execution, then choose **Run Training reproduction**. Loading the case does not start a run.
+
+The runner reuses the pinned BTHOWeN source, real UCI Iris download, original 100/50 split and disclosed Python 3.11 compatibility preparation above. It invokes the original `train_swept_models.py` argument parser, `main`, training algorithm and model saver with Table 3 Iris parameters: 3 bits/input, 2 filter inputs, 128 entries, 1 hash and 1 worker. NumPy seed 42 is explicitly set by our container-only launcher and inherited by Linux fork workers; it is not claimed to be the authors' seed. The trainer uses its own small-dataset validation policy (training rows reused for bleaching selection). It runs exactly one configuration, with no test-score search, repeated seeds or pretrained-checkpoint fallback.
+
+The new checkpoint must be absent before training. Its size/hash are recorded after original saving; the unchanged original `evaluate.py` evaluates that new file, not `selected_models/iris.pickle.lzma`. All seven data/code/reference identities are checked before training, rechecked before evaluation and at completion; model bytes must remain unchanged during evaluation. Logs show training and evaluation as separate steps. The report includes actual correct/test counts, parameters, seed, training time and model identity.
+
+**Download newly trained model** exports only this reviewed checkpoint, up to 64 KiB, from the saved local evidence. Base64 bytes are validated against size/SHA-256 before being offered. The file remains downloadable after the temporary container is removed or the server restarts. This does not make pickle safe: never load untrusted models on the host. Generic artifact-directory export is not implemented.
+
+The first local run on 2026-09-15 trained in **1.050 seconds**, finished preparation/training/evaluation in **22.969 seconds**, and obtained **48/50 = 0.96**, versus the pinned README **0.98**, with zero tolerance: **Execution SUCCEEDED / OUTSIDE_REFERENCE**. It saved a new 688-byte model, SHA-256 `b94e2391bc4b3e78195261e1aa7c8157b3d2e08141a04d8903fa8c312744eeaa`. Times are observations, not guarantees. This is a real-paper Iris training/evaluation attempt under the disclosed single-run profile, not successful reproduction of the selected 98% model, the authors' unspecified random-model selection/full sweep, all paper experiments or an arbitrary-repository one-click trainer.
+
+`npm run test:training` opts into real Docker training, model export/persistence, original held-out evaluation, honest reference classification and an incorrect-code-hash case that must stop before training. `npm test` covers the route, fixed parameters/conditions, model freshness, download hash validation and pre-training gates offline.
+
 ## Self-test
 
 `node scan.mjs --self-test`
@@ -140,9 +154,9 @@ For the opt-in published Iris case, run `npm run test:benchmark` with the local 
 
 - Public GitHub repositories only
 - README, the primary dependency file, and up to five likely evaluation/training/configuration files are analyzed; other files are checked by path
-- Quick verification and CPU-limited Evaluation can run only through the local Docker-backed server; Training remains disabled
+- Quick verification, CPU-limited Evaluation and one reviewed Iris Training case run only through the local Docker-backed server; arbitrary Training remains disabled
 - Hosted Sites deployments provide static scanning but not Docker execution
 - Local run history is single-user JSON storage; interrupted runs cannot recover their final outcome after a server restart
 - Official PyPI override supports a single pip install command, not arbitrary compound shell/Poetry/uv installs
-- Output checks require explicit reviewed expectations; literal metric candidates can assist configuration but do not establish paper protocol equivalence or export binary artifacts
+- Output checks require explicit reviewed expectations; literal metric candidates can assist configuration but do not establish paper protocol equivalence. Only the reviewed Iris training model has bounded binary export
 - Recipe replay requires the observed local image and index packages available as wheels; downloaded recipe JSON is not an import/execution interface
