@@ -38,11 +38,25 @@ After explicit confirmation, commands run in a temporary `python:3.11` container
 
 If dependency installation fails or times out while using a README-provided package index, the run can be retried against official PyPI. The retry keeps the repository commit and dependency declarations unchanged, replaces only pip index options, and records the override in the run result.
 
+### Output verification and execution evidence
+
+Quick verification optionally accepts a **reviewed command** that replaces only an existing detected final entry point. The preview shows the original README command and the effective commands; dependency and model preparation steps remain unchanged. This is useful for non-interactive smoke tests when the detected command starts an interactive demo or needs missing test dependencies.
+
+Before checking the runner, you can specify expected text in the final entry point's output, a new or changed non-empty output file, and an optional numeric JSON metric condition (at least / at most). JSON metric keys use dotted paths such as `evaluation.accuracy`. File paths must stay inside the repository; file evidence is limited to 64 MB and metric JSON files to 1 MB. Existing, unchanged repository files do not satisfy generated-output checks.
+
+**Execution SUCCEEDED** means the commands exited normally. **Configured checks passed** means the supplied output expectations also passed. Neither proves that a paper's benchmark was reproduced; absent expectations are explicitly labelled as not configured.
+
+The downloadable JSON evidence includes the source commit, original/reviewed/effective commands, package-source override, Python and Docker environment, observed image ID when available, installed dependency versions, extracted parameter defaults, output file size/hash, logs, exit code and verification results. Parameter defaults are not a record of actual seed/argument values. Observations are produced inside an untrusted container and are not a security attestation; binary output files are not exported.
+
+Snapshots are atomically saved under `.reprocheck/runs/` on this computer (ignored by Git). **Recent executions** lists the latest 30 records and lets you reopen/download them after a restart. If the server restarts during a run, the saved snapshot is marked **INTERRUPTED** with an unknown final outcome rather than falsely reporting success or failure. Log storage retains the last 200,000 characters; a save failure is displayed so the evidence can still be downloaded from memory.
+
 ## Self-test
 
 `node scan.mjs --self-test`
 
 GitHub Actions runs the self-tests and production build on every push and pull request.
+
+For the opt-in real Docker integration check, start the local server and run `npm run test:docker`. It scans the pinned Micrograd source, executes a reviewed scalar-autodiff example, verifies text/file/gradient evidence, reloads the evidence in a new process, and checks that deliberately incorrect expectations fail. It does not run Micrograd's default pytest suite or reproduce a published benchmark.
 
 ## Current checks
 
@@ -68,4 +82,6 @@ GitHub Actions runs the self-tests and production build on every push and pull r
 - README, the primary dependency file, and up to five likely training/configuration files are analyzed; other files are checked by path
 - Only the Quick verification workflow can run, and only through the local Docker-backed server
 - Hosted Sites deployments provide static scanning but not Docker execution
-- Run records are stored in memory and are lost when the local server restarts; the container-enforced timeout still applies
+- Local run history is single-user JSON storage; interrupted runs cannot recover their final outcome after a server restart
+- Official PyPI override supports a single pip install command, not arbitrary compound shell/Poetry/uv installs
+- Output checks require explicit expectations; paper metrics and binary artifacts are not automatically inferred or reproduced
