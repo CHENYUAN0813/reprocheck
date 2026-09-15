@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "repository": "Dorsumsellae/ml-pipeline",
+  "commit": "40e84fd2333cca40614b9e20534b2ba2173a238c",
+  "workflowId": "training",
+  "executionOptions": {
+    "experiment": {
+      "repository": "Dorsumsellae/ml-pipeline",
+      "commit": "40e84fd2333cca40614b9e20534b2ba2173a238c",
+      "title": "Original stratified Iris training and evaluation",
+      "installCommand": "python -m pip install numpy==1.26.4 scipy==1.11.4 scikit-learn==1.4.2 joblib==1.3.2 threadpoolctl==3.2.0",
+      "prepareCommand": "",
+      "trainCommand": "python train.py",
+      "checkpoint": "model.joblib",
+      "parameters": "Original RandomForestClassifier(n_estimators=200, random_state=1); disclosed Python 3.11 compatibility run vs README Python 3.12+, pinned runtime dependencies; PyYAML excluded because direct train/evaluate entries do not use it",
+      "seed": "Original RANDOM_STATE=1 in both trainer and evaluator; stratify=y",
+      "protocol": "Original sklearn Iris, stratified 120 train / 30 held-out test; same random_state=1 and test_size=0.2 in both scripts. Original evaluate.py loads new model.joblib and rounds its reported accuracy to two decimals. Compare that printed value with README example 0.97, not full precision or a paper benchmark.",
+      "capture": { "kind": "stdout", "label": "[EVALUATE] Accuracy", "unit": "number" },
+      "confirmed": true
+    },
+    "quickCommand": "python evaluate.py",
+    "expectedText": "",
+    "outputFile": "reprocheck-evaluation.json",
+    "metricKey": "accuracy",
+    "metricOperator": "eq",
+    "metricTarget": 0.97,
+    "metricTolerance": 0,
+    "evaluation": {
+      "dataset": "Built-in sklearn Iris, 150 rows; original stratified 80/20 split, random_state=1; 30 held-out test rows",
+      "model": "New original RandomForestClassifier(n_estimators=200, random_state=1); model.joblib",
+      "reference": "https://github.com/Dorsumsellae/ml-pipeline/blob/40e84fd2333cca40614b9e20534b2ba2173a238c/README.md#L91 · expected printed output example, user-reviewed correspondence, not independently verified paper reference",
+      "assetsInEntry": false
+    }
+  }
+}
