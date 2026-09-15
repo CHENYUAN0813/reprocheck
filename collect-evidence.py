@@ -11,6 +11,7 @@ options = json.loads(sys.argv[1])
 root = Path("/workspace").resolve()
 baseline = Path("/tmp/reprocheck-baseline.json")
 environment_file = Path("/tmp/reprocheck-environment.json")
+assets_file = Path("/tmp/reprocheck-assets.json")
 
 
 def observe_environment():
@@ -23,8 +24,8 @@ def observe_environment():
     }
 
 
-def observe_file():
-    name = options.get("outputFile")
+def observe_file(name=None):
+    name = name or options.get("outputFile")
     if not name:
         return None
     result = {"path": name, "exists": False, "fresh": False}
@@ -45,12 +46,41 @@ def observe_file():
         return result
 
 
+def observe_benchmark():
+    case = options.get("benchmark")
+    if not case:
+        return None
+    assets = []
+    for expected in case["assets"]:
+        observed = observe_file(expected["path"])
+        assets.append({**observed, "role": expected["role"], "expectedSha256": expected["sha256"],
+                       "status": "PASSED" if not observed.get("error") and observed.get("sha256") == expected["sha256"] else "FAILED"})
+    source = case["reference"]
+    reference = {"file": source["file"], "line": source["line"], "url": source["url"], "value": None, "status": "FAILED"}
+    try:
+        path = (root / source["file"]).resolve()
+        if not path.is_relative_to(root) or path.stat().st_size > 1024 * 1024:
+            raise ValueError("Reference must be a repository text file up to 1 MB")
+        text = path.read_text().splitlines()[source["line"] - 1]
+        reference.update(text=text, value=float(text.strip().strip("|").split("|")[-1].strip()))
+        if text == source["text"] and reference["value"] == source["value"]:
+            reference["status"] = "PASSED"
+    except Exception as error:
+        reference["error"] = str(error)
+    return {"assets": assets, "referenceEvidence": reference}
+
+
 artifact = observe_file()
 if sys.argv[2] == "environment":
     snapshot = observe_environment()
     environment_file.write_text(json.dumps(snapshot), encoding="utf-8")
     # Preparation output is not evidence that the final entry produced anything.
     baseline.write_text(json.dumps(artifact), encoding="utf-8")
+    identities = observe_benchmark()
+    if identities:
+        assets_file.write_text(json.dumps(identities), encoding="utf-8")
+        if any(asset["status"] != "PASSED" for asset in identities["assets"]) or identities["referenceEvidence"]["status"] != "PASSED":
+            raise RuntimeError("Reviewed dataset/model/code hash or reference row does not match; evaluation entry was not run")
     locked = options.get("lockedEnvironment")
     if locked:
         normalize = lambda items: sorted(re.sub(r"[-_.]+", "-", item.split("==")[0].lower()) + "==" + item.split("==")[1] for item in items)
@@ -87,8 +117,19 @@ else:
     snapshot = json.loads(environment_file.read_text(encoding="utf-8")) if environment_file.exists() else observe_environment()
     if not environment_file.exists():
         snapshot["environment"]["capture"] = "after-failure"
+    identities = observe_benchmark()
+    if identities:
+        before = json.loads(assets_file.read_text()) if assets_file.exists() else None
+        for asset in identities["assets"]:
+            initial = next((item for item in (before or {}).get("assets", []) if item["path"] == asset["path"]), None)
+            asset["capture"] = "before-and-after-entry" if initial else "after-failure"
+            if not initial or initial["status"] != "PASSED":
+                asset["status"] = "UNKNOWN" if not initial else "FAILED"
+        if not before or before["referenceEvidence"]["status"] != "PASSED":
+            identities["referenceEvidence"]["status"] = "UNKNOWN" if not before else "FAILED"
     evidence = {
         **snapshot,
+        **(identities or {}),
         "artifact": artifact,
         "metric": metric,
         "evaluationOutput": evaluation_output,

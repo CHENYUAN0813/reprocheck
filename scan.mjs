@@ -557,13 +557,14 @@ async function readRepositoryFile(base, path, ref, token) {
     : "";
 }
 
-export async function scan(input, token) {
+export async function scan(input, token, pinnedCommit) {
+  if (pinnedCommit !== undefined && !/^[a-f\d]{40}$/i.test(pinnedCommit)) throw new Error("Invalid pinned source commit");
   const { owner, repo } = parseRepo(input);
   const base = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
 
   const repository = await github(base, token);
   const commit = await github(
-    `${base}/commits/${encodeURIComponent(repository.default_branch)}`,
+    `${base}/commits/${encodeURIComponent(pinnedCommit ?? repository.default_branch)}`,
     token,
   );
   const tree = await github(

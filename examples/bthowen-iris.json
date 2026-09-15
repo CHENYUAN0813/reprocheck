@@ -1,0 +1,34 @@
+{
+  "id": "bthowen-iris",
+  "title": "BTHOWeN · Iris published software benchmark",
+  "repository": "ZSusskind/BTHOWeN",
+  "commit": "94e33e4ce3e46e8e88a409dcca044e5f7544858d",
+  "dataset": "UCI Iris, 150 original rows; repository shuffle random_state=123; 100 train / 50 held-out test",
+  "model": "Paper's selected_models/iris.pickle.lzma; pretrained BTHOWeN; no retraining",
+  "reference": {
+    "file": "README.md",
+    "line": 66,
+    "text": "| Iris | 3 | 2 | 128 | 1 | 0.281 | 0.980 |",
+    "url": "https://github.com/ZSusskind/BTHOWeN/blob/94e33e4ce3e46e8e88a409dcca044e5f7544858d/README.md#L66",
+    "value": 0.98,
+    "tolerance": 0,
+    "scope": "README replication of paper Table 3, Iris software test accuracy only; not training, MNIST or RTL power/area reproduction"
+  },
+  "installCommand": "python -m pip install --only-binary=:all: --index-url https://pypi.org/simple numpy==1.24.4 pandas==1.5.3 scipy==1.10.1 numba==0.57.1 requests==2.28.1",
+  "compatibility": {
+    "note": "Explicit Python 3.11 compatibility profile, not the authors' Python 3.8.10 requirements. Remove only two unused MNIST torchvision imports; Iris loading, shuffle, binarization and inference remain unchanged. All changes occur inside the temporary container.",
+    "file": "software_model/train_swept_models.py",
+    "beforeSha256": "e026effc3dbf1081375a12765e47c2acd1cbf99d5d100823b488d9527d6faf08",
+    "removeLines": ["import torchvision.datasets as dsets", "import torchvision.transforms as transforms"]
+  },
+  "assets": [
+    {"role": "dataset", "path": "software_model/datasets/iris/iris.data", "sha256": "6f608b71a7317216319b4d27b4d9bc84e6abd734eda7872b71a458569e2656c0", "url": "https://archive.ics.uci.edu/ml/machine-learning-databases/iris/iris.data"},
+    {"role": "checkpoint", "path": "software_model/selected_models/iris.pickle.lzma", "sha256": "47847744b61c779a321dc6ea9b3bd5998f0dbba135bfb192a3371ca01de2901e"},
+    {"role": "reference", "path": "README.md", "sha256": "2117b57f15919cc136d7edf18ad1e5dec46a105422844d9c0f55423dbaf61fba"},
+    {"role": "evaluation-entry", "path": "software_model/evaluate.py", "sha256": "ea3209964e8d0d3cb2b247946717cd979be39f13b9d8e219d54783263a78b4e5"},
+    {"role": "compatibility-helper", "path": "software_model/train_swept_models.py", "sha256": "ba83c1ada7d126e4c9a7b6b6730d9822d6ee0465ad3479215a36b9743524303c"},
+    {"role": "dataset-loader", "path": "software_model/tabular_tools.py", "sha256": "678305141f6e8a0610d72a64eca3a6f440306c43912e63a205429451acbd5ea5"},
+    {"role": "inference", "path": "software_model/wisard.py", "sha256": "03b387e304aece60bd963208f50404e869265e1b8d035cac7f5f5b9cee0c4a68"},
+    {"role": "bloom-filter", "path": "software_model/bloom_filter.py", "sha256": "048ceb6a728fa130d62cdc25cf2f72e0e7cb6f98b39e8712b9cdbf5b6d4bc1b1"}
+  ]
+}

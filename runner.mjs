@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { promisify } from "node:util";
+import { isDeepStrictEqual, promisify } from "node:util";
 import { readFileSync } from "node:fs";
 import { getSavedRun, listSavedRuns, saveRun } from "./run-store.mjs";
 
@@ -8,6 +8,16 @@ const execFileAsync = promisify(execFile);
 const jobs = new Map();
 const LOG_LIMIT = 200_000;
 const collector = readFileSync(new URL("./collect-evidence.py", import.meta.url), "utf8");
+export const reviewedBenchmark = JSON.parse(readFileSync(new URL("./examples/bthowen-iris.json", import.meta.url), "utf8"));
+const benchmarkSource = readFileSync(new URL("./examples/evaluate-bthowen.py", import.meta.url), "utf8");
+const benchmarkCommand = (phase) => `python -c ${shellQuote(`exec(${JSON.stringify(benchmarkSource)})`)} ${phase}`;
+
+function benchmarkOptions() {
+  return { benchmarkId: reviewedBenchmark.id, quickCommand: benchmarkCommand("evaluate"), expectedText: "published-benchmark-ok",
+    outputFile: "benchmark-result.json", metricKey: "accuracy", metricOperator: "eq", metricTarget: reviewedBenchmark.reference.value,
+    metricTolerance: reviewedBenchmark.reference.tolerance, evaluation: { dataset: reviewedBenchmark.dataset, model: reviewedBenchmark.model,
+      reference: reviewedBenchmark.reference.url, assetsInEntry: false } };
+}
 
 function shellQuote(value) {
   return `'${value.replaceAll("'", "'\"'\"'")}'`;
@@ -34,6 +44,9 @@ export async function inspectRuntime() {
 
 export function validateExecutionOptions(input = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid execution options");
+  const benchmarkId = input.benchmarkId ?? null;
+  if (benchmarkId !== null && benchmarkId !== reviewedBenchmark.id) throw new Error("Unknown reviewed benchmark");
+  if (benchmarkId) input = { ...benchmarkOptions(), ...input };
   const quickCommand = input.quickCommand ?? "";
   if (typeof quickCommand !== "string" || quickCommand.length > 6000 || /[\r\n\0]/.test(quickCommand)) {
     throw new Error("Reviewed command must be a single line of at most 6000 characters");
@@ -63,15 +76,25 @@ export function validateExecutionOptions(input = {}) {
       || ["dataset", "model", "reference"].some((key) => typeof evaluation[key] !== "string" || !evaluation[key].trim() || evaluation[key].length > 500 || /\0/.test(evaluation[key]))
       || typeof evaluation.assetsInEntry !== "boolean") throw new Error("Evaluation needs dataset, model, reference source and an explicit asset-preparation choice");
   }
-  return { quickCommand: quickCommand.trim(), expectedText, outputFile, metricKey, metricOperator, metricTarget, metricTolerance,
+  return { ...(benchmarkId ? { benchmarkId } : {}), quickCommand: quickCommand.trim(), expectedText, outputFile, metricKey, metricOperator, metricTarget, metricTolerance,
     evaluation: evaluation ? { dataset: evaluation.dataset.trim(), model: evaluation.model.trim(), reference: evaluation.reference.trim(), assetsInEntry: evaluation.assetsInEntry } : null };
 }
 
 export function buildPreflight(report, workflowId, runtime, packageIndex = "readme", options = {}) {
   const executionOptions = validateExecutionOptions(options);
   const { quickCommand } = executionOptions;
-  const workflow = report.workflows?.find((candidate) => candidate.id === workflowId);
+  let workflow = report.workflows?.find((candidate) => candidate.id === workflowId);
   if (!workflow) throw new Error("A valid reproduction workflow is required");
+  const benchmark = executionOptions.benchmarkId ? { ...reviewedBenchmark, originalSteps: report.reproductionPlan?.steps ?? [] } : null;
+  if (benchmark) {
+    if (!isDeepStrictEqual(executionOptions, benchmarkOptions())) throw new Error("Reviewed benchmark commands and reference conditions are fixed; use a custom Evaluation instead");
+    if (workflowId !== "evaluation" || report.repository !== benchmark.repository || report.commit !== benchmark.commit) throw new Error("Reviewed benchmark requires its pinned repository, commit and Evaluation workflow");
+    workflow = { ...workflow, status: "REVIEWED_BENCHMARK", steps: [
+      { id: "install", title: "Install reviewed Python 3.11 CPU compatibility dependencies", status: "DOCUMENTED", command: benchmark.installCommand },
+      { id: "prepare-assets", title: "Prepare hash-locked UCI data and explicit compatibility patch", status: "DOCUMENTED", command: benchmarkCommand("prepare") },
+      { id: "evaluation-benchmark", title: "Run original Iris evaluation entry and collect its score", status: "DOCUMENTED", command: benchmarkCommand("evaluate") },
+    ] };
+  }
   if (quickCommand && !["quick", "evaluation"].includes(workflowId)) throw new Error("Only Quick and Evaluation support a reviewed command");
   if (workflowId === "evaluation" && (!executionOptions.evaluation || !executionOptions.metricKey || executionOptions.metricTarget === null)) throw new Error("Evaluation requires an output JSON metric and a declared dataset, model and reference source");
   if (workflowId !== "evaluation" && executionOptions.evaluation) throw new Error("Evaluation context is only accepted for Evaluation workflows");
@@ -115,7 +138,8 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
     workflow: { id: workflow.id, title: workflow.title, status: workflow.status },
     packageIndex,
     executionOptions,
-    commandOverride: quickCommand ? { original: entry.command, actual: quickCommand, origin: "user-reviewed" } : null,
+    benchmark,
+    commandOverride: quickCommand && !benchmark ? { original: entry.command, actual: quickCommand, origin: "user-reviewed" } : null,
     runtime,
     preparationOverride: assetsInEntry ? { origin: "user-reviewed", instruction: "Dataset and model preparation are handled by the reviewed entry command", originalSteps: originalSteps.filter((step) => ["data", "model"].includes(step.id)) } : null,
     runnable: ["quick", "evaluation"].includes(workflowId) && runtime.available && automatedSteps.length > 0 && blockers.length === 0,
@@ -168,6 +192,8 @@ function sourceSteps(job) {
 export function createRecipe(job) {
   if (job.status !== "SUCCEEDED" || job.verification?.status !== "VERIFIED") throw new Error("Pass configured output checks before freezing a recipe");
   if (!["quick", "evaluation"].includes(job.workflowId) || !/^[\w.-]+\/[\w.-]+$/.test(job.repository) || !/^[a-f\d]{40}$/i.test(job.commit)) throw new Error("Invalid executable source identity");
+  if (job.executionOptions?.benchmarkId && (job.benchmark?.id !== job.executionOptions.benchmarkId || job.benchmark.repository !== job.repository
+    || job.benchmark.commit !== job.commit)) throw new Error("Reviewed benchmark asset/source locks are missing from the saved record");
   if (!["readme", "pypi"].includes(job.packageIndex)) throw new Error("Invalid saved package source");
   if (!/^sha256:[a-f\d]{64}$/.test(job.environment?.imageId ?? "")) throw new Error("The exact Docker image ID was not observed; run again before freezing");
   if (job.environment?.capture !== "before-entry" || !/^3\.11\.\d+$/.test(job.environment.python ?? "")) throw new Error("A pre-entry Python/dependency snapshot is required; run again");
@@ -188,9 +214,9 @@ export function createRecipe(job) {
     || job.limits.hostMounts !== false || job.limits.networkAccess !== true) throw new Error("Unsupported saved execution limits");
   const recipe = { schemaVersion: 1, baselineRunId: job.id, repository: job.repository, commit: job.commit,
     workflowId: job.workflowId, packageIndex: job.packageIndex, executionOptions: validateExecutionOptions(job.executionOptions),
-    commandOverride: job.commandOverride ?? null, preparationOverride: job.preparationOverride ?? null, imageId: job.environment.imageId, python: job.environment.python,
+    commandOverride: job.commandOverride ?? null, preparationOverride: job.preparationOverride ?? null, ...(job.benchmark ? { benchmark: job.benchmark } : {}), imageId: job.environment.imageId, python: job.environment.python,
     dependencies: [...dependencies].sort(), commands, limits: { ...job.limits, image: job.environment.imageId },
-    baselineResults: { artifact: job.artifact ?? null, metric: job.metric ?? null },
+    baselineResults: { artifact: job.artifact ?? null, metric: job.metric ?? null, ...(job.benchmark ? { assets: job.assets, reference: job.referenceEvidence } : {}) },
     warnings: ["Local image ID must still exist on this computer.", "Package versions are pinned, not wheel hashes or build artifacts.",
       "External data/models and randomness are not automatically frozen; equal results are not guaranteed."],
   };
@@ -208,7 +234,7 @@ export async function inspectLockedImage(imageId) {
 export function buildReplayPreflight(baseline, runtime, imageAvailable) {
   const recipe = createRecipe(baseline);
   return { repository: recipe.repository, commit: recipe.commit, workflow: { id: recipe.workflowId, title: "Locked recipe replay", status: "FROZEN" },
-    packageIndex: recipe.packageIndex, executionOptions: recipe.executionOptions, commandOverride: recipe.commandOverride, preparationOverride: recipe.preparationOverride,
+    packageIndex: recipe.packageIndex, executionOptions: recipe.executionOptions, commandOverride: recipe.commandOverride, preparationOverride: recipe.preparationOverride, benchmark: recipe.benchmark ?? null,
     runtime, runnable: runtime.available && imageAvailable, reason: !runtime.available ? runtime.reason
       : !imageAvailable ? "The locked image is missing locally; replay will not substitute a newer image" : null,
     recipe, replayOf: baseline.id, baseline: { ...baseline, log: undefined, recipe: undefined, comparison: undefined }, frozenCommands: true, experimentParameters: baseline.experimentParameters ?? [],
@@ -248,6 +274,10 @@ export function compareRuns(baseline, current) {
     compare("metric", before, after, { key: baseline.executionOptions.metricKey,
       delta: Number.isFinite(before) && Number.isFinite(after) ? after - before : null });
   }
+  if (baseline.benchmark) {
+    compare("asset-hashes", baseline.assets?.map(({ path, sha256 }) => ({ path, sha256 })), current.assets?.map(({ path, sha256 }) => ({ path, sha256 })));
+    compare("reference-source", baseline.referenceEvidence, current.referenceEvidence);
+  }
   return { baselineRunId: baseline.id, status: current.status === "RUNNING" ? "PENDING"
     : baseline.status !== "SUCCEEDED" || baseline.verification?.status !== "VERIFIED" || current.status !== "SUCCEEDED" || current.verification?.status !== "VERIFIED" || rows.some((row) => row.status === "UNKNOWN") ? "INCOMPLETE"
       : rows.some((row) => row.status === "DIFFERENT") ? "DIFFERENT" : "SAME", rows };
@@ -256,7 +286,7 @@ export function compareRuns(baseline, current) {
 export function buildDockerInvocation(preflight, containerName) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(preflight.repository)) throw new Error("Invalid repository identity");
   if (!/^[a-f\d]{40}$/i.test(preflight.commit)) throw new Error("Invalid commit identity");
-  const options = { ...validateExecutionOptions(preflight.executionOptions), ...(preflight.recipe ? {
+  const options = { ...validateExecutionOptions(preflight.executionOptions), ...(preflight.benchmark ? { benchmark: preflight.benchmark } : {}), ...(preflight.recipe ? {
     lockedEnvironment: { python: preflight.recipe.python, dependencies: preflight.recipe.dependencies },
   } : {}) };
   const collectCommand = `python -c ${shellQuote(collector)} ${shellQuote(JSON.stringify(options))}`;
@@ -270,6 +300,7 @@ export function buildDockerInvocation(preflight, containerName) {
     `git -C /workspace fetch -q --depth 1 origin ${preflight.commit}`,
     "git -C /workspace checkout -q --detach FETCH_HEAD",
     "collect start",
+    ...(preflight.benchmark ? [`printf '%s' ${shellQuote(JSON.stringify(preflight.benchmark))} > /tmp/reprocheck-benchmark.json`] : []),
     ...(preflight.recipe ? [
       `printf '%s\\n' ${shellQuote(preflight.recipe.dependencies.join("\n"))} > /tmp/reprocheck-lock.txt`,
       "export PIP_CONSTRAINT=/tmp/reprocheck-lock.txt PIP_ONLY_BINARY=:all:",
@@ -347,6 +378,9 @@ export function readEvidence(log) {
     for (const key of ["environment", "artifact", "metric", "evaluationOutput"]) {
       if (evidence[key] != null && (typeof evidence[key] !== "object" || Array.isArray(evidence[key]))) return null;
     }
+    if (evidence.assets != null && (!Array.isArray(evidence.assets) || evidence.assets.length > 10
+      || evidence.assets.some((asset) => !asset || typeof asset !== "object" || Array.isArray(asset)))) return null;
+    if (evidence.referenceEvidence != null && (typeof evidence.referenceEvidence !== "object" || Array.isArray(evidence.referenceEvidence))) return null;
     return evidence;
   } catch { return null; }
 }
@@ -382,6 +416,16 @@ export function verifyOutcome(job) {
     status: !evidence ? "UNKNOWN" : !evidence.metric?.error && metricMatches(evidence.metric?.value, options) ? "PASSED" : "FAILED",
     observed: evidence?.metric ?? null,
   });
+  if (job.benchmark) {
+    for (const asset of job.benchmark.assets) {
+      const observed = evidence?.assets?.find((item) => item.path === asset.path);
+      checks.push({ id: `asset:${asset.role}`, expected: `${asset.path} SHA-256 ${asset.sha256}`,
+        status: !observed ? "UNKNOWN" : observed.status === "PASSED" && observed.capture === "before-and-after-entry" && observed.sha256 === asset.sha256 && !observed.error ? "PASSED" : "FAILED", observed: observed ?? null });
+    }
+    const observed = evidence?.referenceEvidence;
+    checks.push({ id: "reference-source", expected: `${job.benchmark.reference.file}:${job.benchmark.reference.line} = ${options.metricTarget}`,
+      status: !observed ? "UNKNOWN" : observed.status === "PASSED" && observed.text === job.benchmark.reference.text && observed.value === options.metricTarget ? "PASSED" : "FAILED", observed: observed ?? null });
+  }
   if (job.status !== "SUCCEEDED") {
     for (const check of checks) check.status = "NOT_RUN";
     return { status: job.status === "RUNNING" ? "PENDING" : checks.length ? "INCOMPLETE" : "NOT_CONFIGURED", checks };
@@ -401,6 +445,9 @@ function publicJob(job) {
     workflowId: job.workflowId,
     packageIndex: job.packageIndex,
     executionOptions: job.executionOptions,
+    benchmark: job.benchmark ?? null,
+    assets: evidence?.assets ?? null,
+    referenceEvidence: evidence?.referenceEvidence ?? null,
     commandOverride: job.commandOverride,
     preparationOverride: job.preparationOverride ?? null,
     environment: { ...evidence?.environment, image: job.limits.image, imageId: job.imageId ?? null, docker: job.runtime },
@@ -428,7 +475,7 @@ function publicJob(job) {
     ),
   };
   const options = validateExecutionOptions(job.executionOptions);
-  record.evaluation = options.evaluation ? { ...options.evaluation, declaration: "user-provided, not independently verified", metricKey: options.metricKey,
+  record.evaluation = options.evaluation ? { ...options.evaluation, declaration: job.benchmark ? "reviewed pinned software benchmark; container-observed asset hashes and source row, not a security attestation" : "user-provided, not independently verified", metricKey: options.metricKey,
     operator: options.metricOperator, referenceValue: options.metricTarget, tolerance: options.metricTolerance,
     observedValue: Number.isFinite(record.metric?.value) ? record.metric.value : null,
     delta: Number.isFinite(record.metric?.value) ? record.metric.value - options.metricTarget : null,
@@ -469,6 +516,7 @@ export function startRun(preflight) {
     replayOf: preflight.replayOf ?? null,
     baseline: preflight.baseline ?? null,
     executionOptions: validateExecutionOptions(preflight.executionOptions),
+    benchmark: preflight.benchmark ?? null,
     commandOverride: preflight.commandOverride ?? null,
     preparationOverride: preflight.preparationOverride ?? null,
     experimentParameters: preflight.experimentParameters ?? [],
