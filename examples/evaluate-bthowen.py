@@ -1,4 +1,4 @@
-"""Reviewed Iris adapter: original evaluation entry, real UCI data, no training.
+"""Reviewed Iris adapter: original evaluation entry, real UCI data.
 Run ONLY inside ReproCheck's temporary Docker container, never on the host.
 """
 import hashlib
@@ -40,7 +40,12 @@ if sys.argv[1] == "prepare":
 elif sys.argv[1] == "evaluate":
     # The collector gates execution on every expected asset hash before this step.
     folder = root / "software_model"
-    result = subprocess.run([sys.executable, "evaluate.py", "selected_models/iris.pickle.lzma", "Iris"],
+    training = json.loads(Path("/tmp/reprocheck-training.json").read_text()) if case.get("training") else None
+    checkpoint = case["training"]["checkpoint"] if training else "software_model/selected_models/iris.pickle.lzma"
+    if training and hashlib.sha256((root / checkpoint).read_bytes()).hexdigest() != training["checkpoint_sha256"]:
+        raise RuntimeError("Newly trained checkpoint changed before evaluation")
+    model_argument = str(Path(checkpoint).relative_to("software_model"))
+    result = subprocess.run([sys.executable, "evaluate.py", model_argument, "Iris"],
                             cwd=folder, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     print(result.stdout, end="", flush=True)
     result.check_returncode()
@@ -61,8 +66,10 @@ elif sys.argv[1] == "evaluate":
     split_hash = hashlib.sha256(json.dumps(split, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     output = {"accuracy": correct / total, "correct": correct, "test_samples": total, "train_samples": len(train),
               "split_seed": 123, "split_sha256": split_hash,
-              "entry": "software_model/evaluate.py selected_models/iris.pickle.lzma Iris",
+              "entry": f"software_model/evaluate.py {model_argument} Iris",
               "scope": case["reference"]["scope"], "compatibility": case["compatibility"]["note"]}
+    if training:
+        output["training"] = {key: value for key, value in training.items() if key != "seconds"}
     (root / "benchmark-result.json").write_text(json.dumps(output, sort_keys=True, allow_nan=False))
     print("published-benchmark-ok")
 else:
