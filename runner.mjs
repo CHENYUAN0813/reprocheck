@@ -61,7 +61,9 @@ export function validateExecutionOptions(input = {}) {
   const evaluation = input.evaluation ?? null;
   const candidateReview = input.candidateReview ?? null;
   if (candidateReview !== null && (benchmarkId || typeof candidateReview !== "object" || Array.isArray(candidateReview)
-    || Object.keys(candidateReview).some((key) => !["entryId", "referenceId", "outputId", "confirmed"].includes(key))
+    || Object.keys(candidateReview).some((key) => !["entryId", "referenceId", "outputId", "confirmed", "argumentValues"].includes(key))
+    || (candidateReview.argumentValues !== undefined && (!candidateReview.argumentValues || typeof candidateReview.argumentValues !== "object" || Array.isArray(candidateReview.argumentValues)
+      || Object.keys(candidateReview.argumentValues).length > 24 || Object.entries(candidateReview.argumentValues).some(([key, value]) => !/^argument-\d+$/.test(key) || typeof value !== "string" || value.length > 240 || /[\r\n\0]/.test(value))))
     || typeof candidateReview.entryId !== "string" || !/^[\w-]{1,80}$/.test(candidateReview.entryId)
     || ["referenceId", "outputId"].some((key) => candidateReview[key] !== null && (typeof candidateReview[key] !== "string" || !/^[\w-]{1,80}$/.test(candidateReview[key])))
     || candidateReview.confirmed !== true)) throw new Error("Generated candidate needs valid source selections and explicit review confirmation");
@@ -70,12 +72,12 @@ export function validateExecutionOptions(input = {}) {
     || (outputFile && outputFile.split("/").some((part) => !part || part === "." || part === ".."))) {
     throw new Error("Output file must be a relative repository path without traversal");
   }
-  if (typeof metricKey !== "string" || metricKey.length > 100 || (metricKey && !/^[\w-]+(?:\.[\w-]+)*$/.test(metricKey))) throw new Error("Invalid JSON metric key");
+  if (typeof metricKey !== "string" || metricKey.length > 100 || (metricKey && !/^[\w-]+(?:\.[\w-]+)*$/.test(metricKey))) throw new Error("Invalid JSON metric key / CSV column");
   if (!["gte", "lte", "eq"].includes(metricOperator)) throw new Error("Metric operator must be gte, lte or eq");
   if (typeof metricTolerance !== "number" || !Number.isFinite(metricTolerance) || metricTolerance < 0) throw new Error("Metric tolerance must be finite and non-negative");
   if (metricOperator !== "eq" && metricTolerance !== 0) throw new Error("Tolerance applies only to reference matching");
   if ((metricKey || metricTarget !== null) && (!outputFile || !metricKey || typeof metricTarget !== "number" || !Number.isFinite(metricTarget))) {
-    throw new Error("Metric needs an output file, JSON key and finite numeric target");
+    throw new Error("Metric needs an output file, JSON key / CSV column and finite numeric target");
   }
   if (evaluation !== null) {
     if (typeof evaluation !== "object" || Array.isArray(evaluation)
@@ -106,7 +108,7 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
     ] };
   }
   if (quickCommand && !["quick", "evaluation"].includes(workflowId)) throw new Error("Only Quick and Evaluation support a reviewed command");
-  if (workflowId === "evaluation" && (!executionOptions.evaluation || !executionOptions.metricKey || executionOptions.metricTarget === null)) throw new Error("Evaluation requires an output JSON metric and a declared dataset, model and reference source");
+  if (workflowId === "evaluation" && (!executionOptions.evaluation || !executionOptions.metricKey || executionOptions.metricTarget === null)) throw new Error("Evaluation requires an output JSON/CSV metric and a declared dataset, model and reference source");
   if (workflowId !== "evaluation" && executionOptions.evaluation) throw new Error("Evaluation context is only accepted for Evaluation workflows");
   const assetsInEntry = executionOptions.evaluation?.assetsInEntry;
   if (assetsInEntry && !quickCommand) throw new Error("Entry-prepared assets require a reviewed Evaluation command");

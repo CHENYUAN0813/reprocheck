@@ -1,5 +1,6 @@
 """Bounded, container-local observations; not a security attestation."""
 import hashlib
+import csv
 import importlib.metadata
 import json
 import platform
@@ -100,12 +101,30 @@ else:
         metric = {"key": options["metricKey"], "value": None}
         try:
             if not artifact or not artifact.get("sha256") or artifact["size"] > 1024 * 1024:
-                raise ValueError("Metric needs a readable JSON output file up to 1 MB")
-            value = json.loads((root / options["outputFile"]).resolve().read_text(encoding="utf-8"))
+                raise ValueError("Metric needs a readable JSON or single-row CSV output file up to 1 MB")
+            text = (root / options["outputFile"]).resolve().read_text(encoding="utf-8")
+            is_csv = options["outputFile"].lower().endswith(".csv")
+            if is_csv:
+                import io
+                reader = csv.DictReader(io.StringIO(text))
+                if not reader.fieldnames or any(not name.strip() for name in reader.fieldnames) or len(set(reader.fieldnames)) != len(reader.fieldnames):
+                    raise ValueError("CSV requires a unique header")
+                rows = list(reader)
+                if len(rows) != 1 or None in rows[0] or any(item is None for item in rows[0].values()):
+                    raise ValueError("CSV metric requires exactly one complete data row; choose/aggregate rows explicitly in the entry")
+                value = rows[0]
+            else:
+                value = json.loads(text)
             if options.get("evaluation"):
-                evaluation_output = {"data": value} if len(json.dumps(value, allow_nan=False)) <= 8192 else {"data": None, "note": "Evaluation JSON preview is limited to 8192 characters"}
-            for key in options["metricKey"].split("."):
-                value = value[key]
+                evaluation_output = {"data": value} if len(json.dumps(value, allow_nan=False)) <= 8192 else {"data": None, "note": "Evaluation output preview is limited to 8192 characters"}
+            if is_csv:
+                value = value[options["metricKey"]]
+                if not re.fullmatch(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", value.strip()):
+                    raise ValueError("CSV metric must be a numeric cell without implicit unit conversion")
+                value = float(value)
+            else:
+                for key in options["metricKey"].split("."):
+                    value = value[key]
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise ValueError("Metric is not a number")
             import math

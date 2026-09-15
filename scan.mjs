@@ -658,6 +658,7 @@ export async function scan(input, token, pinnedCommit) {
     ...new Set([
       ...entrypointsWithReferences.filter((entry) => entry.category === "evaluation").flatMap((entry) => entry.references)
         .filter((reference) => reference.exists && /\.py$/i.test(reference.path)).map((reference) => reference.path),
+      ...commandReferences.filter((reference) => reference.exists && /\.(?:ya?ml|toml|json)$/i.test(reference.path)).map((reference) => reference.path),
       ...filePaths.filter((path) => /(?:^|\/)(?:eval(?:uate)?|benchmark)[\w-]*\.py$/i.test(path)).slice(0, 2),
       ...commandReferences
         .filter((reference) => reference.exists && /\.(?:py|ya?ml|toml|json)$/i.test(reference.path))
@@ -703,7 +704,7 @@ export async function scan(input, token, pinnedCommit) {
     parameters: entrypoints[0]?.parameters ?? [],
   });
   const workflows = buildWorkflows(reproductionPlan, entrypoints);
-  const evaluationDraft = buildEvaluationDraft({ readme, readmeText, entrypoints, files: codeFiles });
+  const evaluationDraft = buildEvaluationDraft({ readme, readmeText, entrypoints, files: codeFiles, filePaths });
 
   const checks = [
     {
