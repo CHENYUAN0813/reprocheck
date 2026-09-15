@@ -32,7 +32,7 @@ Open `http://127.0.0.1:5173`, submit a public GitHub repository URL, and downloa
 
 ## Local isolated execution
 
-Start Docker Desktop, scan a repository, choose **Quick verification**, and select **Check local runner**. ReproCheck re-scans the pinned commit before allowing execution and shows every command for review.
+Start Docker Desktop, scan a repository, choose **Quick verification** or **Evaluation**, and select **Check local runner**. ReproCheck re-scans the pinned commit before allowing execution and shows every command for review. Training execution remains disabled.
 
 After explicit confirmation, commands run in a temporary `python:3.11` container with 2 CPUs, 2 GB of memory, a 10-minute timeout, a 256-process limit, no host filesystem mounts, and no host credentials. Network access remains enabled because public source code, dependencies, and model files may need to be downloaded. Runs can be monitored and cancelled from the page, with per-step status and the exact failure stage.
 
@@ -42,7 +42,7 @@ If dependency installation fails or times out while using a README-provided pack
 
 Quick verification optionally accepts a **reviewed command** that replaces only an existing detected final entry point. The preview shows the original README command and the effective commands; dependency and model preparation steps remain unchanged. This is useful for non-interactive smoke tests when the detected command starts an interactive demo or needs missing test dependencies.
 
-Before checking the runner, you can specify expected text in the final entry point's output, a new or changed non-empty output file, and an optional numeric JSON metric condition (at least / at most). JSON metric keys use dotted paths such as `evaluation.accuracy`. File paths must stay inside the repository; file evidence is limited to 64 MB and metric JSON files to 1 MB. Existing, unchanged repository files do not satisfy generated-output checks.
+Before checking the runner, you can specify expected text in the final entry point's output, a new or changed non-empty output file, and a numeric JSON metric condition (at least / at most / match reference with absolute tolerance). Zero tolerance means exact numeric equality; positive tolerance boundaries allow machine-level arithmetic rounding. JSON metric keys use dotted paths such as `evaluation.accuracy`. File paths must stay inside the repository; file evidence is limited to 64 MB and metric JSON files to 1 MB. File freshness is checked against the snapshot immediately before the final entry, so unchanged checkout or preparation files do not satisfy generated-output checks.
 
 **Execution SUCCEEDED** means the commands exited normally. **Configured checks passed** means the supplied output expectations also passed. Neither proves that a paper's benchmark was reproduced; absent expectations are explicitly labelled as not configured.
 
@@ -52,7 +52,7 @@ Snapshots are atomically saved under `.reprocheck/runs/` on this computer (ignor
 
 ### Frozen recipes and replay comparisons
 
-A successful Quick run with passing output checks now embeds a **frozen recipe** in its local evidence record. The recipe contains the exact Git commit, observed Docker image ID, default Python version and dependency versions captured **before the entry point**, original/effective commands, resource limits, expectations, baseline file/metric observations, and a SHA-256 fingerprint. Older records without a pre-entry snapshot cannot be frozen; run them again first.
+A successful Quick or Evaluation run with passing output checks now embeds a **frozen recipe** in its local evidence record. The recipe contains the exact Git commit, observed Docker image ID, default Python version and dependency versions captured **before the entry point**, original/effective commands, resource limits, expectations, baseline file/metric observations, and a SHA-256 fingerprint. Older records without a pre-entry snapshot cannot be frozen; run them again first.
 
 Open a saved record, choose **Review frozen recipe**, review its steps and expectations, then explicitly confirm and select **Replay frozen recipe**. Replay fetches the saved commit directly instead of re-scanning the latest branch. It requires the exact image to remain locally available, uses `--pull never`, restores pinned packages from official PyPI with wheels only, and applies pip constraints to the saved preparation commands. It checks the default Python version and the complete installed-version set before allowing the entry point to run. It never silently substitutes a newer image or package version. The reviewed fingerprint must still match when execution starts. Pip constraints limit versions but do not install packages themselves; the separate restore step does that ([pip documentation](https://pip.pypa.io/en/stable/user_guide/#constraints-files)). Docker supports content-addressed image references ([Docker documentation](https://docs.docker.com/engine/containers/run/)).
 
@@ -60,13 +60,23 @@ The new run keeps its own evidence and a comparison with its baseline. **SAME** 
 
 This version replays local recipes from saved records, not arbitrary uploaded JSON. It supports index packages and the container's default Python entry point; direct/editable/VCS dependencies and alternate environment managers need stronger artifact locks. Version pins are not wheel hashes or a guarantee of identical package binaries/build tools. External datasets/checkpoints, hardware and random state are not automatically frozen. A recipe helps repeat and compare a small experiment; it does not certify full paper reproduction.
 
+### Small CPU Evaluation
+
+Evaluation requires a fresh JSON output file, numeric metric/target, and explicit dataset/split, model/checkpoint and reference-source declarations. Conditions can be thresholds or `reference ± absolute tolerance`; values must use the same units (for example, `0.95` versus `95`). Reports separate command success from **MATCHED_REFERENCE**, **OUTSIDE_REFERENCE** and **INCOMPLETE**. A missing/invalid metric or failed text/file check never counts as a matched reference.
+
+A reviewed Evaluation command may replace the detected final entry or explicitly supply one when the README has no evaluation route. Dependencies remain installed as documented. Separate missing/manual dataset or model preparation blocks execution unless the user explicitly selects that the reviewed entry handles those assets. This choice, original asset instructions, actual commands and declared context are recorded and shown for review; ReproCheck does not silently omit preparation or use host files. A small JSON output preview (up to 8192 characters) is included in downloadable evidence, alongside the final output hash.
+
+**Load CPU evaluation example** scans the actual [Micrograd repository](https://github.com/karpathy/micrograd) and fills a readable, reviewed adapter from `examples/evaluate-micrograd.py`; it does not start a run. The adapter uses the fetched repository's `MLP`, generates a synthetic 32-sample training set and independent 48-sample held-out test set with recorded seeds, trains a `[2,4,1]` model for 40 SGD epochs, saves/reloads its checkpoint, and evaluates held-out accuracy and hinge loss. The JSON also records sample counts and reported dataset/checkpoint hashes. These assets exist only inside the temporary container and are not exported as binary artifacts.
+
+The example's accuracy reference `1.0 ± 0.05` is a **ReproCheck synthetic fixture target**, not Micrograd's moon dataset result or any published paper benchmark. Arbitrary dataset/model/reference descriptions are user declarations, not independently verified sources. Matching the reference within tolerance does not relax frozen replay's exact output-hash/metric comparison: training may produce different checkpoint bytes while reaching the same accuracy. Full paper reproduction, GPU training and automatic benchmark/source matching are not claimed.
+
 ## Self-test
 
 `node scan.mjs --self-test`
 
 GitHub Actions runs the self-tests and production build on every push and pull request.
 
-For the opt-in real Docker integration check, start the local server and run `npm run test:docker`. It scans the pinned Micrograd source, executes a reviewed scalar-autodiff example, verifies text/file/gradient evidence, reloads the evidence in a new process, replays the frozen recipe with matching output, reports deliberately varying output as different, and checks that deliberately incorrect expectations fail. It does not run Micrograd's default pytest suite or reproduce a published benchmark.
+For the opt-in real Docker integration check, start the local server and run `npm run test:docker`. It scans the pinned Micrograd source, executes scalar-autodiff and held-out CPU Evaluation examples, checks checkpoint reload and reference tolerance, reloads evidence in a new process, replays frozen recipes, reports output differences, and checks that deliberately incorrect expectations/references fail. It does not run Micrograd's default pytest suite or reproduce a published benchmark.
 
 ## Current checks
 
@@ -90,7 +100,7 @@ For the opt-in real Docker integration check, start the local server and run `np
 
 - Public GitHub repositories only
 - README, the primary dependency file, and up to five likely training/configuration files are analyzed; other files are checked by path
-- Only the Quick verification workflow can run, and only through the local Docker-backed server
+- Quick verification and CPU-limited Evaluation can run only through the local Docker-backed server; Training remains disabled
 - Hosted Sites deployments provide static scanning but not Docker execution
 - Local run history is single-user JSON storage; interrupted runs cannot recover their final outcome after a server restart
 - Official PyPI override supports a single pip install command, not arbitrary compound shell/Poetry/uv installs

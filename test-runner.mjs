@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { buildDockerInvocation, buildReplayPreflight, compareRuns, createRecipe, rewritePackageIndex, validateExecutionOptions, verifyOutcome } from "./runner.mjs";
+import { buildDockerInvocation, buildPreflight, buildReplayPreflight, compareRuns, createRecipe, rewritePackageIndex, validateExecutionOptions, verifyOutcome } from "./runner.mjs";
 import { getSavedRun, listSavedRuns, saveRun } from "./run-store.mjs";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -28,6 +28,29 @@ assert.equal(verifyOutcome({ ...sample, log: sample.log.replace('"value":0.95', 
 assert.equal(verifyOutcome({ ...sample, log: '::reprocheck-evidence::{"dependencies":{}}\n' }).status, "INCOMPLETE");
 console.log("PASS  output verification self-test");
 
+const evaluationContext = { dataset: "Synthetic held-out fixture", model: "Small CPU model", reference: "User-defined fixture target, not a paper benchmark", assetsInEntry: true };
+const evaluationOptions = { ...sample.executionOptions, quickCommand: "python evaluate.py", metricOperator: "eq", metricTarget: 0.9, metricTolerance: 0.05, evaluation: evaluationContext };
+assert.equal(verifyOutcome({ ...sample, executionOptions: evaluationOptions }).status, "VERIFIED");
+assert.equal(verifyOutcome({ ...sample, executionOptions: { ...evaluationOptions, metricTolerance: 0.049 } }).status, "FAILED");
+assert.equal(verifyOutcome({ ...sample, executionOptions: { ...evaluationOptions, metricTarget: 0.95, metricTolerance: 0 } }).status, "VERIFIED");
+assert.equal(verifyOutcome({ ...sample, executionOptions: { ...evaluationOptions, metricTarget: 0.9500000000000001, metricTolerance: 0 } }).status, "FAILED");
+assert.equal(verifyOutcome({ ...sample, log: sample.log.replace('"value":0.95', '"value":-1.7976931348623157e308'),
+  executionOptions: { ...evaluationOptions, metricTarget: Number.MAX_VALUE, metricTolerance: Number.MAX_VALUE } }).status, "FAILED");
+assert.throws(() => validateExecutionOptions({ ...evaluationOptions, metricTolerance: -1 }), /non-negative/);
+assert.throws(() => validateExecutionOptions({ ...evaluationOptions, metricTolerance: Infinity }), /non-negative/);
+assert.throws(() => validateExecutionOptions({ ...evaluationOptions, evaluation: { ...evaluationContext, reference: " " } }), /reference source/);
+const evaluationReport = { repository: "owner/repo", commit: "a".repeat(40),
+  reproductionPlan: { steps: [{ id: "install", title: "Install", status: "DOCUMENTED", command: "pip install example" }, { id: "data", title: "Data", status: "MISSING" }, { id: "model", title: "Model", status: "MISSING" }] },
+  workflows: [{ id: "evaluation", title: "Evaluation", status: "UNAVAILABLE", steps: [] }, { id: "training", title: "Training", steps: [{ id: "train", status: "DOCUMENTED", command: "python train.py" }] }] };
+assert.throws(() => buildPreflight(evaluationReport, "evaluation", { available: true }), /Evaluation requires/);
+const evaluationPreview = buildPreflight(evaluationReport, "evaluation", { available: true }, "readme", evaluationOptions);
+assert.equal(evaluationPreview.runnable, true);
+assert.equal(evaluationPreview.preparationOverride.originalSteps.length, 2);
+assert.deepEqual(evaluationPreview.automatedSteps.map((step) => step.id), ["install", "evaluation-reviewed"]);
+assert.equal(buildPreflight(evaluationReport, "evaluation", { available: true }, "readme", { ...evaluationOptions, evaluation: { ...evaluationContext, assetsInEntry: false } }).runnable, false);
+assert.equal(buildPreflight(evaluationReport, "training", { available: true }).runnable, false);
+console.log("PASS  Evaluation execution preview and reference tolerance self-test");
+
 const frozen = { ...sample, id: randomUUID(), repository: "owner/repo", commit: "a".repeat(40), workflowId: "quick", packageIndex: "readme",
   steps: [{ id: "install", title: "Install", command: "pip install example==1.0" }, { id: "run", title: "Run", command: "python demo.py" }],
   environment: { imageId: `sha256:${"b".repeat(64)}`, python: "3.11.9", platform: "Linux-test", capture: "before-entry", unlockedDependencies: [] },
@@ -35,6 +58,9 @@ const frozen = { ...sample, id: randomUUID(), repository: "owner/repo", commit: 
   limits: { cpus: 2, memory: "2 GB", timeoutMinutes: 10, hostMounts: false, networkAccess: true, image: "python:3.11" },
 };
 const recipe = createRecipe(frozen);
+const frozenEvaluation = { ...frozen, workflowId: "evaluation", executionOptions: evaluationOptions, evaluation: { status: "MATCHED_REFERENCE" } };
+assert.equal(createRecipe(frozenEvaluation).workflowId, "evaluation");
+assert.equal(buildReplayPreflight(frozenEvaluation, { available: true }, true).workflow.id, "evaluation");
 assert.match(recipe.fingerprint, /^[a-f\d]{64}$/);
 assert.equal(recipe.fingerprint, createRecipe(frozen).fingerprint);
 assert.equal(recipe.imageId, frozen.environment.imageId);
@@ -70,6 +96,8 @@ try {
   assert.equal(getSavedRun(record.id, directory).verification.status, "INCOMPLETE");
   saveRun({ ...record, status: "RUNNING", comparison: { status: "PENDING", baselineRunId: frozen.id, rows: [] } }, directory);
   assert.equal(getSavedRun(record.id, directory).comparison.status, "INCOMPLETE");
+  saveRun({ ...record, status: "RUNNING", evaluation: { status: "PENDING" } }, directory);
+  assert.equal(getSavedRun(record.id, directory).evaluation.status, "INCOMPLETE");
   assert.equal(getSavedRun("../../secret", directory), null);
   assert.throws(() => saveRun({ id: "../../secret" }, directory), /Invalid/);
   writeFileSync(join(directory, `${randomUUID()}.json`), "null");
@@ -100,8 +128,8 @@ if (process.argv.includes("--docker")) {
   const preview = await request("/api/preflight", input);
   assert.equal(preview.runnable, true);
   assert.equal(preview.commandOverride.origin, "user-reviewed");
-  async function execute(options) {
-    let job = await request("/api/run", { ...input, executionOptions: options, confirmUnknownCode: true });
+  async function execute(options, workflowId = "quick") {
+    let job = await request("/api/run", { ...input, workflowId, executionOptions: options, confirmUnknownCode: true });
     const deadline = Date.now() + 120_000;
     while (job.status === "RUNNING" && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -175,12 +203,58 @@ if (process.argv.includes("--docker")) {
   assert.equal(repeated.comparison.status, "SAME", JSON.stringify(repeated.comparison));
   assert.ok(repeated.comparison.rows.every((row) => row.status === "SAME"));
   console.log("PASS  frozen source/image/dependencies replay with matching output hash and metric");
+
+  const evaluationSource = readFileSync(new URL("./examples/evaluate-micrograd.py", import.meta.url), "utf8");
+  const cpuOptions = { quickCommand: `python -c 'exec(${JSON.stringify(evaluationSource).replaceAll("'", "'\"'\"'")})'`,
+    expectedText: "evaluation-ok", outputFile: "evaluation-result.json", metricKey: "accuracy", metricOperator: "eq", metricTarget: 1, metricTolerance: 0.05,
+    evaluation: { dataset: "separated-sign-x-v1, 32 train / 48 held-out test, seeds 101/202", model: "Micrograd MLP [2,4,1], seed 7, 40 SGD epochs, saved/reloaded checkpoint",
+      reference: "User-defined synthetic fixture target, NOT a published benchmark", assetsInEntry: true } };
+  const evaluated = await execute(cpuOptions, "evaluation");
+  assert.equal(evaluated.status, "SUCCEEDED", evaluated.log);
+  assert.equal(evaluated.evaluation.status, "MATCHED_REFERENCE", JSON.stringify(evaluated.evaluation));
+  assert.equal(evaluated.workflowId, "evaluation");
+  assert.equal(evaluated.metric.value, 1);
+  assert.equal(evaluated.evaluation.output.data.test_samples, 48);
+  assert.equal(evaluated.evaluation.output.data.train_samples, 32);
+  assert.match(evaluated.evaluation.output.data.dataset_sha256, /^[a-f\d]{64}$/);
+  assert.match(evaluated.evaluation.output.data.checkpoint_sha256, /^[a-f\d]{64}$/);
+  assert.ok(evaluated.evaluation.output.data.initial_accuracy < evaluated.metric.value);
+  assert.equal(evaluated.recipe.workflowId, "evaluation");
+  const reevaluated = await replayRecord(evaluated);
+  assert.equal(reevaluated.status, "SUCCEEDED", reevaluated.log);
+  assert.equal(reevaluated.evaluation.status, "MATCHED_REFERENCE");
+  assert.equal(reevaluated.comparison.rows.find((row) => row.id === "metric").status, "SAME");
+  const evaluationRecovered = JSON.parse((await promisify(execFile)(process.execPath, ["--input-type=module", "-e",
+    `import { getRun } from './runner.mjs'; console.log(JSON.stringify(getRun('${evaluated.id}')));`], { windowsHide: true })).stdout);
+  assert.equal(evaluationRecovered.evaluation.output.data.dataset_sha256, evaluated.evaluation.output.data.dataset_sha256);
+  assert.equal(evaluationRecovered.evaluation.status, "MATCHED_REFERENCE");
+  const wrongReference = await execute({ ...cpuOptions, metricTarget: 0, metricTolerance: 0.05 }, "evaluation");
+  assert.equal(wrongReference.status, "SUCCEEDED");
+  assert.equal(wrongReference.evaluation.status, "OUTSIDE_REFERENCE");
+  assert.equal(wrongReference.verification.status, "FAILED");
+  const missingMetric = await execute({ ...cpuOptions, quickCommand: `python -c 'print("evaluation-ok")'` }, "evaluation");
+  assert.equal(missingMetric.status, "SUCCEEDED");
+  assert.equal(missingMetric.evaluation.status, "INCOMPLETE");
+  assert.equal(missingMetric.recipe, null);
+  console.log(`PASS  held-out CPU Evaluation and checkpoint reload: accuracy=${evaluated.metric.value}, initial=${evaluated.evaluation.output.data.initial_accuracy}, replay=${reevaluated.comparison.status}`);
+  console.log("PASS  Evaluation reference mismatch stays failed; report and asset identifiers survive reload");
   const collector = readFileSync(new URL("./collect-evidence.py", import.meta.url), "utf8");
   await assert.rejects(promisify(execFile)("docker", ["run", "--rm", "--pull", "never", "--cpus", "2", "--memory", "2g",
     "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--network", "none", job.environment.imageId,
     "python", "-c", collector, JSON.stringify({ lockedEnvironment: { python: job.environment.python, dependencies: ["missing-lock-package==1.0"] } }), "environment"],
     { timeout: 15_000, windowsHide: true }), (error) => /Locked Python\/dependency environment does not match/.test(error.stderr));
   console.log("PASS  actual container refuses an inconsistent pre-entry dependency lock");
+  const probeOptions = { ...cpuOptions, outputFile: "prepared.json" };
+  const preparationProbe = `import json, pathlib, sys\npathlib.Path("/workspace").mkdir(exist_ok=True)\ncollector=${JSON.stringify(collector)}\noptions=${JSON.stringify(JSON.stringify(probeOptions))}\ndef collect(phase):\n    sys.argv=["collector", options, phase]\n    exec(collector, {})\ncollect("start")\npathlib.Path("/workspace/prepared.json").write_text('{"accuracy":1}')\ncollect("environment")\ncollect("finish")\npathlib.Path("/workspace/prepared.json").write_text('{"accuracy":1e400}')\ncollect("finish")`;
+  const probe = await promisify(execFile)("docker", ["run", "--rm", "--pull", "never", "--cpus", "2", "--memory", "2g", "--cap-drop", "ALL",
+    "--security-opt", "no-new-privileges", "--network", "none", job.environment.imageId, "python", "-c", preparationProbe], { timeout: 15_000, windowsHide: true });
+  const observations = probe.stdout.split("\n").filter((line) => line.startsWith("::reprocheck-evidence::"));
+  assert.equal(observations.length, 2);
+  const preparationChecks = verifyOutcome({ ...sample, executionOptions: { ...probeOptions, expectedText: "" }, log: `${observations[0]}\n` });
+  assert.equal(preparationChecks.checks.find((check) => check.id === "file").status, "FAILED");
+  const nonFiniteChecks = verifyOutcome({ ...sample, executionOptions: { ...probeOptions, expectedText: "" }, log: `${observations[1]}\n` });
+  assert.equal(nonFiniteChecks.checks.find((check) => check.id === "metric").status, "FAILED");
+  console.log("PASS  preparation-only output and non-finite Evaluation JSON never pass acceptance");
   const recoveredReplay = JSON.parse((await promisify(execFile)(process.execPath, ["--input-type=module", "-e",
     `import { getRun } from './runner.mjs'; console.log(JSON.stringify(getRun('${repeated.id}')));`], { windowsHide: true })).stdout);
   assert.equal(recoveredReplay.comparison.status, "SAME");
