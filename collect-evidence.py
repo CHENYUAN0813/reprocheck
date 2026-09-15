@@ -49,6 +49,8 @@ artifact = observe_file()
 if sys.argv[2] == "environment":
     snapshot = observe_environment()
     environment_file.write_text(json.dumps(snapshot), encoding="utf-8")
+    # Preparation output is not evidence that the final entry produced anything.
+    baseline.write_text(json.dumps(artifact), encoding="utf-8")
     locked = options.get("lockedEnvironment")
     if locked:
         normalize = lambda items: sorted(re.sub(r"[-_.]+", "-", item.split("==")[0].lower()) + "==" + item.split("==")[1] for item in items)
@@ -63,12 +65,15 @@ else:
     if artifact and artifact.get("sha256"):
         artifact["fresh"] = artifact["sha256"] != (previous or {}).get("sha256")
     metric = None
+    evaluation_output = None
     if options.get("metricKey"):
         metric = {"key": options["metricKey"], "value": None}
         try:
             if not artifact or not artifact.get("sha256") or artifact["size"] > 1024 * 1024:
                 raise ValueError("Metric needs a readable JSON output file up to 1 MB")
             value = json.loads((root / options["outputFile"]).resolve().read_text(encoding="utf-8"))
+            if options.get("evaluation"):
+                evaluation_output = {"data": value} if len(json.dumps(value, allow_nan=False)) <= 8192 else {"data": None, "note": "Evaluation JSON preview is limited to 8192 characters"}
             for key in options["metricKey"].split("."):
                 value = value[key]
             if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -86,6 +91,7 @@ else:
         **snapshot,
         "artifact": artifact,
         "metric": metric,
+        "evaluationOutput": evaluation_output,
     }
     # ponytail: JSON metadata only; add binary artifact export when a real use case needs it.
     print("\n::reprocheck-evidence::" + json.dumps(evidence, allow_nan=False))

@@ -35,25 +35,36 @@ export async function inspectRuntime() {
 export function validateExecutionOptions(input = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid execution options");
   const quickCommand = input.quickCommand ?? "";
-  if (typeof quickCommand !== "string" || quickCommand.length > 2000 || /[\r\n\0]/.test(quickCommand)) {
-    throw new Error("Quick command must be a single line of at most 2000 characters");
+  if (typeof quickCommand !== "string" || quickCommand.length > 6000 || /[\r\n\0]/.test(quickCommand)) {
+    throw new Error("Reviewed command must be a single line of at most 6000 characters");
   }
   const expectedText = input.expectedText ?? "";
   const outputFile = input.outputFile ?? "";
   const metricKey = input.metricKey ?? "";
   const metricOperator = input.metricOperator ?? "gte";
   const metricTarget = input.metricTarget ?? null;
+  const metricTolerance = input.metricTolerance ?? 0;
+  const evaluation = input.evaluation ?? null;
   if (typeof expectedText !== "string" || expectedText.length > 300 || /\0/.test(expectedText)) throw new Error("Expected text must be at most 300 characters");
   if (typeof outputFile !== "string" || outputFile.length > 240 || /[\\:\r\n\0]/.test(outputFile)
     || (outputFile && outputFile.split("/").some((part) => !part || part === "." || part === ".."))) {
     throw new Error("Output file must be a relative repository path without traversal");
   }
   if (typeof metricKey !== "string" || metricKey.length > 100 || (metricKey && !/^[\w-]+(?:\.[\w-]+)*$/.test(metricKey))) throw new Error("Invalid JSON metric key");
-  if (!["gte", "lte"].includes(metricOperator)) throw new Error("Metric operator must be gte or lte");
+  if (!["gte", "lte", "eq"].includes(metricOperator)) throw new Error("Metric operator must be gte, lte or eq");
+  if (typeof metricTolerance !== "number" || !Number.isFinite(metricTolerance) || metricTolerance < 0) throw new Error("Metric tolerance must be finite and non-negative");
+  if (metricOperator !== "eq" && metricTolerance !== 0) throw new Error("Tolerance applies only to reference matching");
   if ((metricKey || metricTarget !== null) && (!outputFile || !metricKey || typeof metricTarget !== "number" || !Number.isFinite(metricTarget))) {
     throw new Error("Metric needs an output file, JSON key and finite numeric target");
   }
-  return { quickCommand: quickCommand.trim(), expectedText, outputFile, metricKey, metricOperator, metricTarget };
+  if (evaluation !== null) {
+    if (typeof evaluation !== "object" || Array.isArray(evaluation)
+      || Object.keys(evaluation).some((key) => !["dataset", "model", "reference", "assetsInEntry"].includes(key))
+      || ["dataset", "model", "reference"].some((key) => typeof evaluation[key] !== "string" || !evaluation[key].trim() || evaluation[key].length > 500 || /\0/.test(evaluation[key]))
+      || typeof evaluation.assetsInEntry !== "boolean") throw new Error("Evaluation needs dataset, model, reference source and an explicit asset-preparation choice");
+  }
+  return { quickCommand: quickCommand.trim(), expectedText, outputFile, metricKey, metricOperator, metricTarget, metricTolerance,
+    evaluation: evaluation ? { dataset: evaluation.dataset.trim(), model: evaluation.model.trim(), reference: evaluation.reference.trim(), assetsInEntry: evaluation.assetsInEntry } : null };
 }
 
 export function buildPreflight(report, workflowId, runtime, packageIndex = "readme", options = {}) {
@@ -61,11 +72,18 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
   const { quickCommand } = executionOptions;
   const workflow = report.workflows?.find((candidate) => candidate.id === workflowId);
   if (!workflow) throw new Error("A valid reproduction workflow is required");
-  if (quickCommand && workflowId !== "quick") throw new Error("Only Quick verification supports a reviewed command");
-  const originalSteps = workflow.steps;
+  if (quickCommand && !["quick", "evaluation"].includes(workflowId)) throw new Error("Only Quick and Evaluation support a reviewed command");
+  if (workflowId === "evaluation" && (!executionOptions.evaluation || !executionOptions.metricKey || executionOptions.metricTarget === null)) throw new Error("Evaluation requires an output JSON metric and a declared dataset, model and reference source");
+  if (workflowId !== "evaluation" && executionOptions.evaluation) throw new Error("Evaluation context is only accepted for Evaluation workflows");
+  const assetsInEntry = executionOptions.evaluation?.assetsInEntry;
+  if (assetsInEntry && !quickCommand) throw new Error("Entry-prepared assets require a reviewed Evaluation command");
+  const originalSteps = workflowId === "evaluation" && !workflow.steps.length && quickCommand
+    ? [...(report.reproductionPlan?.steps ?? []).filter((step) => ["environment", "install", "model", "data"].includes(step.id)),
+      { id: "evaluation-reviewed", title: "User-reviewed evaluation entry point", status: "MISSING", command: null }]
+    : workflow.steps;
   const entry = originalSteps.at(-1);
   if (quickCommand && !entry) throw new Error("No Quick entry point is available to replace");
-  const steps = originalSteps.map((step) => step === entry && quickCommand
+  const steps = originalSteps.filter((step) => !assetsInEntry || !["data", "model"].includes(step.id)).map((step) => step === entry && quickCommand
     ? { ...step, command: quickCommand, instruction: null, status: "REVIEWED_OVERRIDE" }
     : step);
 
@@ -89,6 +107,7 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
   const blockers = steps
     .filter((step) => step.status === "BLOCKED" || (step.status === "MISSING" && step.id !== "environment"))
     .map(({ id, title }) => ({ id, title }));
+  if (workflowId === "evaluation") blockers.push(...manualSteps.filter((step) => step.id !== "environment").map(({ id, title }) => ({ id, title })));
 
   return {
     repository: report.repository,
@@ -98,8 +117,9 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
     executionOptions,
     commandOverride: quickCommand ? { original: entry.command, actual: quickCommand, origin: "user-reviewed" } : null,
     runtime,
-    runnable: workflowId === "quick" && runtime.available && automatedSteps.length > 0 && blockers.length === 0,
-    reason: workflowId !== "quick" ? "Only Quick verification can execute in this version"
+    preparationOverride: assetsInEntry ? { origin: "user-reviewed", instruction: "Dataset and model preparation are handled by the reviewed entry command", originalSteps: originalSteps.filter((step) => ["data", "model"].includes(step.id)) } : null,
+    runnable: ["quick", "evaluation"].includes(workflowId) && runtime.available && automatedSteps.length > 0 && blockers.length === 0,
+    reason: !["quick", "evaluation"].includes(workflowId) ? "Training execution is not enabled in this CPU-limited version"
       : !runtime.available ? runtime.reason : blockers.length ? "The workflow has missing or blocked steps"
         : !automatedSteps.length ? "No executable commands were found" : null,
     automatedSteps: automatedSteps.map((step) => ({ ...step,
@@ -147,7 +167,7 @@ function sourceSteps(job) {
 
 export function createRecipe(job) {
   if (job.status !== "SUCCEEDED" || job.verification?.status !== "VERIFIED") throw new Error("Pass configured output checks before freezing a recipe");
-  if (job.workflowId !== "quick" || !/^[\w.-]+\/[\w.-]+$/.test(job.repository) || !/^[a-f\d]{40}$/i.test(job.commit)) throw new Error("Invalid Quick source identity");
+  if (!["quick", "evaluation"].includes(job.workflowId) || !/^[\w.-]+\/[\w.-]+$/.test(job.repository) || !/^[a-f\d]{40}$/i.test(job.commit)) throw new Error("Invalid executable source identity");
   if (!["readme", "pypi"].includes(job.packageIndex)) throw new Error("Invalid saved package source");
   if (!/^sha256:[a-f\d]{64}$/.test(job.environment?.imageId ?? "")) throw new Error("The exact Docker image ID was not observed; run again before freezing");
   if (job.environment?.capture !== "before-entry" || !/^3\.11\.\d+$/.test(job.environment.python ?? "")) throw new Error("A pre-entry Python/dependency snapshot is required; run again");
@@ -167,8 +187,8 @@ export function createRecipe(job) {
   if (job.limits?.cpus !== 2 || job.limits.memory !== "2 GB" || job.limits.timeoutMinutes !== 10
     || job.limits.hostMounts !== false || job.limits.networkAccess !== true) throw new Error("Unsupported saved execution limits");
   const recipe = { schemaVersion: 1, baselineRunId: job.id, repository: job.repository, commit: job.commit,
-    workflowId: "quick", packageIndex: job.packageIndex, executionOptions: validateExecutionOptions(job.executionOptions),
-    commandOverride: job.commandOverride ?? null, imageId: job.environment.imageId, python: job.environment.python,
+    workflowId: job.workflowId, packageIndex: job.packageIndex, executionOptions: validateExecutionOptions(job.executionOptions),
+    commandOverride: job.commandOverride ?? null, preparationOverride: job.preparationOverride ?? null, imageId: job.environment.imageId, python: job.environment.python,
     dependencies: [...dependencies].sort(), commands, limits: { ...job.limits, image: job.environment.imageId },
     baselineResults: { artifact: job.artifact ?? null, metric: job.metric ?? null },
     warnings: ["Local image ID must still exist on this computer.", "Package versions are pinned, not wheel hashes or build artifacts.",
@@ -187,8 +207,8 @@ export async function inspectLockedImage(imageId) {
 
 export function buildReplayPreflight(baseline, runtime, imageAvailable) {
   const recipe = createRecipe(baseline);
-  return { repository: recipe.repository, commit: recipe.commit, workflow: { id: "quick", title: "Locked recipe replay", status: "FROZEN" },
-    packageIndex: recipe.packageIndex, executionOptions: recipe.executionOptions, commandOverride: recipe.commandOverride,
+  return { repository: recipe.repository, commit: recipe.commit, workflow: { id: recipe.workflowId, title: "Locked recipe replay", status: "FROZEN" },
+    packageIndex: recipe.packageIndex, executionOptions: recipe.executionOptions, commandOverride: recipe.commandOverride, preparationOverride: recipe.preparationOverride,
     runtime, runnable: runtime.available && imageAvailable, reason: !runtime.available ? runtime.reason
       : !imageAvailable ? "The locked image is missing locally; replay will not substitute a newer image" : null,
     recipe, replayOf: baseline.id, baseline: { ...baseline, log: undefined, recipe: undefined, comparison: undefined }, frozenCommands: true, experimentParameters: baseline.experimentParameters ?? [],
@@ -218,7 +238,7 @@ export function compareRuns(baseline, current) {
   }).sort();
   compare("dependencies", normalize(baseline.dependencies), normalize(current.dependencies));
   compare("commands", sourceSteps(baseline).map((step) => step.command), sourceSteps(current).map((step) => step.command));
-  compare("expectations", baseline.executionOptions, current.executionOptions);
+  compare("expectations", validateExecutionOptions(baseline.executionOptions), validateExecutionOptions(current.executionOptions));
   compare("limits", baseline.limits && { ...baseline.limits, image: undefined }, current.limits && { ...current.limits, image: undefined });
   if (baseline.executionOptions?.expectedText) compare("text-check", baseline.verification?.checks?.find((check) => check.id === "text")?.status,
     current.verification?.checks?.find((check) => check.id === "text")?.status);
@@ -324,11 +344,20 @@ export function readEvidence(log) {
     if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) return null;
     if (evidence.dependencies !== undefined && (!Array.isArray(evidence.dependencies)
       || evidence.dependencies.length > 500 || evidence.dependencies.some((item) => typeof item !== "string" || item.length > 240))) return null;
-    for (const key of ["environment", "artifact", "metric"]) {
+    for (const key of ["environment", "artifact", "metric", "evaluationOutput"]) {
       if (evidence[key] != null && (typeof evidence[key] !== "object" || Array.isArray(evidence[key]))) return null;
     }
     return evidence;
   } catch { return null; }
+}
+
+function metricMatches(value, options) {
+  if (!Number.isFinite(value)) return false;
+  if (options.metricOperator === "gte") return value >= options.metricTarget;
+  if (options.metricOperator === "lte") return value <= options.metricTarget;
+  const delta = Math.abs(value - options.metricTarget);
+  return Number.isFinite(delta) && (delta <= options.metricTolerance || options.metricTolerance > 0
+    && delta - options.metricTolerance <= Number.EPSILON * Math.max(Math.abs(value), Math.abs(options.metricTarget), options.metricTolerance));
 }
 
 export function verifyOutcome(job) {
@@ -349,9 +378,8 @@ export function verifyOutcome(job) {
     observed: evidence?.artifact ?? null,
   });
   if (options.metricKey) checks.push({
-    id: "metric", expected: `${options.metricKey} ${options.metricOperator === "gte" ? ">=" : "<="} ${options.metricTarget}`,
-    status: !evidence ? "UNKNOWN" : Number.isFinite(evidence.metric?.value) && !evidence.metric?.error
-      && (options.metricOperator === "gte" ? evidence.metric.value >= options.metricTarget : evidence.metric.value <= options.metricTarget) ? "PASSED" : "FAILED",
+    id: "metric", expected: `${options.metricKey} ${options.metricOperator === "eq" ? "=" : options.metricOperator === "gte" ? ">=" : "<="} ${options.metricTarget}${options.metricOperator === "eq" ? ` ± ${options.metricTolerance}` : ""}`,
+    status: !evidence ? "UNKNOWN" : !evidence.metric?.error && metricMatches(evidence.metric?.value, options) ? "PASSED" : "FAILED",
     observed: evidence?.metric ?? null,
   });
   if (job.status !== "SUCCEEDED") {
@@ -374,6 +402,7 @@ function publicJob(job) {
     packageIndex: job.packageIndex,
     executionOptions: job.executionOptions,
     commandOverride: job.commandOverride,
+    preparationOverride: job.preparationOverride ?? null,
     environment: { ...evidence?.environment, image: job.limits.image, imageId: job.imageId ?? null, docker: job.runtime },
     dependencies: evidence?.dependencies ?? [],
     artifact: evidence?.artifact ?? null,
@@ -398,6 +427,15 @@ function publicJob(job) {
       job.packageIndex,
     ),
   };
+  const options = validateExecutionOptions(job.executionOptions);
+  record.evaluation = options.evaluation ? { ...options.evaluation, declaration: "user-provided, not independently verified", metricKey: options.metricKey,
+    operator: options.metricOperator, referenceValue: options.metricTarget, tolerance: options.metricTolerance,
+    observedValue: Number.isFinite(record.metric?.value) ? record.metric.value : null,
+    delta: Number.isFinite(record.metric?.value) ? record.metric.value - options.metricTarget : null,
+    output: evidence?.evaluationOutput ?? null,
+    status: job.status === "RUNNING" ? "PENDING" : record.verification.status === "VERIFIED" ? "MATCHED_REFERENCE"
+      : job.status === "SUCCEEDED" && Number.isFinite(record.metric?.value) && !record.metric?.error
+        && record.verification.checks.every((check) => check.id === "metric" ? check.status === "FAILED" : check.status === "PASSED") ? "OUTSIDE_REFERENCE" : "INCOMPLETE" } : null;
   record.comparison = job.baseline ? compareRuns(job.baseline, record) : null;
   try { record.recipe = createRecipe(record); record.recipeUnavailableReason = null; }
   catch (error) { record.recipe = null; record.recipeUnavailableReason = error.message; }
@@ -415,7 +453,7 @@ function persist(job) {
 }
 
 export function startRun(preflight) {
-  if (preflight.workflow.id !== "quick") throw new Error("Only Quick verification can run in this version");
+  if (!["quick", "evaluation"].includes(preflight.workflow.id)) throw new Error("Only Quick and Evaluation can run in this version");
   if (!preflight.runnable) throw new Error("The selected workflow is not ready to run");
 
   const id = randomUUID();
@@ -432,6 +470,7 @@ export function startRun(preflight) {
     baseline: preflight.baseline ?? null,
     executionOptions: validateExecutionOptions(preflight.executionOptions),
     commandOverride: preflight.commandOverride ?? null,
+    preparationOverride: preflight.preparationOverride ?? null,
     experimentParameters: preflight.experimentParameters ?? [],
     limits: preflight.limits,
     runtime: preflight.runtime ?? null,
@@ -505,8 +544,8 @@ export function listRuns() {
   const records = new Map(listSavedRuns().map((job) => [job.id, job]));
   for (const [id, job] of jobs) records.set(id, publicJob(job));
   return [...records.values()].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, 30)
-    .map(({ id, repository, commit, status, startedAt, finishedAt, verification }) => ({
-      id, repository, commit, status, startedAt, finishedAt, verificationStatus: verification?.status ?? "NOT_CONFIGURED",
+    .map(({ id, repository, commit, workflowId, evaluation, status, startedAt, finishedAt, verification }) => ({
+      id, repository, commit, workflowId, evaluationStatus: evaluation?.status ?? null, status, startedAt, finishedAt, verificationStatus: verification?.status ?? "NOT_CONFIGURED",
     }));
 }
 

@@ -19,7 +19,7 @@ import {
 import { scan } from "./scan.mjs";
 import worker from "./worker.mjs";
 
-const MAX_BODY_BYTES = 4096;
+const MAX_BODY_BYTES = 12_000;
 
 function sendJson(response, status, value) {
   response.writeHead(status, {
@@ -221,6 +221,12 @@ async function selfTest() {
     const plainPost = await fetch(`http://127.0.0.1:${port}/api/run`, { method: "POST", body: "{}" });
     assert.equal(plainPost.status, 400);
     assert.match((await plainPost.json()).error, /application\/json/);
+    const invalidTolerance = await fetch(`http://127.0.0.1:${port}/api/run`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: "https://github.com/owner/repo", executionOptions: { metricTolerance: -1 } }),
+    });
+    assert.equal(invalidTolerance.status, 400);
+    assert.match((await invalidTolerance.json()).error, /non-negative/);
 
     const workerResponse = await worker.fetch(
       new Request("https://reprocheck.test/api/scan", {
