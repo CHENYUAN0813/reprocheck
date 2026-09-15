@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual, promisify } from "node:util";
 import { readFileSync } from "node:fs";
 import { getSavedRun, listSavedRuns, saveRun } from "./run-store.mjs";
+import { candidateWorkflow, reviewedCandidate } from "./evaluation-config.mjs";
 
 const execFileAsync = promisify(execFile);
 const jobs = new Map();
@@ -58,6 +59,12 @@ export function validateExecutionOptions(input = {}) {
   const metricTarget = input.metricTarget ?? null;
   const metricTolerance = input.metricTolerance ?? 0;
   const evaluation = input.evaluation ?? null;
+  const candidateReview = input.candidateReview ?? null;
+  if (candidateReview !== null && (benchmarkId || typeof candidateReview !== "object" || Array.isArray(candidateReview)
+    || Object.keys(candidateReview).some((key) => !["entryId", "referenceId", "outputId", "confirmed"].includes(key))
+    || typeof candidateReview.entryId !== "string" || !/^[\w-]{1,80}$/.test(candidateReview.entryId)
+    || ["referenceId", "outputId"].some((key) => candidateReview[key] !== null && (typeof candidateReview[key] !== "string" || !/^[\w-]{1,80}$/.test(candidateReview[key])))
+    || candidateReview.confirmed !== true)) throw new Error("Generated candidate needs valid source selections and explicit review confirmation");
   if (typeof expectedText !== "string" || expectedText.length > 300 || /\0/.test(expectedText)) throw new Error("Expected text must be at most 300 characters");
   if (typeof outputFile !== "string" || outputFile.length > 240 || /[\\:\r\n\0]/.test(outputFile)
     || (outputFile && outputFile.split("/").some((part) => !part || part === "." || part === ".."))) {
@@ -76,15 +83,18 @@ export function validateExecutionOptions(input = {}) {
       || ["dataset", "model", "reference"].some((key) => typeof evaluation[key] !== "string" || !evaluation[key].trim() || evaluation[key].length > 500 || /\0/.test(evaluation[key]))
       || typeof evaluation.assetsInEntry !== "boolean") throw new Error("Evaluation needs dataset, model, reference source and an explicit asset-preparation choice");
   }
-  return { ...(benchmarkId ? { benchmarkId } : {}), quickCommand: quickCommand.trim(), expectedText, outputFile, metricKey, metricOperator, metricTarget, metricTolerance,
+  return { ...(benchmarkId ? { benchmarkId } : {}), ...(candidateReview ? { candidateReview: { ...candidateReview } } : {}), quickCommand: quickCommand.trim(), expectedText, outputFile, metricKey, metricOperator, metricTarget, metricTolerance,
     evaluation: evaluation ? { dataset: evaluation.dataset.trim(), model: evaluation.model.trim(), reference: evaluation.reference.trim(), assetsInEntry: evaluation.assetsInEntry } : null };
 }
 
 export function buildPreflight(report, workflowId, runtime, packageIndex = "readme", options = {}) {
   const executionOptions = validateExecutionOptions(options);
   const { quickCommand } = executionOptions;
+  if (executionOptions.candidateReview && workflowId !== "evaluation") throw new Error("Generated candidates apply only to Evaluation");
+  const candidate = executionOptions.candidateReview ? reviewedCandidate(report, executionOptions.candidateReview, executionOptions) : null;
   let workflow = report.workflows?.find((candidate) => candidate.id === workflowId);
   if (!workflow) throw new Error("A valid reproduction workflow is required");
+  if (candidate) workflow = candidateWorkflow(report, candidate.entry);
   const benchmark = executionOptions.benchmarkId ? { ...reviewedBenchmark, originalSteps: report.reproductionPlan?.steps ?? [] } : null;
   if (benchmark) {
     if (!isDeepStrictEqual(executionOptions, benchmarkOptions())) throw new Error("Reviewed benchmark commands and reference conditions are fixed; use a custom Evaluation instead");
@@ -139,6 +149,7 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
     packageIndex,
     executionOptions,
     benchmark,
+    candidate,
     commandOverride: quickCommand && !benchmark ? { original: entry.command, actual: quickCommand, origin: "user-reviewed" } : null,
     runtime,
     preparationOverride: assetsInEntry ? { origin: "user-reviewed", instruction: "Dataset and model preparation are handled by the reviewed entry command", originalSteps: originalSteps.filter((step) => ["data", "model"].includes(step.id)) } : null,
@@ -194,6 +205,7 @@ export function createRecipe(job) {
   if (!["quick", "evaluation"].includes(job.workflowId) || !/^[\w.-]+\/[\w.-]+$/.test(job.repository) || !/^[a-f\d]{40}$/i.test(job.commit)) throw new Error("Invalid executable source identity");
   if (job.executionOptions?.benchmarkId && (job.benchmark?.id !== job.executionOptions.benchmarkId || job.benchmark.repository !== job.repository
     || job.benchmark.commit !== job.commit)) throw new Error("Reviewed benchmark asset/source locks are missing from the saved record");
+  if (job.executionOptions?.candidateReview && (job.candidate?.repository !== job.repository || job.candidate?.commit !== job.commit)) throw new Error("Reviewed candidate source context is missing from the saved record");
   if (!["readme", "pypi"].includes(job.packageIndex)) throw new Error("Invalid saved package source");
   if (!/^sha256:[a-f\d]{64}$/.test(job.environment?.imageId ?? "")) throw new Error("The exact Docker image ID was not observed; run again before freezing");
   if (job.environment?.capture !== "before-entry" || !/^3\.11\.\d+$/.test(job.environment.python ?? "")) throw new Error("A pre-entry Python/dependency snapshot is required; run again");
@@ -214,7 +226,7 @@ export function createRecipe(job) {
     || job.limits.hostMounts !== false || job.limits.networkAccess !== true) throw new Error("Unsupported saved execution limits");
   const recipe = { schemaVersion: 1, baselineRunId: job.id, repository: job.repository, commit: job.commit,
     workflowId: job.workflowId, packageIndex: job.packageIndex, executionOptions: validateExecutionOptions(job.executionOptions),
-    commandOverride: job.commandOverride ?? null, preparationOverride: job.preparationOverride ?? null, ...(job.benchmark ? { benchmark: job.benchmark } : {}), imageId: job.environment.imageId, python: job.environment.python,
+    commandOverride: job.commandOverride ?? null, preparationOverride: job.preparationOverride ?? null, ...(job.benchmark ? { benchmark: job.benchmark } : {}), ...(job.candidate ? { candidate: job.candidate } : {}), imageId: job.environment.imageId, python: job.environment.python,
     dependencies: [...dependencies].sort(), commands, limits: { ...job.limits, image: job.environment.imageId },
     baselineResults: { artifact: job.artifact ?? null, metric: job.metric ?? null, ...(job.benchmark ? { assets: job.assets, reference: job.referenceEvidence } : {}) },
     warnings: ["Local image ID must still exist on this computer.", "Package versions are pinned, not wheel hashes or build artifacts.",
@@ -235,7 +247,7 @@ export function buildReplayPreflight(baseline, runtime, imageAvailable) {
   const recipe = createRecipe(baseline);
   return { repository: recipe.repository, commit: recipe.commit, workflow: { id: recipe.workflowId, title: "Locked recipe replay", status: "FROZEN" },
     packageIndex: recipe.packageIndex, executionOptions: recipe.executionOptions, commandOverride: recipe.commandOverride, preparationOverride: recipe.preparationOverride, benchmark: recipe.benchmark ?? null,
-    runtime, runnable: runtime.available && imageAvailable, reason: !runtime.available ? runtime.reason
+    candidate: recipe.candidate ?? null, runtime, runnable: runtime.available && imageAvailable, reason: !runtime.available ? runtime.reason
       : !imageAvailable ? "The locked image is missing locally; replay will not substitute a newer image" : null,
     recipe, replayOf: baseline.id, baseline: { ...baseline, log: undefined, recipe: undefined, comparison: undefined }, frozenCommands: true, experimentParameters: baseline.experimentParameters ?? [],
     automatedSteps: [
@@ -265,6 +277,7 @@ export function compareRuns(baseline, current) {
   compare("dependencies", normalize(baseline.dependencies), normalize(current.dependencies));
   compare("commands", sourceSteps(baseline).map((step) => step.command), sourceSteps(current).map((step) => step.command));
   compare("expectations", validateExecutionOptions(baseline.executionOptions), validateExecutionOptions(current.executionOptions));
+  if (baseline.candidate) compare("candidate-sources", baseline.candidate, current.candidate);
   compare("limits", baseline.limits && { ...baseline.limits, image: undefined }, current.limits && { ...current.limits, image: undefined });
   if (baseline.executionOptions?.expectedText) compare("text-check", baseline.verification?.checks?.find((check) => check.id === "text")?.status,
     current.verification?.checks?.find((check) => check.id === "text")?.status);
@@ -446,6 +459,7 @@ function publicJob(job) {
     packageIndex: job.packageIndex,
     executionOptions: job.executionOptions,
     benchmark: job.benchmark ?? null,
+    candidate: job.candidate ?? null,
     assets: evidence?.assets ?? null,
     referenceEvidence: evidence?.referenceEvidence ?? null,
     commandOverride: job.commandOverride,
@@ -517,6 +531,7 @@ export function startRun(preflight) {
     baseline: preflight.baseline ?? null,
     executionOptions: validateExecutionOptions(preflight.executionOptions),
     benchmark: preflight.benchmark ?? null,
+    candidate: preflight.candidate ?? null,
     commandOverride: preflight.commandOverride ?? null,
     preparationOverride: preflight.preparationOverride ?? null,
     experimentParameters: preflight.experimentParameters ?? [],
