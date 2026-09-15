@@ -235,9 +235,22 @@ function CandidateConfig({ report, disabled, onApply }) {
       </select></label>
       {entry && <p className="evidence"><span>Entry source</span><EvidenceLink report={report} evidence={entry.evidence} /></p>}
       {entry?.note && <p className="runner-note">{entry.note}</p>}
+      {entry?.arguments?.length > 0 && <details open><summary>Execution arguments · review source and values</summary>
+        {entry.arguments.map((argument) => <div key={argument.id}>
+          <label>{argument.name}{argument.required ? " · required" : " · optional"}<input maxLength={240} disabled={!argument.supported}
+            value={review.argumentValues?.[argument.id] ?? ""} placeholder={argument.default ?? "Already in command, or enter a reviewed value"}
+            onChange={(event) => setReview((current) => ({ ...current, argumentValues: { ...current.argumentValues, [argument.id]: event.target.value } }))} /></label>
+          <p className="hint">{argument.help}{!argument.supported && " · Complex action: supply a custom reviewed command instead."}</p>
+          <p className="evidence"><span>Argument source</span><EvidenceLink report={report} evidence={argument.evidence} /></p>
+        </div>)}
+        <p className="hint">Blank preserves the original command/default. Values are shell-quoted, never executed while configuring.</p>
+      </details>}
+      {(draft.paths ?? []).some((path) => path.entryIds.includes(review.entryId)) && <details><summary>Configuration / data / checkpoint paths</summary>
+        {(draft.paths ?? []).filter((path) => path.entryIds.includes(review.entryId)).map((path, index) => <p key={index} className="hint">{path.path} · {path.matches.length ? `Tree matches: ${path.matches.join(", ")}` : "Not found in tree; may need external preparation"} · <EvidenceLink report={report} evidence={path.evidence} /></p>)}
+      </details>}
       <label>Result capture<select value={review.outputId ?? ""} onChange={(event) => setReview((current) => ({ ...current, outputId: event.target.value || null }))}>
         <option value="">Not selected — complete manually</option>
-        {draft.outputs.filter((output) => output.entryIds.includes(review.entryId)).map((output) => <option value={output.id} key={output.id}>{output.kind === "stdout" ? `Labelled stdout: ${output.label} · ${output.unit}` : `JSON: ${output.path}`}</option>)}
+        {draft.outputs.filter((output) => output.entryIds.includes(review.entryId)).map((output) => <option value={output.id} key={output.id}>{output.kind === "stdout" ? `Labelled stdout: ${output.label} · ${output.unit}` : output.kind === "stdout-json" ? `JSON stdout: ${output.metricKey}` : `${output.kind.toUpperCase()}: ${output.path}`}</option>)}
       </select></label>
       {output && <p className="evidence"><span>Output source</span><EvidenceLink report={report} evidence={output.evidence} /></p>}
       <label>README reference candidate<select value={review.referenceId ?? ""} onChange={(event) => setReview((current) => ({ ...current, referenceId: event.target.value || null }))}>
@@ -249,7 +262,7 @@ function CandidateConfig({ report, disabled, onApply }) {
       {options && <>
         <p className="hint">Proposed output: {options.outputFile || "missing"} · metric: {options.metricKey || "missing"} · reference: {options.metricTarget ?? "missing"} · tolerance: 0.</p>
         {missing.length > 0 && <p className="runner-note">Complete in the form: {missing.join("; ")}.</p>}
-        {output?.kind === "stdout" && <p className="hint">A generic adapter runs the original command and records its actual printed score as JSON. It never substitutes the reference value; missing/duplicate scores fail.</p>}
+        {["stdout", "stdout-json"].includes(output?.kind) && <p className="hint">A generic adapter runs the original command and records its actual printed score as JSON. It never substitutes the reference value; missing/duplicate scores fail.</p>}
         <button type="button" onClick={() => onApply(options)}>Use candidates in Evaluation form</button>
       </>}
     </fieldset>}
@@ -868,7 +881,7 @@ function App() {
                 <input id="output-file" value={acceptance.outputFile} maxLength={240} disabled={optionsLocked}
                   placeholder="results/metrics.json — relative to the repository" onChange={(event) => updateAcceptance("outputFile", event.target.value)} />
                 <div className="metric-options">
-                  <label>JSON metric key (optional)<input value={acceptance.metricKey} maxLength={100} disabled={optionsLocked}
+                  <label>JSON key / CSV column (optional)<input value={acceptance.metricKey} maxLength={100} disabled={optionsLocked}
                     placeholder="accuracy or evaluation.accuracy" onChange={(event) => updateAcceptance("metricKey", event.target.value)} /></label>
                   <label>Condition<select value={acceptance.metricOperator} disabled={optionsLocked}
                     onChange={(event) => updateAcceptance("metricOperator", event.target.value)}><option value="gte">At least (≥)</option><option value="lte">At most (≤)</option><option value="eq">Match reference (±)</option></select></label>
@@ -886,7 +899,7 @@ function App() {
                     onChange={(event) => updateAcceptance("reference", event.target.value)} /></label>
                   <label className="runner-confirm"><input type="checkbox" checked={acceptance.assetsInEntry} disabled={optionsLocked}
                     onChange={(event) => updateAcceptance("assetsInEntry", event.target.checked)} />My reviewed entry handles dataset and model preparation; replace separate data/model steps explicitly.</label>
-                  <p className="hint">Required: a new/changed JSON file and numeric metric. Use 0.95 for 95% if the output uses fractions. Context is user-declared; CPU/2 GB/10 minute limits still apply.</p>
+                  <p className="hint">Required: a new/changed JSON or single-row CSV file and numeric metric. Units must match the reference; no implicit conversion. Context is user-declared; CPU/2 GB/10 minute limits still apply.</p>
                   {acceptance.candidateReview && <label className="runner-confirm"><input type="checkbox" checked={acceptance.candidateReview.confirmed}
                     onChange={(event) => updateAcceptance("candidateReview", { ...acceptance.candidateReview, confirmed: event.target.checked })} />I reviewed the candidate sources, completed missing fields, and confirmed this command, dataset/split, model and reference correspond. Editing any field requires review again.</label>}
                 </>}
