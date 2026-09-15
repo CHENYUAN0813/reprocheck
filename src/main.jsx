@@ -3,7 +3,9 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 import cpuEvaluationSource from "../examples/evaluate-micrograd.py?raw";
 import publishedBenchmark from "../examples/bthowen-iris.json";
+import trainingProfile from "../examples/bthowen-training.json";
 import publishedEvaluationSource from "../examples/evaluate-bthowen.py?raw";
+import trainingSource from "../examples/train-bthowen.py?raw";
 import { candidateOptions, candidateWorkflow } from "../evaluation-config.mjs";
 
 const emptyAcceptance = { expectedText: "", outputFile: "", metricKey: "", metricOperator: "gte", metricTarget: "", metricTolerance: "0", dataset: "", model: "", reference: "", assetsInEntry: false };
@@ -295,12 +297,26 @@ function ExecutionEvidence({ job, onPrepareReplay, replayDisabled }) {
           <dt>Model / checkpoint</dt><dd>{job.evaluation.model}</dd>
           <dt>Reference source</dt><dd>{job.benchmark ? <a href={job.benchmark.reference.url} target="_blank" rel="noreferrer">Pinned README · Table 3 · Iris</a> : job.evaluation.reference}</dd>
           <dt>Observed / reference</dt><dd>{job.evaluation.observedValue ?? "unknown"} / {job.evaluation.referenceValue} · {job.evaluation.metricKey}</dd>
-          <dt>Difference / tolerance</dt><dd>{job.evaluation.delta ?? "unknown"} / {job.evaluation.tolerance} · condition {job.evaluation.operator}</dd>
+          <dt>Difference / tolerance</dt><dd>{Number.isFinite(job.evaluation.delta) ? Number(job.evaluation.delta.toPrecision(12)) : "unknown"} / {job.evaluation.tolerance} · condition {job.evaluation.operator}</dd>
         </dl>
         {job.benchmark && <>
           <p className="runner-note">{job.benchmark.compatibility.note}</p>
           <p className="hint">Scope: {job.benchmark.reference.scope}</p>
           <details><summary>Dataset, checkpoint, code hashes and reference-row evidence</summary><pre>{JSON.stringify({ assets: job.assets, reference: job.referenceEvidence }, null, 2)}</pre></details>
+        </>}
+        {job.benchmark?.training && <>
+          <h3>Training from scratch</h3>
+          <p className="hint">Original repository trainer → newly saved model → original evaluator. No pretrained model fallback and no search for a better test score.</p>
+          <dl className="evaluation-summary">
+            <dt>Paper configuration</dt><dd>{JSON.stringify(job.benchmark.training.parameters)}</dd>
+            <dt>Run seed / count</dt><dd>{job.benchmark.training.seed} / 1 · our disclosed seed, not an author-provided seed</dd>
+            <dt>Training time</dt><dd>{job.trainingCheckpoint?.trainingSeconds ?? "unknown"} seconds</dd>
+            <dt>New checkpoint</dt><dd>{job.trainingCheckpoint?.path ?? "not saved"} · {job.trainingCheckpoint?.size ?? 0} bytes</dd>
+            <dt>Checkpoint SHA-256</dt><dd>{job.trainingCheckpoint?.sha256 ?? "unknown"}</dd>
+          </dl>
+          {job.trainingCheckpoint?.status === "PASSED" && job.trainingCheckpoint.base64 && <a className="download-button evidence-download"
+            href={`data:application/octet-stream;base64,${job.trainingCheckpoint.base64}`} download={`reprocheck-iris-${job.id}.pickle.lzma`}>Download newly trained model</a>}
+          <p className="runner-note">Pickle models are executable when loaded. This download is data only; do not load an untrusted model on the host.</p>
         </>}
         {job.evaluation.output && <details><summary>Reported metrics and asset identifiers</summary><pre>{JSON.stringify(job.evaluation.output, null, 2)}</pre></details>}
       </div>}
@@ -418,7 +434,12 @@ function App() {
     ?? report.workflows?.[0]
     ?? null;
   const selectedCandidate = report.evaluationDraft?.entries.find((entry) => entry.id === acceptance.candidateReview?.entryId);
-  const displayedPlan = selectedCandidate ? candidateWorkflow(report, selectedCandidate) : activeWorkflow ?? report.reproductionPlan;
+  const displayedPlan = acceptance.benchmarkId === trainingProfile.id ? { title: trainingProfile.title, status: "REVIEWED_TRAINING", steps: [
+    { id: "install", title: "Install reviewed CPU dependencies", status: "DOCUMENTED", command: publishedBenchmark.installCommand },
+    { id: "prepare-assets", title: "Prepare hash-locked real UCI Iris data", status: "DOCUMENTED", instruction: "Reviewed adapter downloads UCI data and applies the explicit MNIST-only import compatibility patch. Check the local runner for exact commands." },
+    { id: "training-benchmark", title: "Train from scratch and save a new model", status: "DOCUMENTED", command: `cd software_model && python train_swept_models.py ${trainingProfile.arguments.join(" ")}`, instruction: "Reviewed launcher sets NumPy seed 42 before calling the original trainer. This is the original invocation, not the complete seeded adapter." },
+    { id: "evaluation-benchmark", title: "Evaluate the newly trained model and compare with 98%", status: "DOCUMENTED", instruction: "Original evaluate.py reads the newly trained checkpoint; the adapter records actual held-out accuracy as JSON." },
+  ] } : selectedCandidate ? candidateWorkflow(report, selectedCandidate) : activeWorkflow ?? report.reproductionPlan;
 
   function applyCandidate(options) {
     setSelectedWorkflow("evaluation");
@@ -480,16 +501,17 @@ function App() {
     } catch { /* The scan error is already displayed. */ }
   }
 
-  async function loadPublishedBenchmark() {
+  async function loadPublishedBenchmark(training = false) {
+    const benchmark = training ? { ...publishedBenchmark, ...trainingProfile } : publishedBenchmark;
     const targetUrl = `https://github.com/${publishedBenchmark.repository}`;
     setUrl(targetUrl);
     try {
-      await runScan(targetUrl, publishedBenchmark.id);
-      setSelectedWorkflow("evaluation");
+      await runScan(targetUrl, benchmark.id);
+      setSelectedWorkflow(training ? "training" : "evaluation");
       setQuickCommand(publishedEvaluationCommand);
-      setAcceptance({ ...emptyAcceptance, benchmarkId: publishedBenchmark.id, expectedText: "published-benchmark-ok", outputFile: "benchmark-result.json",
+      setAcceptance({ ...emptyAcceptance, benchmarkId: benchmark.id, expectedText: "published-benchmark-ok", outputFile: "benchmark-result.json",
         metricKey: "accuracy", metricOperator: "eq", metricTarget: String(publishedBenchmark.reference.value), metricTolerance: "0",
-        dataset: publishedBenchmark.dataset, model: publishedBenchmark.model, reference: publishedBenchmark.reference.url });
+        dataset: publishedBenchmark.dataset, model: benchmark.model, reference: publishedBenchmark.reference.url });
     } catch { /* The scan error is already displayed. */ }
   }
 
@@ -677,8 +699,10 @@ function App() {
             <p className="hint">Public repositories only · Results pinned to a commit</p>
             <button className="download-button" type="button" onClick={loadCpuEvaluation} disabled={executionBusy}>Load CPU evaluation example</button>
             <p className="hint">Small synthetic held-out dataset + trained checkpoint. Loads a reviewed command; does not start execution.</p>
-            <button className="download-button" type="button" onClick={loadPublishedBenchmark} disabled={executionBusy}>Load published Iris benchmark</button>
+            <button className="download-button" type="button" onClick={() => loadPublishedBenchmark()} disabled={executionBusy}>Load published Iris benchmark</button>
             <p className="hint">Real UCI data + paper's pretrained model + original evaluation entry. Reference: 98% in the pinned README; explicit CPU compatibility profile. Does not start execution.</p>
+            <button className="download-button" type="button" onClick={() => loadPublishedBenchmark(true)} disabled={executionBusy}>Load Iris training reproduction</button>
+            <p className="hint">Train the original paper model from scratch on real Iris data, save a new checkpoint, then evaluate. One fixed run; 98% is a comparison, not a promised result. Does not start execution.</p>
           </form>
 
           {error && <p className="error" role="alert">{error}</p>}
@@ -855,14 +879,15 @@ function App() {
 
             {preflightError && <p className="runner-error" role="alert">{preflightError}</p>}
             {acceptance.benchmarkId && <div className="run-comparison">
-              <h3>{publishedBenchmark.title}</h3>
+              <h3>{acceptance.benchmarkId === trainingProfile.id ? trainingProfile.title : publishedBenchmark.title}</h3>
               <p>{publishedBenchmark.dataset}</p>
-              <p>{publishedBenchmark.model}</p>
+              <p>{acceptance.model}</p>
+              {acceptance.benchmarkId === trainingProfile.id && <p className="runner-note">{trainingProfile.scope}</p>}
               <p><a href={publishedBenchmark.reference.url} target="_blank" rel="noreferrer">Pinned reference: accuracy 0.98 · exact numeric match</a></p>
               <p className="hint">Fixed output checks: published-benchmark-ok · fresh benchmark-result.json · accuracy = 0.98 ± 0.</p>
               <p className="runner-note">{publishedBenchmark.compatibility.note}</p>
               <p className="hint">Commands and expectations are fixed for this reviewed case. Choose another workflow or scan again to return to custom Evaluation.</p>
-              <details><summary>Review benchmark manifest and adapter source</summary><pre className="evaluation-source">{JSON.stringify(publishedBenchmark, null, 2)}{"\n\n"}{publishedEvaluationSource}</pre></details>
+              <details><summary>Review benchmark manifest and adapter source</summary><pre className="evaluation-source">{JSON.stringify(publishedBenchmark, null, 2)}{"\n\n"}{publishedEvaluationSource}{acceptance.benchmarkId === trainingProfile.id && <>{"\n\n"}{JSON.stringify(trainingProfile, null, 2)}{"\n\n"}{trainingSource}</>}</pre></details>
             </div>}
             {["quick", "evaluation"].includes(activeWorkflow.id) && !acceptance.benchmarkId && (
               <fieldset className="run-options" disabled={optionsLocked}>
@@ -949,7 +974,7 @@ function App() {
                   onClick={() => startExecution("readme")}
                   disabled={!preflight.runnable || !runConfirmed || executionBusy}
                 >
-                  {runLoading ? "Starting…" : activeWorkflow.id === "evaluation" ? "Run Evaluation" : "Run Quick verification"}
+                  {runLoading ? "Starting…" : activeWorkflow.id === "training" ? "Run Training reproduction" : activeWorkflow.id === "evaluation" ? "Run Evaluation" : "Run Quick verification"}
                 </button>
                 {!preflight.runnable && (
                   <p className="runner-note">{preflight.reason ?? "The workflow is not ready to execute."}</p>

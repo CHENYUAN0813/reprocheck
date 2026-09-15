@@ -1,5 +1,6 @@
 import { scan } from "./scan.mjs";
 import reviewedBenchmark from "./examples/bthowen-iris.json" with { type: "json" };
+import trainingProfile from "./examples/bthowen-training.json" with { type: "json" };
 
 const MAX_BODY_BYTES = 4096;
 
@@ -36,7 +37,7 @@ async function handleScan(request, env) {
     }
 
     const benchmarkId = input.executionOptions?.benchmarkId ?? null;
-    if (benchmarkId !== null && benchmarkId !== reviewedBenchmark.id) throw new Error("Unknown reviewed benchmark");
+    if (benchmarkId !== null && ![reviewedBenchmark.id, trainingProfile.id].includes(benchmarkId)) throw new Error("Unknown reviewed benchmark");
     return json(await scan(input.url, env.GITHUB_TOKEN, benchmarkId ? reviewedBenchmark.commit : undefined));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Scan failed";
