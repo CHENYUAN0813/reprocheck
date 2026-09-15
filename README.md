@@ -70,6 +70,18 @@ A reviewed Evaluation command may replace the detected final entry or explicitly
 
 The example's accuracy reference `1.0 ± 0.05` is a **ReproCheck synthetic fixture target**, not Micrograd's moon dataset result or any published paper benchmark. Arbitrary dataset/model/reference descriptions are user declarations, not independently verified sources. Matching the reference within tolerance does not relax frozen replay's exact output-hash/metric comparison: training may produce different checkpoint bytes while reaching the same accuracy. Full paper reproduction, GPU training and automatic benchmark/source matching are not claimed.
 
+### Reviewed real-data benchmark: BTHOWeN / Iris
+
+**Load published Iris benchmark** loads one explicitly reviewed case, not an automatically inferred paper claim. It scans [BTHOWeN at commit 94e33e4](https://github.com/ZSusskind/BTHOWeN/tree/94e33e4ce3e46e8e88a409dcca044e5f7544858d) even if its default branch later advances. Select **Check local runner**, review the compatibility profile and every command, then confirm unknown-code execution to run it locally. Loading the case never starts execution.
+
+The case uses the real [UCI Iris dataset](https://archive.ics.uci.edu/dataset/53/iris), the repository's pretrained Iris checkpoint and its unchanged `software_model/evaluate.py`. Original data loading/shuffling (`random_state=123`), 100/50 train/test split, binarization, bleaching and tie handling are retained. The adapter only prepares assets, invokes the original evaluation as a subprocess and converts its reported accuracy into fresh JSON; it does not train or replace the inference algorithm.
+
+`examples/bthowen-iris.json` records the pinned source, expected dataset/checkpoint/code SHA-256 hashes and the [README Table 3 Iris reference, 0.980](https://github.com/ZSusskind/BTHOWeN/blob/94e33e4ce3e46e8e88a409dcca044e5f7544858d/README.md#L66). Before allowing the evaluation/pickle entry, ReproCheck checks all eight expected file identities and parses the exact reference row. It checks these identities again at completion. Missing/changed assets or a mismatched reference block the entry or fail verification; a normally exiting program alone cannot count as a matched benchmark. The score JSON records the original correct/total counts and a computed train/test split hash. Asset/source checks, the complete preset, original README preparation steps and compatibility changes are included in the downloadable evidence and frozen recipe; replay comparisons include asset hashes and reference-row evidence.
+
+The authors documented Python 3.8.10 and older dependencies. This case uses an explicit Python 3.11 CPU compatibility profile with pinned NumPy/Pandas/SciPy/Numba/Requests versions and wheels from official PyPI. Inside the temporary container it removes exactly two unused MNIST-only `torchvision` imports from `train_swept_models.py`, after verifying the original helper hash; the patched helper hash is also locked. The original `evaluate.py` and Iris computation are unchanged. Original requirements are shown in the scan report, not silently rewritten. This is **software inference under a disclosed compatible environment**, not an unmodified reproduction of the authors' full environment, training, MNIST results or licensed RTL power/area experiments.
+
+The local acceptance run on 2026-09-15 obtained **49/50 = 0.98**, matching the README with zero numeric tolerance. The first run took about 27 seconds and its locked replay about 22 seconds on this computer; exact output, asset hashes and the recorded reference matched (`SAME`). These times are observations, not speed guarantees. See `examples/BTHOWEN-IRIS.md` for the measured case report. Container observations remain untrusted evidence, not a security attestation; asset hashes identify bytes but do not make pickle/code safe. The existing isolated CPU/memory/time limits and explicit confirmation still apply.
+
 ## Self-test
 
 `node scan.mjs --self-test`
@@ -77,6 +89,8 @@ The example's accuracy reference `1.0 ± 0.05` is a **ReproCheck synthetic fixtu
 GitHub Actions runs the self-tests and production build on every push and pull request.
 
 For the opt-in real Docker integration check, start the local server and run `npm run test:docker`. It scans the pinned Micrograd source, executes scalar-autodiff and held-out CPU Evaluation examples, checks checkpoint reload and reference tolerance, reloads evidence in a new process, replays frozen recipes, reports output differences, and checks that deliberately incorrect expectations/references fail. It does not run Micrograd's default pytest suite or reproduce a published benchmark.
+
+For the opt-in published Iris case, run `npm run test:benchmark` with the local server and Docker running. It downloads public source/data and CPU wheels, evaluates the pretrained model, verifies 49/50 and every expected asset/source identity, reloads saved evidence, checks exact frozen replay, and proves a deliberately mismatched checkpoint hash prevents the evaluation/pickle entry. No repository code or pickle runs on the host. Ordinary `npm test` checks the preset identity/immutability/evidence gates without network or Docker.
 
 ## Current checks
 
