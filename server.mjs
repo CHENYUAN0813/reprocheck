@@ -20,7 +20,7 @@ import {
 import { scan } from "./scan.mjs";
 import worker from "./worker.mjs";
 
-const MAX_BODY_BYTES = 12_000;
+const MAX_BODY_BYTES = 32_000;
 
 function sendJson(response, status, value) {
   response.writeHead(status, {

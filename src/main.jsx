@@ -7,6 +7,7 @@ import trainingProfile from "../examples/bthowen-training.json";
 import publishedEvaluationSource from "../examples/evaluate-bthowen.py?raw";
 import trainingSource from "../examples/train-bthowen.py?raw";
 import { candidateOptions, candidateWorkflow } from "../evaluation-config.mjs";
+import { experimentDraft, experimentExecutionOptions, MODEL_EXPORT_LIMIT } from "../experiment-config.mjs";
 
 const emptyAcceptance = { expectedText: "", outputFile: "", metricKey: "", metricOperator: "gte", metricTarget: "", metricTolerance: "0", dataset: "", model: "", reference: "", assetsInEntry: false };
 const cpuEvaluationCommand = `python -c 'exec(${JSON.stringify(cpuEvaluationSource).replaceAll("'", "'\"'\"'")})'`;
@@ -207,6 +208,8 @@ function downloadJson(data, filename) {
   URL.revokeObjectURL(blobUrl);
 }
 
+const visibleRunLog = (log) => log?.replace(/^::reprocheck-evidence::.*$/gm, "[Structured evidence captured; download execution evidence for complete data.]");
+
 function CandidateConfig({ report, disabled, onApply }) {
   const draft = report.evaluationDraft;
   function selections(entryId) {
@@ -273,6 +276,76 @@ function CandidateConfig({ report, disabled, onApply }) {
   </section>;
 }
 
+function ExperimentConfig({ report, disabled, onApply, onInvalidate }) {
+  const [draft, setDraft] = useState(() => experimentDraft(report));
+  const [error, setError] = useState("");
+  function update(key, value) {
+    setDraft((current) => ({ ...current, [key]: value, confirmed: key === "confirmed" ? value : false }));
+    setError(""); onInvalidate();
+  }
+  async function importConfig(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setDraft((current) => ({ ...current, confirmed: false })); onInvalidate();
+    try {
+      if (file.size > 32000) throw new Error("Experiment configuration is limited to 32 KB");
+      const config = JSON.parse(await file.text());
+      const options = config.executionOptions;
+      if (config.schemaVersion !== 1 || config.workflowId !== "training" || config.repository !== report.repository || config.commit !== report.commit
+        || !options?.experiment || options.experiment.repository !== report.repository || options.experiment.commit !== report.commit || options.benchmarkId || options.candidateReview || options.evaluation?.assetsInEntry) throw new Error("Import requires a custom Training configuration matching this scanned repository/commit");
+      const next = { ...options.experiment, evaluationCommand: options.quickCommand, outputFile: options.outputFile, metricKey: options.metricKey,
+        metricOperator: options.metricOperator, metricTarget: options.metricTarget == null ? "" : String(options.metricTarget), metricTolerance: String(options.metricTolerance ?? 0),
+        expectedText: options.expectedText ?? "", dataset: options.evaluation?.dataset ?? "", model: options.evaluation?.model ?? "", reference: options.evaluation?.reference ?? "" };
+      experimentExecutionOptions({ ...next, confirmed: true });
+      setDraft({ ...next, confirmed: false }); setError(""); onInvalidate();
+    } catch (failure) { setError(failure.message); }
+  }
+  function apply(download = false) {
+    try {
+      const options = experimentExecutionOptions(draft);
+      if (download) downloadJson({ schemaVersion: 1, repository: report.repository, commit: report.commit, workflowId: "training", executionOptions: options }, "reprocheck-experiment.json");
+      else onApply(options);
+      setError("");
+    } catch (failure) { setError(failure.message); }
+  }
+  const fields = [
+    ["title", "Experiment name"], ["installCommand", "Dependency installation · blank explicitly skips installation", 6000],
+    ["prepareCommand", "Data preparation · blank means repository/built-in data or preparation inside trainer", 6000],
+    ["trainCommand", "Original training command", 6000], ["checkpoint", "New model output path · relative to repository", 240],
+    ["evaluationCommand", "Original evaluation command · must load that new model", 6000],
+    ["parameters", "Training parameters · describe actual command/config, or not specified"], ["seed", "Actual seed policy · or not specified; this field does not set a seed"],
+    ["protocol", "Protocol review · data split, model hand-off and known differences from reference"],
+    ["dataset", "Dataset / held-out split"], ["model", "Model / training configuration"], ["reference", "Reference source · pinned source or explicitly user-defined target"],
+    ["outputFile", "Evaluation score JSON / single-row CSV path", 240], ["metricKey", "Metric key / CSV column", 100],
+  ];
+  return <fieldset className="run-options" disabled={disabled}>
+    <legend>End-to-end experiment · prepare → train → new model → evaluate</legend>
+    <p className="hint">Scan-prefilled candidates require review. All commands start at the repository root in the same temporary container; use cd … &amp;&amp; where needed. Import only loads fields, never runs code.</p>
+    <label>Import saved experiment configuration<input type="file" accept=".json,application/json" onChange={importConfig} /></label>
+    {fields.map(([key, label, limit = 500]) => <label key={key}>{label}<input value={draft[key]} maxLength={limit} onChange={(event) => update(key, event.target.value)} /></label>)}
+    <label>Evaluation metric capture<select value={draft.capture.kind} onChange={(event) => update("capture", { ...draft.capture, kind: event.target.value })}>
+      <option value="file">Original JSON / single-row CSV output</option><option value="stdout">One labelled numeric stdout line</option><option value="stdout-json">One JSON-object stdout metric line</option>
+    </select></label>
+    {draft.capture.kind === "stdout" && <label>Exact stdout label<input value={draft.capture.label} maxLength={80} placeholder="Accuracy" onChange={(event) => update("capture", { ...draft.capture, label: event.target.value })} /></label>}
+    <label>Printed metric units<select value={draft.capture.unit} onChange={(event) => update("capture", { ...draft.capture, unit: event.target.value })}>
+      <option value="number">Number as printed · no conversion</option><option value="percent">Percent with % suffix</option>
+    </select></label>
+    <div className="metric-options">
+      <label>Condition<select value={draft.metricOperator} onChange={(event) => update("metricOperator", event.target.value)}><option value="eq">Match reference (±)</option><option value="gte">At least (≥)</option><option value="lte">At most (≤)</option></select></label>
+      <label>Reference value<input type="number" step="any" value={draft.metricTarget} onChange={(event) => update("metricTarget", event.target.value)} /></label>
+      {draft.metricOperator === "eq" && <label>Absolute tolerance<input type="number" min="0" step="any" value={draft.metricTolerance} onChange={(event) => update("metricTolerance", event.target.value)} /></label>}
+    </div>
+    <p className="runner-note">Requires an absent-before-training model file up to {MODEL_EXPORT_LIMIT / 1024} KiB. The evaluator must use this file; hashes only show bytes, not prove model use or scientific protocol equivalence. No pretrained fallback, host data upload, GPU or arbitrary paper-protocol inference.</p>
+    <details><summary>Scanned training/evaluation sources and parameters</summary><pre>{JSON.stringify({ training: report.evaluationDraft?.trainingEntries, evaluation: report.evaluationDraft?.entries,
+      paths: report.evaluationDraft?.paths, parameters: report.experimentParameters, warnings: report.evaluationDraft?.warnings }, null, 2)}</pre></details>
+    <label className="runner-confirm"><input type="checkbox" checked={draft.confirmed} onChange={(event) => update("confirmed", event.target.checked)} />I reviewed every stage, data/split, training parameters/seed, model hand-off and reference. Blank installation/preparation is deliberate. Edits require confirmation again.</label>
+    {error && <p className="runner-error" role="alert">{error}</p>}
+    <div className="recipe-actions"><button type="button" onClick={() => apply()} disabled={!draft.confirmed}>Apply reviewed experiment</button>
+      <button type="button" className="download-button" onClick={() => apply(true)} disabled={!draft.confirmed}>Download experiment configuration</button></div>
+  </fieldset>;
+}
+
 function ExecutionEvidence({ job, onPrepareReplay, replayDisabled }) {
   const labels = { VERIFIED: "Configured checks passed", FAILED: "Output checks failed", INCOMPLETE: "Verification incomplete",
     NOT_CONFIGURED: "No output checks configured", PENDING: "Waiting for execution" };
@@ -281,7 +354,7 @@ function ExecutionEvidence({ job, onPrepareReplay, replayDisabled }) {
       <h3>Output verification · {labels[job.verification?.status] ?? "Not available"}</h3>
       <p className="hint">Execution success alone does not prove paper reproducibility. These checks validate only the expectations you supplied.</p>
       {job.persistenceError && <p className="runner-error" role="alert">{job.persistenceError} — download the evidence now.</p>}
-      {job.logTruncated && <p className="runner-note">Only the last 200,000 log characters are retained.</p>}
+      {job.logTruncated && <p className="runner-note">Only the last 900,000 log characters are retained.</p>}
       <ul className="verification-checks">
         {job.verification?.checks?.map((check) => (
           <li key={check.id}><strong>{check.status}</strong> · {check.id}: <code>{check.expected}</code>
@@ -317,6 +390,15 @@ function ExecutionEvidence({ job, onPrepareReplay, replayDisabled }) {
           {job.trainingCheckpoint?.status === "PASSED" && job.trainingCheckpoint.base64 && <a className="download-button evidence-download"
             href={`data:application/octet-stream;base64,${job.trainingCheckpoint.base64}`} download={`reprocheck-iris-${job.id}.pickle.lzma`}>Download newly trained model</a>}
           <p className="runner-note">Pickle models are executable when loaded. This download is data only; do not load an untrusted model on the host.</p>
+        </>}
+        {job.experiment && <>
+          <h3>Configured end-to-end experiment</h3>
+          <dl className="evaluation-summary"><dt>Parameters / seed (declared)</dt><dd>{job.experiment.parameters} / {job.experiment.seed}</dd>
+            <dt>Protocol review (declared)</dt><dd>{job.experiment.protocol}</dd><dt>New checkpoint</dt><dd>{job.trainingCheckpoint?.path ?? "not saved"} · {job.trainingCheckpoint?.size ?? 0} bytes</dd>
+            <dt>Checkpoint SHA-256</dt><dd>{job.trainingCheckpoint?.sha256 ?? "unknown"}</dd><dt>Training time</dt><dd>{job.trainingCheckpoint?.trainingSeconds ?? "unknown"} seconds</dd></dl>
+          {job.trainingCheckpoint?.status === "PASSED" && job.trainingCheckpoint.base64 && <a className="download-button evidence-download"
+            href={`data:application/octet-stream;base64,${job.trainingCheckpoint.base64}`} download={job.trainingCheckpoint.path.split("/").at(-1)}>Download newly trained model</a>}
+          <p className="runner-note">Model downloads are untrusted data. Never load pickle/joblib or other executable model formats on the host. A matching number does not independently verify the declared protocol.</p>
         </>}
         {job.evaluation.output && <details><summary>Reported metrics and asset identifiers</summary><pre>{JSON.stringify(job.evaluation.output, null, 2)}</pre></details>}
       </div>}
@@ -434,7 +516,12 @@ function App() {
     ?? report.workflows?.[0]
     ?? null;
   const selectedCandidate = report.evaluationDraft?.entries.find((entry) => entry.id === acceptance.candidateReview?.entryId);
-  const displayedPlan = acceptance.benchmarkId === trainingProfile.id ? { title: trainingProfile.title, status: "REVIEWED_TRAINING", steps: [
+  const displayedPlan = acceptance.experiment ? { title: acceptance.experiment.title, status: "USER_REVIEWED_EXPERIMENT", steps: [
+    ...(acceptance.experiment.installCommand ? [{ id: "install", title: "Install reviewed dependencies", status: "USER_REVIEWED", command: acceptance.experiment.installCommand }] : []),
+    ...(acceptance.experiment.prepareCommand ? [{ id: "prepare-data", title: "Prepare data", status: "USER_REVIEWED", command: acceptance.experiment.prepareCommand }] : []),
+    { id: "train", title: "Train and save new model", status: "USER_REVIEWED", command: acceptance.experiment.trainCommand },
+    { id: "evaluate", title: "Evaluate new model", status: "USER_REVIEWED", command: quickCommand },
+  ] } : acceptance.benchmarkId === trainingProfile.id ? { title: trainingProfile.title, status: "REVIEWED_TRAINING", steps: [
     { id: "install", title: "Install reviewed CPU dependencies", status: "DOCUMENTED", command: publishedBenchmark.installCommand },
     { id: "prepare-assets", title: "Prepare hash-locked real UCI Iris data", status: "DOCUMENTED", instruction: "Reviewed adapter downloads UCI data and applies the explicit MNIST-only import compatibility patch. Check the local runner for exact commands." },
     { id: "training-benchmark", title: "Train from scratch and save a new model", status: "DOCUMENTED", command: `cd software_model && python train_swept_models.py ${trainingProfile.arguments.join(" ")}`, instruction: "Reviewed launcher sets NumPy seed 42 before calling the original trainer. This is the original invocation, not the complete seeded adapter." },
@@ -449,6 +536,18 @@ function App() {
       candidateReview: options.candidateReview });
     setPreflight(null); setRunConfirmed(false); setRunJob(null); setPreflightError("");
     document.getElementById("runner-title")?.focus();
+  }
+
+  function applyExperiment(options) {
+    setSelectedWorkflow("training"); setQuickCommand(options.quickCommand);
+    setAcceptance({ ...emptyAcceptance, ...options.evaluation, experiment: options.experiment, outputFile: options.outputFile, metricKey: options.metricKey,
+      metricOperator: options.metricOperator, metricTarget: String(options.metricTarget), metricTolerance: String(options.metricTolerance), expectedText: options.expectedText });
+    setPreflight(null); setRunConfirmed(false); setRunJob(null); setPreflightError("");
+  }
+
+  function invalidateExperiment() {
+    setAcceptance((current) => ({ ...current, experiment: null }));
+    setPreflight(null); setRunConfirmed(false);
   }
 
   const runScan = useCallback(async (targetUrl, benchmarkId) => {
@@ -551,7 +650,8 @@ function App() {
           executionOptions: acceptance.benchmarkId ? { benchmarkId: acceptance.benchmarkId } : { quickCommand, expectedText: acceptance.expectedText, outputFile: acceptance.outputFile, metricKey: acceptance.metricKey,
             metricOperator: acceptance.metricOperator, metricTarget: acceptance.metricTarget === "" ? null : Number(acceptance.metricTarget), metricTolerance: acceptance.metricOperator === "eq" ? Number(acceptance.metricTolerance) : 0,
             ...(acceptance.candidateReview ? { candidateReview: acceptance.candidateReview } : {}),
-            evaluation: activeWorkflow.id === "evaluation" ? { dataset: acceptance.dataset, model: acceptance.model, reference: acceptance.reference, assetsInEntry: acceptance.assetsInEntry } : null },
+            ...(acceptance.experiment ? { experiment: acceptance.experiment } : {}),
+            evaluation: activeWorkflow.id === "evaluation" || acceptance.experiment ? { dataset: acceptance.dataset, model: acceptance.model, reference: acceptance.reference, assetsInEntry: acceptance.assetsInEntry } : null },
         }),
       });
       const result = await response.json();
@@ -872,12 +972,16 @@ function App() {
                 <h2 id="runner-title" tabIndex={-1}>Check before running unknown code</h2>
                 <p>Re-scan the pinned commit and inspect the local Docker runner.</p>
               </div>
-              <button type="button" onClick={checkPreflight} disabled={executionBusy || (acceptance.candidateReview && !acceptance.candidateReview.confirmed)}>
+              <button type="button" onClick={checkPreflight} disabled={executionBusy || (acceptance.candidateReview && !acceptance.candidateReview.confirmed) || (activeWorkflow.id === "training" && !acceptance.benchmarkId && !acceptance.experiment)}>
                 {preflightLoading ? "Checking…" : "Check local runner"}
               </button>
             </div>
 
             {preflightError && <p className="runner-error" role="alert">{preflightError}</p>}
+            {activeWorkflow.id === "training" && !acceptance.benchmarkId && <>
+              <ExperimentConfig key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onApply={applyExperiment} onInvalidate={invalidateExperiment} />
+              <p className="hint" role="status">{acceptance.experiment ? "Reviewed experiment applied. Check local runner to inspect every effective command before execution." : "Review and apply an experiment configuration to enable the runner check."}</p>
+            </>}
             {acceptance.benchmarkId && <div className="run-comparison">
               <h3>{acceptance.benchmarkId === trainingProfile.id ? trainingProfile.title : publishedBenchmark.title}</h3>
               <p>{publishedBenchmark.dataset}</p>
@@ -1013,7 +1117,7 @@ function App() {
                     </button>
                 )}
                 <ExecutionEvidence job={runJob} onPrepareReplay={prepareReplay} replayDisabled={executionBusy} />
-                <pre>{runJob.log || "Starting isolated container…"}</pre>
+                <pre>{visibleRunLog(runJob.log) || "Starting isolated container…"}</pre>
               </div>
               </section>
             )}
@@ -1036,7 +1140,7 @@ function App() {
             <p className="commit">{archivedJob.id} · Commit {archivedJob.commit}</p>
             {archivedJob.diagnosis && <p className="run-diagnosis">{archivedJob.diagnosis}</p>}
             <ExecutionEvidence job={archivedJob} onPrepareReplay={prepareReplay} replayDisabled={executionBusy} />
-            <pre>{archivedJob.log || "No log captured."}</pre>
+            <pre>{visibleRunLog(archivedJob.log) || "No log captured."}</pre>
           </div>}
         </section>
         {(replayPreview || replayLoading || replayError) && <section className="runner recipe-preview" aria-labelledby="recipe-title">

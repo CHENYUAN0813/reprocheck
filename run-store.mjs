@@ -18,7 +18,7 @@ export function getSavedRun(id, directory = RUN_DIR) {
   if (!validId(id)) return null;
   try {
     const target = join(directory, `${id}.json`);
-    if (statSync(target).size > 2 * 1024 * 1024) return null;
+    if (statSync(target).size > 4 * 1024 * 1024) return null;
     const record = JSON.parse(readFileSync(target, "utf8"));
     if (!record || record.id !== id || !Array.isArray(record.steps)
       || ["repository", "commit", "status", "startedAt", "log"].some((key) => typeof record[key] !== "string")) return null;

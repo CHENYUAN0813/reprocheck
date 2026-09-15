@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "repository": "bantu-4879/mlops_week4_assignment",
+  "commit": "f8e74667df83abaacbe76ccdd8f316b5b74dbba3",
+  "workflowId": "training",
+  "executionOptions": {
+    "experiment": {
+      "repository": "bantu-4879/mlops_week4_assignment",
+      "commit": "f8e74667df83abaacbe76ccdd8f316b5b74dbba3",
+      "title": "Original Iris Random Forest pipeline",
+      "installCommand": "python -m pip install numpy==1.26.4 scipy==1.11.4 scikit-learn==1.4.2 joblib==1.3.2 threadpoolctl==3.2.0",
+      "prepareCommand": "",
+      "trainCommand": "python src/train.py",
+      "checkpoint": "model.joblib",
+      "parameters": "Original RandomForestClassifier defaults (100 trees), random_state=42; runtime-only pinned dependencies; DVC/pytest/pandas excluded because these two scripts do not use them",
+      "seed": "Original train_test_split and RandomForestClassifier random_state=42",
+      "protocol": "Original sklearn Iris data; 120 train / 30 held-out test, test_size=0.2, random_state=42. Original evaluator loads the new model.joblib and reconstructs the same split. Educational software case, not a paper benchmark; target below is user-defined.",
+      "capture": { "kind": "stdout", "label": "Accuracy", "unit": "number" },
+      "confirmed": true
+    },
+    "quickCommand": "python src/evaluate.py",
+    "expectedText": "",
+    "outputFile": "reprocheck-evaluation.json",
+    "metricKey": "accuracy",
+    "metricOperator": "eq",
+    "metricTarget": 1,
+    "metricTolerance": 0,
+    "evaluation": {
+      "dataset": "Built-in sklearn Iris, 150 rows; original 80/20 split, random_state=42; 30 held-out test rows",
+      "model": "New original RandomForestClassifier(random_state=42), 100 trees; model.joblib",
+      "reference": "Explicitly user-defined software acceptance target: accuracy 1.0, not a published paper claim or inferred README benchmark",
+      "assetsInEntry": false
+    }
+  }
+}

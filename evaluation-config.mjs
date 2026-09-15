@@ -140,14 +140,14 @@ export function buildEvaluationDraft({ readme, readmeText, entrypoints, files, f
       const dataset = line.match(/\b(load_(?:iris|wine|digits|breast_cancer|diabetes))\s*\(/)?.[1];
       const split = /\btrain_test_split\(/.test(line) ? codeLines.slice(index, index + 6).join(" ").match(/\btrain_test_split\(.{0,200}?\)/)?.[0] : null;
       const model = line.match(/\b([A-Za-z_]\w*(?:Classifier|Regression|KNN|MLP)|KNN|MLP)\([^\n]{0,100}\)/)?.[0];
-      const checkpoint = line.match(/(?:torch\.load|lzma\.open|load_model)\(\s*["']([^"']+)["']/)?.[1];
+      const checkpoint = line.match(/(?:torch\.load|joblib\.load|lzma\.open|load_model)\(\s*["']([^"']+)["']/)?.[1];
       const config = !/\.py$/i.test(file.path) ? line.match(/^\s*["']?((?:data|dataset|model|checkpoint|weights)(?:[_-](?:path|file|name))?)["']?\s*[:=]\s*["']?([^"'\n#,}]+)["']?/) : null;
       if (config) contexts.push({ kind: /^(?:data|dataset)/.test(config[1]) ? "dataset" : "model", value: `Config declaration: ${config[1]}=${config[2].trim()}; review actual loader and split`,
         entryIds: related.map((entry) => entry.id), evidence: source(file.path, index + 1, line) });
-      for (const match of line.matchAll(/["']([^"'\n]+\.(?:ya?ml|toml|jsonl?|csv|xlsx?|pt|pth|ckpt|pickle(?:\.lzma)?))["']/gi)) {
+      for (const match of line.matchAll(/["']([^"'\n]+\.(?:ya?ml|toml|jsonl?|csv|xlsx?|pt|pth|ckpt|joblib|pkl|pickle(?:\.lzma)?))["']/gi)) {
         if (/^[\\/]|[\r\n\0]|^(?:[A-Za-z]:|https?:)|(?:^|[\\/])\.\.(?:[\\/]|$)/.test(match[1])) continue;
         const exact = filePaths.includes(match[1]) ? match[1] : filePaths.filter((path) => path.endsWith(`/${match[1]}`));
-        paths.push({ kind: /\.ya?ml$|\.toml$/.test(match[1]) ? "config" : /\.(?:pt|pth|ckpt|pickle)/.test(match[1]) ? "checkpoint" : "data-or-output",
+        paths.push({ kind: /\.ya?ml$|\.toml$/.test(match[1]) ? "config" : /\.(?:pt|pth|ckpt|pickle|pkl|joblib)/.test(match[1]) ? "checkpoint" : "data-or-output",
           path: match[1], matches: typeof exact === "string" ? [exact] : exact, entryIds: related.map((entry) => entry.id), evidence: source(file.path, index + 1, line),
           note: "Literal path only; matches do not prove working-directory correctness or that an asset was prepared" });
       }
@@ -157,7 +157,12 @@ export function buildEvaluationDraft({ readme, readmeText, entrypoints, files, f
       if (split) contexts.push({ kind: "split", entryIds: related.map((entry) => entry.id), value: split, evidence: source(file.path, index + 1, line) });
     });
   }
-  return { status: entries.length ? "NEEDS_REVIEW" : "NO_EVALUATION_CANDIDATE", entries: entries.slice(0, 20), references, outputs: outputs.slice(0, 20), contexts: contexts.slice(0, 20),
+  const trainingEntries = entrypoints.filter((entry) => entry.category === "training");
+  for (const file of files.filter(({ path, text }) => /(?:^|\/)train[\w-]*\.py$/i.test(path) && /__main__|\.fit\(|ArgumentParser/.test(text))) {
+    if (!trainingEntries.some((entry) => entry.references.some((ref) => ref.path === file.path))) trainingEntries.push({ id: `training-code-${trainingEntries.length + 1}`,
+      command: `python ${quote(file.path)}`, category: "training", origin: "inferred-script", evidence: source(file.path, 1, file.text.split(/\r?\n/)[0]), references: [{ path: file.path, exists: true }] });
+  }
+  return { status: entries.length ? "NEEDS_REVIEW" : "NO_EVALUATION_CANDIDATE", entries: entries.slice(0, 20), trainingEntries: trainingEntries.slice(0, 20), references, outputs: outputs.slice(0, 20), contexts: contexts.slice(0, 20),
     paths: paths.slice(0, 24), warnings: ["Candidates do not prove dataset/split/model equivalence or make repository code safe.",
       "Only sampled code and literal declarations are covered; missing information must be supplied, not invented."] };
 }
@@ -192,8 +197,20 @@ for line in iter(lambda: process.stdout.readline(65537), ""):
         values.append(float(match[1]))
 if process.wait()!=0: raise RuntimeError("Original candidate entry exited with an error")
 if len(values)!=1 or not math.isfinite(values[0]): raise RuntimeError("Expected exactly one finite labelled metric; missing or duplicate scores are ambiguous")
-pathlib.Path("/workspace/reprocheck-evaluation.json").write_text(json.dumps({spec["key"]:values[0],"entry":spec["command"],"capture":spec.get("kind","stdout"),"label":spec.get("label",spec["key"])},sort_keys=True,allow_nan=False))
+destination=(pathlib.Path("/workspace") / spec.get("path","reprocheck-evaluation.json")).resolve()
+if not destination.is_relative_to(pathlib.Path("/workspace")): raise RuntimeError("Metric path resolves outside the repository")
+destination.parent.mkdir(parents=True,exist_ok=True)
+destination.write_text(json.dumps({spec["key"]:values[0],"entry":spec["command"],"capture":spec.get("kind","stdout"),"label":spec.get("label",spec["key"])},sort_keys=True,allow_nan=False))
 print("candidate-evaluation-ok")`;
+
+export function captureMetricCommand(command, capture, key, path) {
+  if (capture.kind === "file") return command;
+  if (key.includes(".")) throw new Error("Stdout capture needs a flat metric key; nested keys require native JSON output");
+  const spec = { command, ...capture, key, path };
+  const wrapped = `python -c ${quote(`exec(${JSON.stringify(stdoutAdapter)})`)} ${quote(JSON.stringify(spec))}`;
+  if (wrapped.length > 6000) throw new Error("Evaluation capture exceeds the 6000-character command limit; use a shorter original entry");
+  return wrapped;
+}
 
 export function candidateOptions(report, review) {
   const draft = report.evaluationDraft;
