@@ -2,9 +2,12 @@ import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 import cpuEvaluationSource from "../examples/evaluate-micrograd.py?raw";
+import publishedBenchmark from "../examples/bthowen-iris.json";
+import publishedEvaluationSource from "../examples/evaluate-bthowen.py?raw";
 
 const emptyAcceptance = { expectedText: "", outputFile: "", metricKey: "", metricOperator: "gte", metricTarget: "", metricTolerance: "0", dataset: "", model: "", reference: "", assetsInEntry: false };
 const cpuEvaluationCommand = `python -c 'exec(${JSON.stringify(cpuEvaluationSource).replaceAll("'", "'\"'\"'")})'`;
+const publishedEvaluationCommand = `python -c 'exec(${JSON.stringify(publishedEvaluationSource).replaceAll("'", "'\"'\"'")})' evaluate`;
 
 const exampleParameters = [
   { name: "--epochs", default: "20", file: "train.py", line: 24 },
@@ -219,14 +222,19 @@ function ExecutionEvidence({ job, onPrepareReplay, replayDisabled }) {
       </ul>
       {job.evaluation && <div className="run-comparison">
         <h3>Evaluation report · {job.evaluation.status.replaceAll("_", " ")}</h3>
-        <p className="hint">Dataset, model and reference source below are user declarations, not independently verified paper claims.</p>
+        <p className="hint">{job.benchmark ? "Reviewed Iris software case: input hashes and the pinned README row must pass checks before entry and at completion. This is not full-paper reproduction or a security attestation." : "Dataset, model and reference source below are user declarations, not independently verified paper claims."}</p>
         <dl className="evaluation-summary">
           <dt>Dataset / split</dt><dd>{job.evaluation.dataset}</dd>
           <dt>Model / checkpoint</dt><dd>{job.evaluation.model}</dd>
-          <dt>Reference source</dt><dd>{job.evaluation.reference}</dd>
+          <dt>Reference source</dt><dd>{job.benchmark ? <a href={job.benchmark.reference.url} target="_blank" rel="noreferrer">Pinned README · Table 3 · Iris</a> : job.evaluation.reference}</dd>
           <dt>Observed / reference</dt><dd>{job.evaluation.observedValue ?? "unknown"} / {job.evaluation.referenceValue} · {job.evaluation.metricKey}</dd>
           <dt>Difference / tolerance</dt><dd>{job.evaluation.delta ?? "unknown"} / {job.evaluation.tolerance} · condition {job.evaluation.operator}</dd>
         </dl>
+        {job.benchmark && <>
+          <p className="runner-note">{job.benchmark.compatibility.note}</p>
+          <p className="hint">Scope: {job.benchmark.reference.scope}</p>
+          <details><summary>Dataset, checkpoint, code hashes and reference-row evidence</summary><pre>{JSON.stringify({ assets: job.assets, reference: job.referenceEvidence }, null, 2)}</pre></details>
+        </>}
         {job.evaluation.output && <details><summary>Reported metrics and asset identifiers</summary><pre>{JSON.stringify(job.evaluation.output, null, 2)}</pre></details>}
       </div>}
       <details>
@@ -342,7 +350,7 @@ function App() {
     ?? null;
   const displayedPlan = activeWorkflow ?? report.reproductionPlan;
 
-  const runScan = useCallback(async (targetUrl) => {
+  const runScan = useCallback(async (targetUrl, benchmarkId) => {
     setLoading(true);
     setError("");
 
@@ -350,7 +358,7 @@ function App() {
       const response = await fetch("/api/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: targetUrl }),
+        body: JSON.stringify({ url: targetUrl, ...(benchmarkId ? { executionOptions: { benchmarkId } } : {}) }),
       });
       const result = await response.json();
 
@@ -392,6 +400,19 @@ function App() {
     } catch { /* The scan error is already displayed. */ }
   }
 
+  async function loadPublishedBenchmark() {
+    const targetUrl = `https://github.com/${publishedBenchmark.repository}`;
+    setUrl(targetUrl);
+    try {
+      await runScan(targetUrl, publishedBenchmark.id);
+      setSelectedWorkflow("evaluation");
+      setQuickCommand(publishedEvaluationCommand);
+      setAcceptance({ ...emptyAcceptance, benchmarkId: publishedBenchmark.id, expectedText: "published-benchmark-ok", outputFile: "benchmark-result.json",
+        metricKey: "accuracy", metricOperator: "eq", metricTarget: String(publishedBenchmark.reference.value), metricTolerance: "0",
+        dataset: publishedBenchmark.dataset, model: publishedBenchmark.model, reference: publishedBenchmark.reference.url });
+    } catch { /* The scan error is already displayed. */ }
+  }
+
   function downloadReport() {
     downloadJson(
       report,
@@ -425,7 +446,7 @@ function App() {
           url: `https://github.com/${report.repository}`,
           commit: report.commit,
           workflowId: activeWorkflow.id,
-          executionOptions: { quickCommand, expectedText: acceptance.expectedText, outputFile: acceptance.outputFile, metricKey: acceptance.metricKey,
+          executionOptions: acceptance.benchmarkId ? { benchmarkId: acceptance.benchmarkId } : { quickCommand, expectedText: acceptance.expectedText, outputFile: acceptance.outputFile, metricKey: acceptance.metricKey,
             metricOperator: acceptance.metricOperator, metricTarget: acceptance.metricTarget === "" ? null : Number(acceptance.metricTarget), metricTolerance: acceptance.metricOperator === "eq" ? Number(acceptance.metricTolerance) : 0,
             evaluation: activeWorkflow.id === "evaluation" ? { dataset: acceptance.dataset, model: acceptance.model, reference: acceptance.reference, assetsInEntry: acceptance.assetsInEntry } : null },
         }),
@@ -575,6 +596,8 @@ function App() {
             <p className="hint">Public repositories only · Results pinned to a commit</p>
             <button className="download-button" type="button" onClick={loadCpuEvaluation} disabled={executionBusy}>Load CPU evaluation example</button>
             <p className="hint">Small synthetic held-out dataset + trained checkpoint. Loads a reviewed command; does not start execution.</p>
+            <button className="download-button" type="button" onClick={loadPublishedBenchmark} disabled={executionBusy}>Load published Iris benchmark</button>
+            <p className="hint">Real UCI data + paper's pretrained model + original evaluation entry. Reference: 98% in the pinned README; explicit CPU compatibility profile. Does not start execution.</p>
           </form>
 
           {error && <p className="error" role="alert">{error}</p>}
@@ -748,8 +771,19 @@ function App() {
             </div>
 
             {preflightError && <p className="runner-error" role="alert">{preflightError}</p>}
-            {["quick", "evaluation"].includes(activeWorkflow.id) && (
-              <div className="run-options">
+            {acceptance.benchmarkId && <div className="run-comparison">
+              <h3>{publishedBenchmark.title}</h3>
+              <p>{publishedBenchmark.dataset}</p>
+              <p>{publishedBenchmark.model}</p>
+              <p><a href={publishedBenchmark.reference.url} target="_blank" rel="noreferrer">Pinned reference: accuracy 0.98 · exact numeric match</a></p>
+              <p className="hint">Fixed output checks: published-benchmark-ok · fresh benchmark-result.json · accuracy = 0.98 ± 0.</p>
+              <p className="runner-note">{publishedBenchmark.compatibility.note}</p>
+              <p className="hint">Commands and expectations are fixed for this reviewed case. Choose another workflow or scan again to return to custom Evaluation.</p>
+              <details><summary>Review benchmark manifest and adapter source</summary><pre className="evaluation-source">{JSON.stringify(publishedBenchmark, null, 2)}{"\n\n"}{publishedEvaluationSource}</pre></details>
+            </div>}
+            {["quick", "evaluation"].includes(activeWorkflow.id) && !acceptance.benchmarkId && (
+              <fieldset className="run-options" disabled={optionsLocked}>
+                <legend>Entry and output expectations</legend>
                 <label htmlFor="quick-command">Reviewed {activeWorkflow.id === "evaluation" ? "Evaluation" : "Quick"} command (optional)</label>
                 <input id="quick-command" value={quickCommand} maxLength={6000}
                   placeholder="Leave blank to use the README entry point"
@@ -784,7 +818,7 @@ function App() {
                     onChange={(event) => updateAcceptance("assetsInEntry", event.target.checked)} />My reviewed entry handles dataset and model preparation; replace separate data/model steps explicitly.</label>
                   <p className="hint">Required: a new/changed JSON file and numeric metric. Use 0.95 for 95% if the output uses fractions. Context is user-declared; CPU/2 GB/10 minute limits still apply.</p>
                 </>}
-              </div>
+              </fieldset>
             )}
             {preflight && (
               <div className="runner-result" aria-live="polite">
@@ -795,6 +829,7 @@ function App() {
                 <h3>Automated steps</h3>
                 {preflight.commandOverride && <p className="runner-note">User-reviewed override · original: {preflight.commandOverride.original}</p>}
                 {preflight.preparationOverride && <details><summary>Explicit dataset/model preparation override</summary><pre>{JSON.stringify(preflight.preparationOverride, null, 2)}</pre></details>}
+                {preflight.benchmark && <details><summary>Reviewed compatibility profile, hash locks and original README steps</summary><pre className="evaluation-source">{JSON.stringify(preflight.benchmark, null, 2)}</pre></details>}
                 <ol>
                   {preflight.automatedSteps.map((step) => (
                     <li key={step.id}><span>{step.title}</span><code className="command">{step.effectiveCommand ?? step.command}</code></li>
@@ -903,6 +938,10 @@ function App() {
             <p className="hint">The saved commit is fetched directly; changes to the latest GitHub branch do not change this recipe.</p>
             <p className="commit">Image {replayPreview.recipe.imageId} · Python {replayPreview.recipe.python}</p>
             <p className="hint">{replayPreview.limits.cpus} CPUs · {replayPreview.limits.memory} · {replayPreview.limits.timeoutMinutes} minute limit · no host mounts</p>
+            {replayPreview.benchmark && <>
+              <p className="runner-note">{replayPreview.benchmark.compatibility.note}</p>
+              <details><summary>Frozen benchmark input hashes and pinned reference</summary><pre>{JSON.stringify(replayPreview.benchmark, null, 2)}</pre></details>
+            </>}
             <ol>{replayPreview.automatedSteps.map((step) => <li key={step.id}><strong>{step.title}</strong><code className="command">{step.command}</code></li>)}</ol>
             <details><summary>Locked dependencies and output expectations</summary><pre>{JSON.stringify({ dependencies: replayPreview.recipe.dependencies, expectations: replayPreview.executionOptions }, null, 2)}</pre></details>
             {replayPreview.recipe.warnings.map((warning) => <p className="runner-note" key={warning}>{warning}</p>)}

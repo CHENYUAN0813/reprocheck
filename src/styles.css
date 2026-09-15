@@ -324,6 +324,7 @@ h2 {
 
 .checks {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .check {
@@ -345,6 +346,8 @@ h2 {
   gap: 16px;
   align-items: flex-start;
 }
+
+.check-main > div { min-width: 0; overflow-wrap: anywhere; }
 
 .check-status {
   min-width: 50px;
@@ -557,12 +560,15 @@ code {
 
 .runner {
   padding: 34px;
+  overflow-wrap: anywhere;
 }
 
 .runner button,
 .evidence-download {
   min-height: 44px;
 }
+
+.runner a:not(.evidence-download) { color: #b9c9e8; text-underline-offset: 3px; }
 
 .evidence-download {
   display: inline-flex;
@@ -601,7 +607,12 @@ code {
   display: grid;
   gap: 8px;
   margin-top: 24px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
 }
+
+.run-options legend { padding: 0; margin-bottom: 12px; color: #8d99aa; }
 
 .run-options label {
   color: #c8d0dc;
@@ -629,6 +640,8 @@ code {
 .execution-evidence details {
   margin: 16px 0;
 }
+
+.execution-evidence pre { max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .recipe-actions {
   display: flex;
@@ -710,6 +723,7 @@ code {
 .runner-result ol,
 .runner-result ul {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   margin: 0;
   padding-left: 24px;
