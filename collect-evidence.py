@@ -1,5 +1,6 @@
 """Bounded, container-local observations; not a security attestation."""
 import hashlib
+import base64
 import csv
 import importlib.metadata
 import json
@@ -13,6 +14,7 @@ root = Path("/workspace").resolve()
 baseline = Path("/tmp/reprocheck-baseline.json")
 environment_file = Path("/tmp/reprocheck-environment.json")
 assets_file = Path("/tmp/reprocheck-assets.json")
+checkpoint_baseline = Path("/tmp/reprocheck-checkpoint-before.json")
 
 
 def observe_environment():
@@ -72,16 +74,26 @@ def observe_benchmark():
 
 
 artifact = observe_file()
-if sys.argv[2] == "environment":
+if sys.argv[2] == "inputs":
+    identities = observe_benchmark()
+    if identities and (any(asset["status"] != "PASSED" for asset in identities["assets"]) or identities["referenceEvidence"]["status"] != "PASSED"):
+        raise RuntimeError("Reviewed inputs changed after training; evaluation entry was not run")
+elif sys.argv[2] == "environment":
     snapshot = observe_environment()
     environment_file.write_text(json.dumps(snapshot), encoding="utf-8")
     # Preparation output is not evidence that the final entry produced anything.
     baseline.write_text(json.dumps(artifact), encoding="utf-8")
+    training = (options.get("benchmark") or {}).get("training")
+    if training:
+        initial = observe_file(training["checkpoint"])
+        checkpoint_baseline.write_text(json.dumps(initial))
+        if initial["exists"]:
+            raise RuntimeError("Reviewed training must start without an existing output checkpoint")
     identities = observe_benchmark()
     if identities:
         assets_file.write_text(json.dumps(identities), encoding="utf-8")
         if any(asset["status"] != "PASSED" for asset in identities["assets"]) or identities["referenceEvidence"]["status"] != "PASSED":
-            raise RuntimeError("Reviewed dataset/model/code hash or reference row does not match; evaluation entry was not run")
+            raise RuntimeError("Reviewed dataset/model/code hash or reference row does not match; training/evaluation entry was not run")
     locked = options.get("lockedEnvironment")
     if locked:
         normalize = lambda items: sorted(re.sub(r"[-_.]+", "-", item.split("==")[0].lower()) + "==" + item.split("==")[1] for item in items)
@@ -146,12 +158,28 @@ else:
                 asset["status"] = "UNKNOWN" if not initial else "FAILED"
         if not before or before["referenceEvidence"]["status"] != "PASSED":
             identities["referenceEvidence"]["status"] = "UNKNOWN" if not before else "FAILED"
+    training_checkpoint = None
+    training = (options.get("benchmark") or {}).get("training")
+    if training:
+        training_checkpoint = {**observe_file(training["checkpoint"]), "status": "FAILED"}
+        try:
+            initial = json.loads(checkpoint_baseline.read_text())
+            summary = json.loads(Path("/tmp/reprocheck-training.json").read_text())
+            if initial["exists"] or training_checkpoint.get("error") or not 0 < training_checkpoint.get("size", 0) <= 65536:
+                raise ValueError("Expected a new, bounded training checkpoint")
+            if training_checkpoint.get("sha256") != summary["checkpoint_sha256"]:
+                raise ValueError("Trained checkpoint changed during evaluation")
+            training_checkpoint.update(fresh=True, status="PASSED", trainingSeconds=summary["seconds"],
+                                       base64=base64.b64encode((root / training["checkpoint"]).read_bytes()).decode())
+        except Exception as error:
+            training_checkpoint["error"] = str(error)
     evidence = {
         **snapshot,
         **(identities or {}),
         "artifact": artifact,
         "metric": metric,
         "evaluationOutput": evaluation_output,
+        **({"trainingCheckpoint": training_checkpoint} if training_checkpoint else {}),
     }
-    # ponytail: JSON metadata only; add binary artifact export when a real use case needs it.
+    # ponytail: only this reviewed <=64 KiB model is exported; no generic directory/archive export.
     print("\n::reprocheck-evidence::" + json.dumps(evidence, allow_nan=False))

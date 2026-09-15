@@ -1,0 +1,10 @@
+{
+  "id": "bthowen-iris-training",
+  "title": "BTHOWeN · Iris train from scratch",
+  "model": "New BTHOWeN checkpoint trained by the original repository; Table 3 Iris configuration, one run, NumPy seed 42",
+  "scope": "Real-paper Iris software training and evaluation, one fixed configuration/run; not the authors' unspecified random-model selection, full parameter sweep, MNIST or RTL reproduction. No pretrained checkpoint is used and 98% is not guaranteed.",
+  "seed": 42,
+  "parameters": {"bits_per_input": 3, "filter_inputs": 2, "filter_entries": 128, "filter_hashes": 1, "num_workers": 1},
+  "arguments": ["Iris", "--bits_per_input", "3", "--filter_inputs", "2", "--filter_entries", "128", "--filter_hashes", "1", "--num_workers", "1", "--save_prefix", "reprocheck"],
+  "checkpoint": "software_model/models/Iris/reprocheck_2input_128entry_1hash_3bpi.pickle.lzma"
+}

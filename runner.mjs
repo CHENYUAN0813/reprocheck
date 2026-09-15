@@ -10,14 +10,20 @@ const jobs = new Map();
 const LOG_LIMIT = 200_000;
 const collector = readFileSync(new URL("./collect-evidence.py", import.meta.url), "utf8");
 export const reviewedBenchmark = JSON.parse(readFileSync(new URL("./examples/bthowen-iris.json", import.meta.url), "utf8"));
+const trainingProfile = JSON.parse(readFileSync(new URL("./examples/bthowen-training.json", import.meta.url), "utf8"));
+export const reviewedTraining = { ...reviewedBenchmark, id: trainingProfile.id, title: trainingProfile.title, model: trainingProfile.model,
+  reference: { ...reviewedBenchmark.reference, scope: trainingProfile.scope }, assets: reviewedBenchmark.assets.filter((asset) => asset.role !== "checkpoint"), training: trainingProfile };
 const benchmarkSource = readFileSync(new URL("./examples/evaluate-bthowen.py", import.meta.url), "utf8");
 const benchmarkCommand = (phase) => `python -c ${shellQuote(`exec(${JSON.stringify(benchmarkSource)})`)} ${phase}`;
+const trainingSource = readFileSync(new URL("./examples/train-bthowen.py", import.meta.url), "utf8");
+const trainingCommand = () => `python -c ${shellQuote(`exec(${JSON.stringify(trainingSource)})`)}`;
 
-function benchmarkOptions() {
-  return { benchmarkId: reviewedBenchmark.id, quickCommand: benchmarkCommand("evaluate"), expectedText: "published-benchmark-ok",
-    outputFile: "benchmark-result.json", metricKey: "accuracy", metricOperator: "eq", metricTarget: reviewedBenchmark.reference.value,
-    metricTolerance: reviewedBenchmark.reference.tolerance, evaluation: { dataset: reviewedBenchmark.dataset, model: reviewedBenchmark.model,
-      reference: reviewedBenchmark.reference.url, assetsInEntry: false } };
+function benchmarkOptions(id = reviewedBenchmark.id) {
+  const benchmark = id === reviewedTraining.id ? reviewedTraining : reviewedBenchmark;
+  return { benchmarkId: benchmark.id, quickCommand: benchmarkCommand("evaluate"), expectedText: "published-benchmark-ok",
+    outputFile: "benchmark-result.json", metricKey: "accuracy", metricOperator: "eq", metricTarget: benchmark.reference.value,
+    metricTolerance: benchmark.reference.tolerance, evaluation: { dataset: benchmark.dataset, model: benchmark.model,
+      reference: benchmark.reference.url, assetsInEntry: false } };
 }
 
 function shellQuote(value) {
@@ -46,8 +52,8 @@ export async function inspectRuntime() {
 export function validateExecutionOptions(input = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid execution options");
   const benchmarkId = input.benchmarkId ?? null;
-  if (benchmarkId !== null && benchmarkId !== reviewedBenchmark.id) throw new Error("Unknown reviewed benchmark");
-  if (benchmarkId) input = { ...benchmarkOptions(), ...input };
+  if (benchmarkId !== null && ![reviewedBenchmark.id, reviewedTraining.id].includes(benchmarkId)) throw new Error("Unknown reviewed benchmark");
+  if (benchmarkId) input = { ...benchmarkOptions(benchmarkId), ...input };
   const quickCommand = input.quickCommand ?? "";
   if (typeof quickCommand !== "string" || quickCommand.length > 6000 || /[\r\n\0]/.test(quickCommand)) {
     throw new Error("Reviewed command must be a single line of at most 6000 characters");
@@ -97,19 +103,21 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
   let workflow = report.workflows?.find((candidate) => candidate.id === workflowId);
   if (!workflow) throw new Error("A valid reproduction workflow is required");
   if (candidate) workflow = candidateWorkflow(report, candidate.entry);
-  const benchmark = executionOptions.benchmarkId ? { ...reviewedBenchmark, originalSteps: report.reproductionPlan?.steps ?? [] } : null;
+  const benchmark = executionOptions.benchmarkId ? { ...(executionOptions.benchmarkId === reviewedTraining.id ? reviewedTraining : reviewedBenchmark), originalSteps: report.reproductionPlan?.steps ?? [] } : null;
+  const reviewedTrainingRun = workflowId === "training" && !!benchmark?.training;
   if (benchmark) {
-    if (!isDeepStrictEqual(executionOptions, benchmarkOptions())) throw new Error("Reviewed benchmark commands and reference conditions are fixed; use a custom Evaluation instead");
-    if (workflowId !== "evaluation" || report.repository !== benchmark.repository || report.commit !== benchmark.commit) throw new Error("Reviewed benchmark requires its pinned repository, commit and Evaluation workflow");
+    if (!isDeepStrictEqual(executionOptions, benchmarkOptions(benchmark.id))) throw new Error("Reviewed benchmark commands and reference conditions are fixed; use a custom Evaluation instead");
+    if (workflowId !== (benchmark.training ? "training" : "evaluation") || report.repository !== benchmark.repository || report.commit !== benchmark.commit) throw new Error("Reviewed benchmark requires its pinned repository, commit and matching Training/Evaluation workflow");
     workflow = { ...workflow, status: "REVIEWED_BENCHMARK", steps: [
       { id: "install", title: "Install reviewed Python 3.11 CPU compatibility dependencies", status: "DOCUMENTED", command: benchmark.installCommand },
       { id: "prepare-assets", title: "Prepare hash-locked UCI data and explicit compatibility patch", status: "DOCUMENTED", command: benchmarkCommand("prepare") },
-      { id: "evaluation-benchmark", title: "Run original Iris evaluation entry and collect its score", status: "DOCUMENTED", command: benchmarkCommand("evaluate") },
+      ...(benchmark.training ? [{ id: "training-benchmark", title: "Train original Table 3 Iris model from scratch and save checkpoint", status: "DOCUMENTED", command: trainingCommand() }] : []),
+      { id: "evaluation-benchmark", title: benchmark.training ? "Evaluate newly trained checkpoint with the original entry" : "Run original Iris evaluation entry and collect its score", status: "DOCUMENTED", command: benchmarkCommand("evaluate") },
     ] };
   }
-  if (quickCommand && !["quick", "evaluation"].includes(workflowId)) throw new Error("Only Quick and Evaluation support a reviewed command");
+  if (quickCommand && !["quick", "evaluation"].includes(workflowId) && !reviewedTrainingRun) throw new Error("Only Quick and Evaluation support a reviewed command");
   if (workflowId === "evaluation" && (!executionOptions.evaluation || !executionOptions.metricKey || executionOptions.metricTarget === null)) throw new Error("Evaluation requires an output JSON/CSV metric and a declared dataset, model and reference source");
-  if (workflowId !== "evaluation" && executionOptions.evaluation) throw new Error("Evaluation context is only accepted for Evaluation workflows");
+  if (workflowId !== "evaluation" && executionOptions.evaluation && !reviewedTrainingRun) throw new Error("Evaluation context is only accepted for Evaluation workflows");
   const assetsInEntry = executionOptions.evaluation?.assetsInEntry;
   if (assetsInEntry && !quickCommand) throw new Error("Entry-prepared assets require a reviewed Evaluation command");
   const originalSteps = workflowId === "evaluation" && !workflow.steps.length && quickCommand
@@ -155,8 +163,8 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
     commandOverride: quickCommand && !benchmark ? { original: entry.command, actual: quickCommand, origin: "user-reviewed" } : null,
     runtime,
     preparationOverride: assetsInEntry ? { origin: "user-reviewed", instruction: "Dataset and model preparation are handled by the reviewed entry command", originalSteps: originalSteps.filter((step) => ["data", "model"].includes(step.id)) } : null,
-    runnable: ["quick", "evaluation"].includes(workflowId) && runtime.available && automatedSteps.length > 0 && blockers.length === 0,
-    reason: !["quick", "evaluation"].includes(workflowId) ? "Training execution is not enabled in this CPU-limited version"
+    runnable: (["quick", "evaluation"].includes(workflowId) || reviewedTrainingRun) && runtime.available && automatedSteps.length > 0 && blockers.length === 0,
+    reason: !["quick", "evaluation"].includes(workflowId) && !reviewedTrainingRun ? "Training requires the reviewed Iris training case; arbitrary Training execution is not enabled"
       : !runtime.available ? runtime.reason : blockers.length ? "The workflow has missing or blocked steps"
         : !automatedSteps.length ? "No executable commands were found" : null,
     automatedSteps: automatedSteps.map((step) => ({ ...step,
@@ -204,7 +212,7 @@ function sourceSteps(job) {
 
 export function createRecipe(job) {
   if (job.status !== "SUCCEEDED" || job.verification?.status !== "VERIFIED") throw new Error("Pass configured output checks before freezing a recipe");
-  if (!["quick", "evaluation"].includes(job.workflowId) || !/^[\w.-]+\/[\w.-]+$/.test(job.repository) || !/^[a-f\d]{40}$/i.test(job.commit)) throw new Error("Invalid executable source identity");
+  if ((!["quick", "evaluation"].includes(job.workflowId) && !(job.workflowId === "training" && job.benchmark?.training)) || !/^[\w.-]+\/[\w.-]+$/.test(job.repository) || !/^[a-f\d]{40}$/i.test(job.commit)) throw new Error("Invalid executable source identity");
   if (job.executionOptions?.benchmarkId && (job.benchmark?.id !== job.executionOptions.benchmarkId || job.benchmark.repository !== job.repository
     || job.benchmark.commit !== job.commit)) throw new Error("Reviewed benchmark asset/source locks are missing from the saved record");
   if (job.executionOptions?.candidateReview && (job.candidate?.repository !== job.repository || job.candidate?.commit !== job.commit)) throw new Error("Reviewed candidate source context is missing from the saved record");
@@ -254,9 +262,11 @@ export function buildReplayPreflight(baseline, runtime, imageAvailable) {
     recipe, replayOf: baseline.id, baseline: { ...baseline, log: undefined, recipe: undefined, comparison: undefined }, frozenCommands: true, experimentParameters: baseline.experimentParameters ?? [],
     automatedSteps: [
       { id: "restore-lock", title: "Restore pinned dependency versions", command: "python -m pip install --no-deps --only-binary=:all: --index-url https://pypi.org/simple -r /tmp/reprocheck-lock.txt" },
-      ...recipe.commands.slice(0, -1),
-      { id: "verify-lock", title: "Verify Python and dependency lock", command: "Verify the observed pre-entry environment against the recipe" },
-      recipe.commands.at(-1),
+      ...recipe.commands.flatMap((step, index) => [
+        ...((recipe.benchmark?.training ? step.id === "training-benchmark" : index === recipe.commands.length - 1)
+          ? [{ id: "verify-lock", title: "Verify Python and dependency lock", command: "Verify the observed pre-entry environment against the recipe" }] : []),
+        step,
+      ]),
     ], manualSteps: [], blockers: [], limits: recipe.limits,
   };
 }
@@ -292,6 +302,7 @@ export function compareRuns(baseline, current) {
   if (baseline.benchmark) {
     compare("asset-hashes", baseline.assets?.map(({ path, sha256 }) => ({ path, sha256 })), current.assets?.map(({ path, sha256 }) => ({ path, sha256 })));
     compare("reference-source", baseline.referenceEvidence, current.referenceEvidence);
+    if (baseline.benchmark.training) compare("trained-checkpoint", baseline.trainingCheckpoint?.sha256, current.trainingCheckpoint?.sha256);
   }
   return { baselineRunId: baseline.id, status: current.status === "RUNNING" ? "PENDING"
     : baseline.status !== "SUCCEEDED" || baseline.verification?.status !== "VERIFIED" || current.status !== "SUCCEEDED" || current.verification?.status !== "VERIFIED" || rows.some((row) => row.status === "UNKNOWN") ? "INCOMPLETE"
@@ -321,7 +332,8 @@ export function buildDockerInvocation(preflight, containerName) {
       "export PIP_CONSTRAINT=/tmp/reprocheck-lock.txt PIP_ONLY_BINARY=:all:",
     ] : []),
     ...preflight.automatedSteps.flatMap((step) => [
-      ...(step === preflight.automatedSteps.at(-1) && !preflight.recipe ? ["collect environment"] : []),
+      ...(!preflight.recipe && (preflight.benchmark?.training ? step.id === "training-benchmark" : step === preflight.automatedSteps.at(-1)) ? ["collect environment"] : []),
+      ...(preflight.benchmark?.training && step.id === "evaluation-benchmark" ? ["collect inputs"] : []),
       `echo ::reprocheck-step::${step.id.replace(/[^\w.-]/g, "-")}`,
       "cd /workspace",
       preflight.recipe && step.id === "verify-lock" ? "collect environment"
@@ -342,6 +354,7 @@ export function buildDockerInvocation(preflight, containerName) {
     "--cap-drop", "ALL",
     "--network", "bridge",
     "-e", "PIP_DISABLE_PIP_VERSION_CHECK=1",
+    "-e", "PYTHONUNBUFFERED=1",
     preflight.limits.image,
     "timeout", "--signal=TERM", `${preflight.limits.timeoutMinutes}m`,
     "sh", "-lc", script,
@@ -390,12 +403,18 @@ export function readEvidence(log) {
     if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) return null;
     if (evidence.dependencies !== undefined && (!Array.isArray(evidence.dependencies)
       || evidence.dependencies.length > 500 || evidence.dependencies.some((item) => typeof item !== "string" || item.length > 240))) return null;
-    for (const key of ["environment", "artifact", "metric", "evaluationOutput"]) {
+    for (const key of ["environment", "artifact", "metric", "evaluationOutput", "trainingCheckpoint"]) {
       if (evidence[key] != null && (typeof evidence[key] !== "object" || Array.isArray(evidence[key]))) return null;
     }
     if (evidence.assets != null && (!Array.isArray(evidence.assets) || evidence.assets.length > 10
       || evidence.assets.some((asset) => !asset || typeof asset !== "object" || Array.isArray(asset)))) return null;
     if (evidence.referenceEvidence != null && (typeof evidence.referenceEvidence !== "object" || Array.isArray(evidence.referenceEvidence))) return null;
+    if (evidence.trainingCheckpoint?.base64) {
+      const model = evidence.trainingCheckpoint;
+      if (typeof model.base64 !== "string" || model.base64.length > 87384 || !/^[A-Za-z0-9+/]+={0,2}$/.test(model.base64)) return null;
+      const bytes = Buffer.from(model.base64, "base64");
+      if (bytes.length !== model.size || bytes.length > 65536 || createHash("sha256").update(bytes).digest("hex") !== model.sha256) return null;
+    }
     return evidence;
   } catch { return null; }
 }
@@ -432,6 +451,11 @@ export function verifyOutcome(job) {
     observed: evidence?.metric ?? null,
   });
   if (job.benchmark) {
+    if (job.benchmark.training) {
+      const observed = evidence?.trainingCheckpoint;
+      checks.push({ id: "trained-checkpoint", expected: `New ${job.benchmark.training.checkpoint}, saved by original trainer and unchanged during evaluation`,
+        status: !observed ? "UNKNOWN" : observed.path === job.benchmark.training.checkpoint && observed.fresh === true && observed.status === "PASSED" && !!observed.base64 ? "PASSED" : "FAILED", observed: observed ? { ...observed, base64: undefined } : null });
+    }
     for (const asset of job.benchmark.assets) {
       const observed = evidence?.assets?.find((item) => item.path === asset.path);
       checks.push({ id: `asset:${asset.role}`, expected: `${asset.path} SHA-256 ${asset.sha256}`,
@@ -464,6 +488,7 @@ function publicJob(job) {
     candidate: job.candidate ?? null,
     assets: evidence?.assets ?? null,
     referenceEvidence: evidence?.referenceEvidence ?? null,
+    trainingCheckpoint: evidence?.trainingCheckpoint ?? null,
     commandOverride: job.commandOverride,
     preparationOverride: job.preparationOverride ?? null,
     environment: { ...evidence?.environment, image: job.limits.image, imageId: job.imageId ?? null, docker: job.runtime },
@@ -516,12 +541,16 @@ function persist(job) {
 }
 
 export function startRun(preflight) {
-  if (!["quick", "evaluation"].includes(preflight.workflow.id)) throw new Error("Only Quick and Evaluation can run in this version");
+  if (!["quick", "evaluation"].includes(preflight.workflow.id) && !(preflight.workflow.id === "training" && preflight.benchmark?.training)) throw new Error("Only Quick, Evaluation and reviewed Iris Training can run in this version");
   if (!preflight.runnable) throw new Error("The selected workflow is not ready to run");
 
   const id = randomUUID();
   const containerName = `reprocheck-${id}`;
   const dockerArgs = buildDockerInvocation(preflight, containerName);
+  // Keep embedded adapters off Windows' 32 KiB process-command-line limit.
+  const script = dockerArgs.pop();
+  dockerArgs.push('exec sh -lc "$(cat)" </dev/null');
+  dockerArgs.splice(1, 0, "-i");
   const job = {
     id,
     containerName,
@@ -555,8 +584,10 @@ export function startRun(preflight) {
 
   const child = spawn("docker", dockerArgs, {
     windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["pipe", "pipe", "pipe"],
   });
+  child.stdin.on("error", () => {}); // Docker startup failure is reported by error/close below.
+  child.stdin.end(script);
   const append = (chunk) => {
     const log = `${job.log}${chunk}`;
     job.logTruncated ||= log.length > LOG_LIMIT;
