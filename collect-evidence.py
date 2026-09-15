@@ -3,12 +3,24 @@ import hashlib
 import importlib.metadata
 import json
 import platform
+import re
 import sys
 from pathlib import Path
 
 options = json.loads(sys.argv[1])
 root = Path("/workspace").resolve()
 baseline = Path("/tmp/reprocheck-baseline.json")
+environment_file = Path("/tmp/reprocheck-environment.json")
+
+
+def observe_environment():
+    distributions = list(importlib.metadata.distributions())
+    return {
+        "environment": {"python": platform.python_version(), "platform": platform.platform(),
+                        "capture": "before-entry",
+                        "unlockedDependencies": sorted(d.metadata["Name"] for d in distributions if d.read_text("direct_url.json"))},
+        "dependencies": sorted(f"{d.metadata['Name']}=={d.version}" for d in distributions),
+    }
 
 
 def observe_file():
@@ -34,7 +46,17 @@ def observe_file():
 
 
 artifact = observe_file()
-if sys.argv[2] == "start":
+if sys.argv[2] == "environment":
+    snapshot = observe_environment()
+    environment_file.write_text(json.dumps(snapshot), encoding="utf-8")
+    locked = options.get("lockedEnvironment")
+    if locked:
+        normalize = lambda items: sorted(re.sub(r"[-_.]+", "-", item.split("==")[0].lower()) + "==" + item.split("==")[1] for item in items)
+        if snapshot["environment"]["python"] != locked["python"] or normalize(snapshot["dependencies"]) != normalize(locked["dependencies"]):
+            raise RuntimeError("Locked Python/dependency environment does not match the recipe; entry point was not run")
+        if snapshot["environment"]["unlockedDependencies"]:
+            raise RuntimeError("Direct/local dependency sources cannot be verified by this recipe")
+elif sys.argv[2] == "start":
     baseline.write_text(json.dumps(artifact), encoding="utf-8")
 else:
     previous = json.loads(baseline.read_text(encoding="utf-8")) if baseline.exists() else None
@@ -57,9 +79,11 @@ else:
             metric["value"] = value
         except Exception as error:
             metric["error"] = str(error)
+    snapshot = json.loads(environment_file.read_text(encoding="utf-8")) if environment_file.exists() else observe_environment()
+    if not environment_file.exists():
+        snapshot["environment"]["capture"] = "after-failure"
     evidence = {
-        "environment": {"python": platform.python_version(), "platform": platform.platform()},
-        "dependencies": sorted(f"{d.metadata['Name']}=={d.version}" for d in importlib.metadata.distributions()),
+        **snapshot,
         "artifact": artifact,
         "metric": metric,
     }

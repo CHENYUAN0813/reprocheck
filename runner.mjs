@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { readFileSync } from "node:fs";
 import { getSavedRun, listSavedRuns, saveRun } from "./run-store.mjs";
@@ -141,24 +141,125 @@ function effectiveCommand(step, repository, packageIndex) {
   return step.id === "install" ? rewritePackageIndex(command, packageIndex) : command;
 }
 
+function sourceSteps(job) {
+  return job.steps.filter((step) => !job.replayOf || !["restore-lock", "verify-lock"].includes(step.id));
+}
+
+export function createRecipe(job) {
+  if (job.status !== "SUCCEEDED" || job.verification?.status !== "VERIFIED") throw new Error("Pass configured output checks before freezing a recipe");
+  if (job.workflowId !== "quick" || !/^[\w.-]+\/[\w.-]+$/.test(job.repository) || !/^[a-f\d]{40}$/i.test(job.commit)) throw new Error("Invalid Quick source identity");
+  if (!["readme", "pypi"].includes(job.packageIndex)) throw new Error("Invalid saved package source");
+  if (!/^sha256:[a-f\d]{64}$/.test(job.environment?.imageId ?? "")) throw new Error("The exact Docker image ID was not observed; run again before freezing");
+  if (job.environment?.capture !== "before-entry" || !/^3\.11\.\d+$/.test(job.environment.python ?? "")) throw new Error("A pre-entry Python/dependency snapshot is required; run again");
+  if (!Array.isArray(job.environment.unlockedDependencies) || job.environment.unlockedDependencies.length) throw new Error("Direct/local dependency sources need an artifact lock; this version supports index packages only");
+  const dependencies = job.dependencies;
+  if (!Array.isArray(dependencies) || !dependencies.length || dependencies.length > 500
+    || dependencies.some((item) => typeof item !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,100}==[A-Za-z0-9][A-Za-z0-9.!+_-]{0,100}$/.test(item))) throw new Error("Dependency snapshot cannot be safely restored");
+  const names = dependencies.map((item) => item.split("==")[0].toLowerCase().replace(/[-_.]+/g, "-"));
+  if (new Set(names).size !== names.length) throw new Error("Duplicate dependency names in snapshot");
+  const commands = sourceSteps(job).map(({ id, title, command, originalCommand }) => ({ id, title, command, originalCommand: originalCommand ?? command }));
+  if (!commands.length || commands.length > 20 || commands.some((step) => !/^[\w.-]{1,80}$/.test(step.id)
+    || typeof step.title !== "string" || typeof step.command !== "string" || !step.command || step.command.length > 6000 || /[\r\n\0]/.test(step.command))) throw new Error("Invalid saved commands");
+  if (new Set(commands.map((step) => step.id)).size !== commands.length) throw new Error("Duplicate command IDs");
+  if (!/^python3?\s/.test(commands.at(-1).command) || commands.some((step) => /\b(?:conda|poetry|uv|virtualenv)\b|\bpython3?\s+-m\s+venv\b/.test(step.command))) throw new Error("Recipes currently support the container's default Python entry point, not alternate environment managers");
+  // ponytail: restore index packages with pip wheels; artifact locks and other environment managers are deferred.
+  for (const step of commands.filter((step) => step.id === "install")) rewritePackageIndex(step.command, "pypi");
+  if (job.limits?.cpus !== 2 || job.limits.memory !== "2 GB" || job.limits.timeoutMinutes !== 10
+    || job.limits.hostMounts !== false || job.limits.networkAccess !== true) throw new Error("Unsupported saved execution limits");
+  const recipe = { schemaVersion: 1, baselineRunId: job.id, repository: job.repository, commit: job.commit,
+    workflowId: "quick", packageIndex: job.packageIndex, executionOptions: validateExecutionOptions(job.executionOptions),
+    commandOverride: job.commandOverride ?? null, imageId: job.environment.imageId, python: job.environment.python,
+    dependencies: [...dependencies].sort(), commands, limits: { ...job.limits, image: job.environment.imageId },
+    baselineResults: { artifact: job.artifact ?? null, metric: job.metric ?? null },
+    warnings: ["Local image ID must still exist on this computer.", "Package versions are pinned, not wheel hashes or build artifacts.",
+      "External data/models and randomness are not automatically frozen; equal results are not guaranteed."],
+  };
+  return { ...recipe, fingerprint: createHash("sha256").update(JSON.stringify(recipe)).digest("hex") };
+}
+
+export async function inspectLockedImage(imageId) {
+  if (!/^sha256:[a-f\d]{64}$/.test(imageId ?? "")) throw new Error("Invalid locked image ID");
+  try {
+    const { stdout } = await execFileAsync("docker", ["image", "inspect", "--format", "{{.Id}}", imageId], { timeout: 5000, windowsHide: true });
+    return stdout.trim() === imageId;
+  } catch { return false; }
+}
+
+export function buildReplayPreflight(baseline, runtime, imageAvailable) {
+  const recipe = createRecipe(baseline);
+  return { repository: recipe.repository, commit: recipe.commit, workflow: { id: "quick", title: "Locked recipe replay", status: "FROZEN" },
+    packageIndex: recipe.packageIndex, executionOptions: recipe.executionOptions, commandOverride: recipe.commandOverride,
+    runtime, runnable: runtime.available && imageAvailable, reason: !runtime.available ? runtime.reason
+      : !imageAvailable ? "The locked image is missing locally; replay will not substitute a newer image" : null,
+    recipe, replayOf: baseline.id, baseline: { ...baseline, log: undefined, recipe: undefined, comparison: undefined }, frozenCommands: true, experimentParameters: baseline.experimentParameters ?? [],
+    automatedSteps: [
+      { id: "restore-lock", title: "Restore pinned dependency versions", command: "python -m pip install --no-deps --only-binary=:all: --index-url https://pypi.org/simple -r /tmp/reprocheck-lock.txt" },
+      ...recipe.commands.slice(0, -1),
+      { id: "verify-lock", title: "Verify Python and dependency lock", command: "Verify the observed pre-entry environment against the recipe" },
+      recipe.commands.at(-1),
+    ], manualSteps: [], blockers: [], limits: recipe.limits,
+  };
+}
+
+export function compareRuns(baseline, current) {
+  const rows = [];
+  function compare(id, before, after, extra = {}) {
+    rows.push({ id, baseline: before ?? null, current: after ?? null,
+      status: before === undefined || before === null || after === undefined || after === null ? "UNKNOWN"
+        : JSON.stringify(before) === JSON.stringify(after) ? "SAME" : "DIFFERENT", ...extra });
+  }
+  compare("source", `${baseline.repository}@${baseline.commit}`, `${current.repository}@${current.commit}`);
+  compare("image", baseline.environment?.imageId, current.environment?.imageId);
+  compare("python", baseline.environment?.python, current.environment?.python);
+  compare("platform", baseline.environment?.platform, current.environment?.platform);
+  const normalize = (items) => items?.map((item) => {
+    const [name, version] = item.split("==");
+    return `${name.toLowerCase().replace(/[-_.]+/g, "-")}==${version}`;
+  }).sort();
+  compare("dependencies", normalize(baseline.dependencies), normalize(current.dependencies));
+  compare("commands", sourceSteps(baseline).map((step) => step.command), sourceSteps(current).map((step) => step.command));
+  compare("expectations", baseline.executionOptions, current.executionOptions);
+  compare("limits", baseline.limits && { ...baseline.limits, image: undefined }, current.limits && { ...current.limits, image: undefined });
+  if (baseline.executionOptions?.expectedText) compare("text-check", baseline.verification?.checks?.find((check) => check.id === "text")?.status,
+    current.verification?.checks?.find((check) => check.id === "text")?.status);
+  if (baseline.executionOptions?.outputFile) compare("output-hash", baseline.artifact?.sha256, current.artifact?.sha256);
+  if (baseline.executionOptions?.metricKey) {
+    const before = baseline.metric?.value, after = current.metric?.value;
+    compare("metric", before, after, { key: baseline.executionOptions.metricKey,
+      delta: Number.isFinite(before) && Number.isFinite(after) ? after - before : null });
+  }
+  return { baselineRunId: baseline.id, status: current.status === "RUNNING" ? "PENDING"
+    : baseline.status !== "SUCCEEDED" || baseline.verification?.status !== "VERIFIED" || current.status !== "SUCCEEDED" || current.verification?.status !== "VERIFIED" || rows.some((row) => row.status === "UNKNOWN") ? "INCOMPLETE"
+      : rows.some((row) => row.status === "DIFFERENT") ? "DIFFERENT" : "SAME", rows };
+}
+
 export function buildDockerInvocation(preflight, containerName) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(preflight.repository)) throw new Error("Invalid repository identity");
   if (!/^[a-f\d]{40}$/i.test(preflight.commit)) throw new Error("Invalid commit identity");
-  const options = validateExecutionOptions(preflight.executionOptions);
+  const options = { ...validateExecutionOptions(preflight.executionOptions), ...(preflight.recipe ? {
+    lockedEnvironment: { python: preflight.recipe.python, dependencies: preflight.recipe.dependencies },
+  } : {}) };
   const collectCommand = `python -c ${shellQuote(collector)} ${shellQuote(JSON.stringify(options))}`;
 
   const script = [
     "set -eu",
-    `trap ${shellQuote(`${collectCommand} finish`)} EXIT`,
+    `collect() { ${collectCommand} "$1"; }`,
+    "trap 'collect finish' EXIT",
     "git init -q /workspace",
     `git -C /workspace remote add origin https://github.com/${preflight.repository}.git`,
     `git -C /workspace fetch -q --depth 1 origin ${preflight.commit}`,
     "git -C /workspace checkout -q --detach FETCH_HEAD",
-    `${collectCommand} start`,
+    "collect start",
+    ...(preflight.recipe ? [
+      `printf '%s\\n' ${shellQuote(preflight.recipe.dependencies.join("\n"))} > /tmp/reprocheck-lock.txt`,
+      "export PIP_CONSTRAINT=/tmp/reprocheck-lock.txt PIP_ONLY_BINARY=:all:",
+    ] : []),
     ...preflight.automatedSteps.flatMap((step) => [
+      ...(step === preflight.automatedSteps.at(-1) && !preflight.recipe ? ["collect environment"] : []),
       `echo ::reprocheck-step::${step.id.replace(/[^\w.-]/g, "-")}`,
       "cd /workspace",
-      effectiveCommand(step, preflight.repository, preflight.packageIndex),
+      preflight.recipe && step.id === "verify-lock" ? "collect environment"
+        : preflight.frozenCommands ? step.command : effectiveCommand(step, preflight.repository, preflight.packageIndex),
     ]),
   ].join("\n");
 
@@ -167,7 +268,7 @@ export function buildDockerInvocation(preflight, containerName) {
     "--name", containerName,
     "--rm",
     "--init",
-    "--pull", "missing",
+    "--pull", preflight.recipe ? "never" : "missing",
     "--cpus", String(preflight.limits.cpus),
     "--memory", "2g",
     "--pids-limit", "256",
@@ -218,7 +319,16 @@ export function diagnoseRun(status, log, failureStep, timeoutMinutes, packageInd
 
 export function readEvidence(log) {
   const line = [...log.matchAll(/^::reprocheck-evidence::([^\r\n]+)/gm)].at(-1)?.[1];
-  try { return line ? JSON.parse(line) : null; } catch { return null; }
+  try {
+    const evidence = line ? JSON.parse(line) : null;
+    if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) return null;
+    if (evidence.dependencies !== undefined && (!Array.isArray(evidence.dependencies)
+      || evidence.dependencies.length > 500 || evidence.dependencies.some((item) => typeof item !== "string" || item.length > 240))) return null;
+    for (const key of ["environment", "artifact", "metric"]) {
+      if (evidence[key] != null && (typeof evidence[key] !== "object" || Array.isArray(evidence[key]))) return null;
+    }
+    return evidence;
+  } catch { return null; }
 }
 
 export function verifyOutcome(job) {
@@ -235,12 +345,12 @@ export function verifyOutcome(job) {
   });
   if (options.outputFile) checks.push({
     id: "file", expected: options.outputFile,
-    status: !evidence ? "UNKNOWN" : evidence.artifact?.fresh && evidence.artifact?.size > 0 && !evidence.artifact?.error ? "PASSED" : "FAILED",
+    status: !evidence ? "UNKNOWN" : evidence.artifact?.fresh === true && Number.isFinite(evidence.artifact?.size) && evidence.artifact.size > 0 && !evidence.artifact?.error ? "PASSED" : "FAILED",
     observed: evidence?.artifact ?? null,
   });
   if (options.metricKey) checks.push({
     id: "metric", expected: `${options.metricKey} ${options.metricOperator === "gte" ? ">=" : "<="} ${options.metricTarget}`,
-    status: !evidence ? "UNKNOWN" : typeof evidence.metric?.value === "number" && !evidence.metric?.error
+    status: !evidence ? "UNKNOWN" : Number.isFinite(evidence.metric?.value) && !evidence.metric?.error
       && (options.metricOperator === "gte" ? evidence.metric.value >= options.metricTarget : evidence.metric.value <= options.metricTarget) ? "PASSED" : "FAILED",
     observed: evidence?.metric ?? null,
   });
@@ -254,7 +364,8 @@ export function verifyOutcome(job) {
 
 function publicJob(job) {
   const progress = summarizeSteps(job.steps, job.log, job.status);
-  return {
+  const evidence = readEvidence(job.log);
+  const record = {
     schemaVersion: 1,
     id: job.id,
     repository: job.repository,
@@ -263,9 +374,11 @@ function publicJob(job) {
     packageIndex: job.packageIndex,
     executionOptions: job.executionOptions,
     commandOverride: job.commandOverride,
-    environment: { image: job.limits.image, imageId: job.imageId ?? null, docker: job.runtime, ...readEvidence(job.log)?.environment },
-    dependencies: readEvidence(job.log)?.dependencies ?? [],
-    artifact: readEvidence(job.log)?.artifact ?? null,
+    environment: { ...evidence?.environment, image: job.limits.image, imageId: job.imageId ?? null, docker: job.runtime },
+    dependencies: evidence?.dependencies ?? [],
+    artifact: evidence?.artifact ?? null,
+    metric: evidence?.metric ?? null,
+    replayOf: job.replayOf ?? null,
     experimentParameters: job.experimentParameters,
     limits: job.limits,
     verification: verifyOutcome(job),
@@ -285,6 +398,10 @@ function publicJob(job) {
       job.packageIndex,
     ),
   };
+  record.comparison = job.baseline ? compareRuns(job.baseline, record) : null;
+  try { record.recipe = createRecipe(record); record.recipeUnavailableReason = null; }
+  catch (error) { record.recipe = null; record.recipeUnavailableReason = error.message; }
+  return record;
 }
 
 function persist(job) {
@@ -311,13 +428,15 @@ export function startRun(preflight) {
     commit: preflight.commit,
     workflowId: preflight.workflow.id,
     packageIndex: preflight.packageIndex ?? "readme",
+    replayOf: preflight.replayOf ?? null,
+    baseline: preflight.baseline ?? null,
     executionOptions: validateExecutionOptions(preflight.executionOptions),
     commandOverride: preflight.commandOverride ?? null,
     experimentParameters: preflight.experimentParameters ?? [],
     limits: preflight.limits,
     runtime: preflight.runtime ?? null,
-    steps: preflight.automatedSteps.map(({ id, title, command }) => ({ id, title, originalCommand: command,
-      command: effectiveCommand({ id, command }, preflight.repository, preflight.packageIndex),
+    steps: preflight.automatedSteps.map(({ id, title, command, originalCommand }) => ({ id, title, originalCommand: originalCommand ?? command,
+      command: preflight.frozenCommands ? command : effectiveCommand({ id, command }, preflight.repository, preflight.packageIndex),
     })),
     timeoutMinutes: preflight.limits.timeoutMinutes,
     status: "RUNNING",
