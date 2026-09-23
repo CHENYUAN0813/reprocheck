@@ -6,7 +6,7 @@ import { reviewedBenchmarks, reviewedTrainings, reviewedCaseById } from "../exam
 import publishedEvaluationSource from "../examples/evaluate-bthowen.py?raw";
 import capacityEvaluationSource from "../examples/evaluate-capacity-probes.py?raw";
 import trainingSource from "../examples/train-bthowen.py?raw";
-import { candidateOptions, candidateWorkflow } from "../evaluation-config.mjs";
+import { candidateOptions, candidateWorkflow, suggestCandidate } from "../evaluation-config.mjs";
 import { experimentDraft, experimentExecutionOptions, MODEL_EXPORT_LIMIT } from "../experiment-config.mjs";
 
 const emptyAcceptance = { expectedText: "", outputFile: "", metricKey: "", metricOperator: "gte", metricTarget: "", metricTolerance: "0", dataset: "", model: "", reference: "", assetsInEntry: false };
@@ -213,13 +213,14 @@ const visibleRunLog = (log) => log?.replace(/^::reprocheck-evidence::.*$/gm, "[S
 
 function CandidateConfig({ report, disabled, onApply }) {
   const draft = report.evaluationDraft;
+  const suggested = draft.suggestion ?? suggestCandidate(report);
   function selections(entryId) {
     const related = draft.references.filter((reference) => reference.entryId === entryId);
     const outputs = draft.outputs.filter((output) => output.entryIds.includes(entryId));
     return { entryId, referenceId: related.length === 1 ? related[0].id : draft.references.length === 1 && (!draft.references[0].entryId || draft.references[0].entryId === entryId) ? draft.references[0].id : null,
       outputId: outputs.length === 1 ? outputs[0].id : null, confirmed: false };
   }
-  const [review, setReview] = useState(() => selections(draft.entries[0]?.id ?? ""));
+  const [review, setReview] = useState(() => suggested ?? selections(draft.entries[0]?.id ?? ""));
   let options;
   let failure;
   if (review.entryId) {
@@ -234,6 +235,7 @@ function CandidateConfig({ report, disabled, onApply }) {
   return <section className="runner candidate-config" aria-labelledby="candidate-title">
     <div className="runner-heading"><div><p className="eyebrow">Generated configuration · Needs review</p><h2 id="candidate-title">Build an Evaluation from this scan</h2>
       <p>Choose source-backed candidates, then review or complete the editable form. This does not execute code.</p></div></div>
+    {suggested && <p className="runner-note">One unambiguous candidate was preselected from a matching README command, source metric and printed output. It is still unconfirmed.</p>}
     {draft.entries.length === 0 ? <p className="runner-note">No suitable entry candidate was found in the sampled files. Supply a custom Evaluation below; no command or benchmark is invented.</p> : <fieldset className="run-options" disabled={disabled}>
       <legend>Source-backed candidate choices</legend>
       <label>Candidate entry<select value={review.entryId} onChange={(event) => setReview(selections(event.target.value))}>

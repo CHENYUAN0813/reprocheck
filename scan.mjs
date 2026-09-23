@@ -1,4 +1,4 @@
-import { buildEvaluationDraft } from "./evaluation-config.mjs";
+import { buildEvaluationDraft, suggestCandidate } from "./evaluation-config.mjs";
 
 function expectEqual(actual, expected) {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -903,7 +903,7 @@ export async function scan(input, token, pinnedCommit) {
   const failures = checks.filter((check) => check.status === "FAIL").length;
   const warnings = checks.filter((check) => check.status === "WARN").length;
 
-  return {
+  const report = {
     repository: `${owner}/${repo}`,
     commit: commit.sha,
     filesScanned: filePaths.length,
@@ -916,6 +916,8 @@ export async function scan(input, token, pinnedCommit) {
     reproductionPlan,
     evaluationDraft,
   };
+  evaluationDraft.suggestion = suggestCandidate(report);
+  return report;
 }
 
 function main() {

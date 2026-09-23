@@ -241,6 +241,22 @@ export function candidateOptions(report, review) {
     candidateReview: { ...review, confirmed: review.confirmed === true } };
 }
 
+export function suggestCandidate(report) {
+  const draft = report.evaluationDraft;
+  const matches = [];
+  for (const entry of draft?.entries ?? []) {
+    try { if (candidateCommand(entry).missing.length) continue; } catch { continue; }
+    for (const output of (draft.outputs ?? []).filter((item) => item.entryIds.includes(entry.id) && item.metricKey)) {
+      for (const reference of (draft.references ?? []).filter((item) => item.entryId === entry.id
+        && item.unit === output.unit && metricType(item.metricKey) === metricType(output.metricKey))) {
+        const review = { entryId: entry.id, outputId: output.id, referenceId: reference.id, confirmed: false };
+        try { candidateOptions(report, review); matches.push(review); } catch { /* Keep only executable, source-compatible triples. */ }
+      }
+    }
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
+
 export function reviewedCandidate(report, review, options) {
   if (!review.confirmed) throw new Error("Review and confirm the generated candidate configuration first");
   const proposed = candidateOptions(report, review);

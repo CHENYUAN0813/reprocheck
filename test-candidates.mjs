@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { buildEvaluationDraft, candidateCommand, candidateOptions, reviewedCandidate } from "./evaluation-config.mjs";
+import { buildEvaluationDraft, candidateCommand, candidateOptions, reviewedCandidate, suggestCandidate } from "./evaluation-config.mjs";
 import { buildDockerInvocation, buildPreflight, buildReplayPreflight, createRecipe, validateExecutionOptions } from "./runner.mjs";
 
 const files = [{ path: "eval.py", text: "iris = load_iris()\ntrain_test_split(X, y, test_size=0.3, random_state=1)\nmodel = LogisticRegression()\nprint('Accuracy: %.4f' % score)" }];
@@ -13,6 +13,8 @@ const report = { repository: "owner/repo", commit: "a".repeat(40), evaluationDra
   reproductionPlan: { steps: [{ id: "install", title: "Install", status: "DOCUMENTED", command: "pip install numpy" }, { id: "data", status: "MISSING" }, { id: "model", status: "MISSING" }] } };
 const review = { entryId: entrypoints[0].id, referenceId: draft.references[0].id, outputId: draft.outputs[0].id, confirmed: true };
 const options = candidateOptions(report, review);
+assert.deepEqual(suggestCandidate(report), { ...review, confirmed: false });
+assert.equal(suggestCandidate({ ...report, evaluationDraft: { ...draft, outputs: [...draft.outputs, { ...draft.outputs[0], id: "duplicate-output" }] } }), null, "Ambiguous candidates must not be guessed");
 assert.deepEqual(draft.references.map(({ value, entryId }) => [value, entryId]), [[0.91, "evaluation-1"], [0.82, "evaluation-2"]]);
 assert.equal(draft.outputs[0].evidence.line, 4);
 assert.equal(options.metricTarget, 0.91);
@@ -40,6 +42,7 @@ const table = buildEvaluationDraft({ readme: "README.md", readmeText: "| Dataset
 assert.equal(table.references[0].value, 98);
 assert.equal(table.references[0].unit, "percent");
 assert.equal(table.references[0].entryId, null, "Table rows cannot silently be linked to a command");
+assert.equal(suggestCandidate({ ...report, evaluationDraft: table }), null, "Unassociated table rows must not be auto-selected");
 assert.throws(() => candidateOptions({ ...report, evaluationDraft: table }, { ...review, referenceId: table.references[0].id }), /units differ/);
 assert.throws(() => candidateOptions({ ...report, evaluationDraft: table }, { ...review, referenceId: table.references[1].id }), /metric types differ/);
 const prefixedTable = buildEvaluationDraft({ readme: "README.md", readmeText: "Model | **Test Accuracy**\n--- | ---\nIris | 0.980", entrypoints, files });
@@ -67,6 +70,7 @@ console.log("PASS  generated Evaluation candidates, source association, review g
 const argumentDraft = buildEvaluationDraft({ readme: "README.md", readmeText: "", entrypoints: [], files: [{ path: "evaluate.py", text:
   `parser = ArgumentParser()\nparser.add_argument("checkpoint", help="Model path")\nparser.add_argument(\n "--config", required=True, help="Config file"\n)\nparser.add_argument("--seed", default=42, type=int)\nparser.add_argument("--gpu", action="store_true")\npath = "configs/base.yaml"` }], filePaths: ["evaluate.py", "configs/base.yaml"] });
 const argumentEntry = argumentDraft.entries[0];
+assert.equal(suggestCandidate({ ...report, evaluationDraft: argumentDraft }), null, "Required arguments must block automatic suggestion");
 assert.deepEqual(candidateCommand(argumentEntry).missing, ["checkpoint", "--config"]);
 assert.equal(argumentEntry.arguments[1].evidence.line, 3);
 assert.equal(argumentEntry.arguments[2].default, "42");
@@ -105,6 +109,7 @@ if (process.argv.includes("--docker")) {
     return result;
   }
   const scanned = await request("/api/scan", { url: "https://github.com/KTS-o7/AIML-Lab" });
+  assert.equal(scanned.evaluationDraft.suggestion, null, "Two valid repository entries must remain a user choice");
   const entry = scanned.evaluationDraft.entries.find((entry) => entry.command.includes("KNNAlgorithm/KNNAlgo.py"));
   const ref = scanned.evaluationDraft.references.find((reference) => reference.entryId === entry.id);
   const output = scanned.evaluationDraft.outputs.find((output) => output.entryIds.includes(entry.id));
