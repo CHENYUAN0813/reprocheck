@@ -213,6 +213,7 @@ const visibleRunLog = (log) => log?.replace(/^::reprocheck-evidence::.*$/gm, "[S
 
 function PaperProvenance({ report }) {
   const provenance = report.paperProvenance;
+  const workflow = report.paperWorkflowDraft;
   if (!provenance) return null;
   const draft = report.evaluationDraft;
   const entry = provenance.candidate && draft.entries.find((item) => item.id === provenance.candidate.entryId);
@@ -228,6 +229,15 @@ function PaperProvenance({ report }) {
     {provenance.workflowHints?.length > 0 && <div className="runner-result"><h3>Documented paper workflow hints</h3><ul>
       {provenance.workflowHints.map((item) => <li key={item.id}><code>{item.command}</code> · <EvidenceLink report={report} evidence={item.evidence} /></li>)}
     </ul><p className="runner-note">These commands are evidence only until ReproCheck can safely associate their inputs and metric outputs.</p></div>}
+    {workflow?.adapters.length > 0 && <div className="runner-result"><h3>Generated workflow adapters</h3>
+      {workflow.adapters.map((adapter) => <details key={adapter.id}><summary>{adapter.title} · {adapter.status.replaceAll("_", " ")}</summary>
+        <ol>{adapter.steps.map((step) => <li key={step.id}><strong>{step.role}</strong> · <code>{step.command}</code> · {step.supported ? "source target validated" : "blocked"}</li>)}</ol>
+        {adapter.gaps.length > 0 && <p className="runner-note">Missing: {adapter.gaps.join("; ")}.</p>}
+        <button className="download-button" type="button" onClick={() => downloadJson({ schemaVersion: 1, repository: report.repository, commit: report.commit,
+          paperSourceId: provenance.candidate?.sourceId ?? (provenance.sources.length === 1 ? provenance.sources[0]?.id : null), adapter }, `reprocheck-paper-adapter-${adapter.id}.json`)}>Download adapter draft</button>
+      </details>)}
+      {workflow.warnings.map((warning) => <p className="runner-note" key={warning}>{warning}</p>)}
+    </div>}
     {provenance.candidate && <div className="runner-result"><h3>Unconfirmed reproduction candidate</h3>
       <p><code>{entry.command}</code></p>
       <p className="hint">Metric: {output.metricKey} · README target: {reference.value} {reference.unit}.</p>

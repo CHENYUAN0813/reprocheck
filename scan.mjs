@@ -1,4 +1,5 @@
 import { buildEvaluationDraft, discoverPaperProvenance, suggestCandidate } from "./evaluation-config.mjs";
+import { buildPaperWorkflowDraft } from "./paper-workflow.mjs";
 
 function expectEqual(actual, expected) {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -508,6 +509,7 @@ function standalonePlan(report) {
     workflows: report.workflows,
     evaluationDraft: report.evaluationDraft,
     paperProvenance: report.paperProvenance,
+    paperWorkflowDraft: report.paperWorkflowDraft,
   };
 }
 
@@ -610,14 +612,16 @@ export async function scan(input, token, pinnedCommit) {
     )
     .find(Boolean);
   const license = rootFiles.find(isLicenseFile);
+  const makefile = rootFiles.find((path) => /^makefile$/i.test(path));
   const tests = paths.find(isTestPath);
   const ciWorkflow = filePaths.find((path) =>
     /^\.github\/workflows\/.+\.ya?ml$/i.test(path),
   );
-  const [readmeText, dependencyText, pythonVersionText] = await Promise.all([
+  const [readmeText, dependencyText, pythonVersionText, makefileText] = await Promise.all([
     readRepositoryFile(base, readme, commit.sha, token),
     readRepositoryFile(base, dependencies, commit.sha, token),
     readRepositoryFile(base, pythonVersion, commit.sha, token),
+    readRepositoryFile(base, makefile, commit.sha, token),
   ]);
   const installCommand = findInstallCommand(readmeText);
   const runCommands = findRunCommands(readmeText);
@@ -919,6 +923,7 @@ export async function scan(input, token, pinnedCommit) {
   };
   evaluationDraft.suggestion = suggestCandidate(report);
   report.paperProvenance = discoverPaperProvenance({ readme, readmeText, evaluationDraft });
+  report.paperWorkflowDraft = buildPaperWorkflowDraft({ provenance: report.paperProvenance, makefile, makefileText, filePaths });
   return report;
 }
 
