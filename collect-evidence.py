@@ -47,7 +47,10 @@ def observe_file(name=None):
         if result["size"] > 64 * 1024 * 1024:
             raise ValueError("Output evidence is limited to files up to 64 MB")
         with path.open("rb") as stream:
-            result["sha256"] = hashlib.file_digest(stream, "sha256").hexdigest()
+            digest = hashlib.sha256()
+            for block in iter(lambda: stream.read(1 << 20), b""):
+                digest.update(block)
+            result["sha256"] = digest.hexdigest()
         return result
     except Exception as error:
         result["error"] = str(error)
@@ -70,7 +73,8 @@ def observe_benchmark():
         if not path.is_relative_to(root) or path.stat().st_size > 1024 * 1024:
             raise ValueError("Reference must be a repository text file up to 1 MB")
         text = path.read_text().splitlines()[source["line"] - 1]
-        reference.update(text=text, value=float(text.strip().strip("|").split("|")[-1].strip()))
+        cells = [cell.strip() for cell in text.strip().strip("|").split("|")]
+        reference.update(text=text, value=float(cells[source.get("valueIndex", -1)]))
         if text == source["text"] and reference["value"] == source["value"]:
             reference["status"] = "PASSED"
     except Exception as error:

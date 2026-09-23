@@ -12,7 +12,7 @@ import {
   inspectLockedImage,
   listRuns,
   rewritePackageIndex,
-  reviewedBenchmark,
+  reviewedCaseById,
   startRun,
   summarizeSteps,
   validateExecutionOptions,
@@ -144,7 +144,7 @@ async function handleApi(request, response) {
 
     const executionOptions = validateExecutionOptions(input.executionOptions);
 
-    const report = await scan(input.url, process.env.GITHUB_TOKEN, executionOptions.benchmarkId ? reviewedBenchmark.commit : undefined);
+    const report = await scan(input.url, process.env.GITHUB_TOKEN, executionOptions.benchmarkId ? reviewedCaseById.get(executionOptions.benchmarkId).commit : undefined);
     if (url.pathname === "/api/scan") {
       sendJson(response, 200, report);
       return true;

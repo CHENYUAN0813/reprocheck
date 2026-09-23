@@ -17,10 +17,11 @@ for (const benchmark of reviewedBenchmarks) {
   const caseReport = { ...report, repository: benchmark.repository, commit: benchmark.commit };
   const casePreview = buildPreflight(caseReport, "evaluation", { available: true }, "readme", caseOptions);
   assert.equal(casePreview.benchmark.datasetName, benchmark.datasetName);
+  assert.equal(casePreview.limits.image, benchmark.image);
   assert.equal(casePreview.executionOptions.metricTarget, benchmark.reference.value);
   assert.equal(casePreview.executionOptions.metricTolerance, benchmark.reference.tolerance);
-  assert.equal(casePreview.benchmark.assets.filter((asset) => asset.role === "dataset").length, 1);
-  assert.equal(casePreview.benchmark.assets.filter((asset) => asset.role === "checkpoint").length, 1);
+  assert.ok(casePreview.benchmark.assets.length > 0 && casePreview.benchmark.assets.length <= 10);
+  assert.equal(casePreview.benchmark.assets.filter((asset) => asset.role === "checkpoint").length, benchmark.adapter === "bthowen" ? 1 : 0);
 }
 assert.throws(() => validateExecutionOptions({ benchmarkId: "invented" }), /Unknown/);
 assert.throws(() => buildPreflight(report, "evaluation", { available: true }, "readme", { ...options, metricTarget: 0 }), /fixed/);
@@ -99,12 +100,19 @@ if (process.argv.includes("--docker")) {
   assert.equal(await inspectLockedImage(result.recipe.imageId), true);
   for (const benchmark of reviewedBenchmarks.slice(1)) {
     const caseOptions = validateExecutionOptions({ benchmarkId: benchmark.id });
-    const caseResult = await execute(buildPreflight(scanned, "evaluation", runtime, "readme", caseOptions));
+    const caseReport = { ...scanned, repository: benchmark.repository, commit: benchmark.commit };
+    const caseResult = await execute(buildPreflight(caseReport, "evaluation", runtime, "readme", caseOptions));
     assert.equal(caseResult.status, "SUCCEEDED", caseResult.log.slice(-6000));
     assert.equal(caseResult.verification.status, "VERIFIED", JSON.stringify(caseResult.verification));
     assert.equal(caseResult.evaluation.status, "MATCHED_REFERENCE");
-    assert.equal(caseResult.evaluation.output.data.train_samples, benchmark.split.trainSamples);
-    assert.equal(caseResult.evaluation.output.data.test_samples, benchmark.split.testSamples);
+    if (benchmark.split) {
+      assert.equal(caseResult.evaluation.output.data.train_samples, benchmark.split.trainSamples);
+      assert.equal(caseResult.evaluation.output.data.test_samples, benchmark.split.testSamples);
+    } else {
+      assert.equal(caseResult.evaluation.output.data.train_rows, 176139);
+      assert.equal(caseResult.evaluation.output.data.held_out_users, 22311);
+      assert.equal(caseResult.evaluation.output.data.ndcg10_4dp, benchmark.reference.value);
+    }
     assert.ok(Math.abs(caseResult.metric.value - benchmark.reference.value) <= benchmark.reference.tolerance);
     assert.ok(caseResult.assets.every((asset) => asset.status === "PASSED"));
   }
@@ -118,5 +126,5 @@ if (process.argv.includes("--docker")) {
   assert.equal(rejected.status, "FAILED");
   assert.equal(rejected.evaluation.status, "INCOMPLETE");
   assert.ok(!rejected.log.includes("::reprocheck-step::evaluation-benchmark\n"), "Mismatched checkpoint must block the pickle/evaluation entry");
-  console.log(`PASS  real Iris benchmark 49/50, all asset/source locks, exact replay and checkpoint-mismatch execution gate; baseline ${result.id}`);
+  console.log(`PASS  reviewed paper benchmarks, all asset/source locks, exact replay and checkpoint-mismatch execution gate; baseline ${result.id}`);
 }

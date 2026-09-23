@@ -1,0 +1,38 @@
+{
+  "id": "sequential-capacity-probes-beauty-mc",
+  "adapter": "capacity-probes",
+  "image": "python:3.10.12",
+  "title": "Sequential Capacity Probes · Beauty / MC · Table 1",
+  "repository": "spotify-research/sequential-capacity-probes",
+  "commit": "705710f78abd613cd8ee139f7435d813eef2f8ab",
+  "datasetName": "Beauty",
+  "dataset": "Amazon Beauty public sequence data; official eSASRec builder; 176,139 train interactions / 22,311 held-out users",
+  "model": "Paper's deterministic empirical first-order Markov Chain (MC); built and evaluated from scratch on CPU",
+  "metricKey": "ndcg10_4dp",
+  "reference": {
+    "file": "README.md",
+    "line": 30,
+    "text": "| Beauty | .0492 | .0481 | .0531 | .0537 | .0524 | .0605 | .0635 |",
+    "valueIndex": 1,
+    "url": "https://github.com/spotify-research/sequential-capacity-probes/blob/705710f78abd613cd8ee139f7435d813eef2f8ab/README.md#L30",
+    "value": 0.0492,
+    "tolerance": 0,
+    "scope": "RecSys 2026 Table 1 Beauty/MC full-catalogue NDCG@10 only; exact four-decimal protocol; not the remaining datasets, factorized methods or GPU transformer runs"
+  },
+  "installCommand": "python -m pip install --only-binary=:all: --index-url https://pypi.org/simple numpy==1.26.4 pandas==2.3.3 scipy==1.12.0 rectools==0.13.0 PyYAML==6.0.2 requests==2.34.2",
+  "compatibility": {
+    "note": "Official Python 3.10.12 CPU path. The adapter calls the authors' original run_model, MC implementation and official RecTools metric plus their independent metric. It excludes unused Torch/CUDA and therefore does not call the full-matrix verifier, whose global environment contract requires Torch even for MC. Original model, ranking, metric and pinned eSASRec data builder remain unchanged."
+  },
+  "assets": [
+    {"role": "reference", "path": "README.md", "sha256": "075c9c39a28eef360ec0902a11ff1eaa54ffbc6d05ac98d2067e1e8b73fb5b57"},
+    {"role": "configuration", "path": "configs/table1.json", "sha256": "47143c8a582d5bbb5a90c6b66aa10cc14c79901f7424f11834404b74e8014a51"},
+    {"role": "runner", "path": "src/capacity_probes/core_runner.py", "sha256": "6c07f0b24ae263b253bc5fb3d440fc9106fc69c839e517709ea94290aa73e65d"},
+    {"role": "model", "path": "src/capacity_probes/models/mc.py", "sha256": "9178890c16e30db0cf1f7c238b4b174ecfa20336381b83c475383e0bd56bb644"},
+    {"role": "metrics", "path": "src/capacity_probes/metrics.py", "sha256": "d30784903870a377f719ab09a4ce168a33a066aded12712336eccdbcaded8ffc"},
+    {"role": "sequences", "path": "src/capacity_probes/sequences.py", "sha256": "4296e88e79c059ca6abab268cb400ecf48578837d913bdc96586ef262f2cd6f1"},
+    {"role": "ranking", "path": "src/capacity_probes/ranking.py", "sha256": "2487c55821904f301de8cea202c9fda2d8254f45a9eb3b51dad79f3fa4e95ab3"},
+    {"role": "raw-dataset", "path": ".external/transformer_benchmark/data/raw/s3_beauty/beauty.txt", "sha256": "226cce9c3105299ca0db9615d7d3fb32b3175e90da43100ae352599f0f0107b8"},
+    {"role": "train-split", "path": "data/processed/s3_beauty/leave_one_out/train.csv", "sha256": "956357e585c8c4ddf50ff4dd4331d7e046c1b42b8eaa13cc21c8b9dccee89795"},
+    {"role": "holdout-split", "path": "data/processed/s3_beauty/leave_one_out/holdout.csv", "sha256": "38dbedf2dedc6951be1d8a3d4f6b2d93aa7129ce5d4f0fcf0d17bee0e315f43a"}
+  ]
+}

@@ -2,15 +2,17 @@ import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 import cpuEvaluationSource from "../examples/evaluate-micrograd.py?raw";
-import { reviewedBenchmarks, reviewedTrainings, reviewedCaseById } from "../examples/bthowen-cases.mjs";
+import { reviewedBenchmarks, reviewedTrainings, reviewedCaseById } from "../examples/reviewed-cases.mjs";
 import publishedEvaluationSource from "../examples/evaluate-bthowen.py?raw";
+import capacityEvaluationSource from "../examples/evaluate-capacity-probes.py?raw";
 import trainingSource from "../examples/train-bthowen.py?raw";
 import { candidateOptions, candidateWorkflow } from "../evaluation-config.mjs";
 import { experimentDraft, experimentExecutionOptions, MODEL_EXPORT_LIMIT } from "../experiment-config.mjs";
 
 const emptyAcceptance = { expectedText: "", outputFile: "", metricKey: "", metricOperator: "gte", metricTarget: "", metricTolerance: "0", dataset: "", model: "", reference: "", assetsInEntry: false };
 const cpuEvaluationCommand = `python -c 'exec(${JSON.stringify(cpuEvaluationSource).replaceAll("'", "'\"'\"'")})'`;
-const publishedEvaluationCommand = `python -c 'exec(${JSON.stringify(publishedEvaluationSource).replaceAll("'", "'\"'\"'")})' evaluate`;
+const benchmarkSources = { bthowen: publishedEvaluationSource, "capacity-probes": capacityEvaluationSource };
+const benchmarkEvaluationCommand = (benchmark) => `python -c 'exec(${JSON.stringify(benchmarkSources[benchmark.adapter]).replaceAll("'", "'\"'\"'")})' evaluate`;
 
 const exampleParameters = [
   { name: "--epochs", default: "20", file: "train.py", line: 24 },
@@ -516,6 +518,7 @@ function App() {
     ?? null;
   const selectedCandidate = report.evaluationDraft?.entries.find((entry) => entry.id === acceptance.candidateReview?.entryId);
   const selectedReviewedCase = acceptance.benchmarkId ? reviewedCaseById.get(acceptance.benchmarkId) : null;
+  const selectedBenchmarkSource = selectedReviewedCase ? benchmarkSources[selectedReviewedCase.adapter] : null;
   const displayedPlan = acceptance.experiment ? { title: acceptance.experiment.title, status: "USER_REVIEWED_EXPERIMENT", steps: [
     ...(acceptance.experiment.installCommand ? [{ id: "install", title: "Install reviewed dependencies", status: "USER_REVIEWED", command: acceptance.experiment.installCommand }] : []),
     ...(acceptance.experiment.prepareCommand ? [{ id: "prepare-data", title: "Prepare data", status: "USER_REVIEWED", command: acceptance.experiment.prepareCommand }] : []),
@@ -607,9 +610,9 @@ function App() {
     try {
       await runScan(targetUrl, benchmark.id);
       setSelectedWorkflow(benchmark.training ? "training" : "evaluation");
-      setQuickCommand(publishedEvaluationCommand);
+      setQuickCommand(benchmarkEvaluationCommand(benchmark));
       setAcceptance({ ...emptyAcceptance, benchmarkId: benchmark.id, expectedText: "published-benchmark-ok", outputFile: "benchmark-result.json",
-        metricKey: "accuracy", metricOperator: "eq", metricTarget: String(benchmark.reference.value), metricTolerance: String(benchmark.reference.tolerance),
+        metricKey: benchmark.metricKey ?? "accuracy", metricOperator: "eq", metricTarget: String(benchmark.reference.value), metricTolerance: String(benchmark.reference.tolerance),
         dataset: benchmark.dataset, model: benchmark.model, reference: benchmark.reference.url });
     } catch { /* The scan error is already displayed. */ }
   }
@@ -801,7 +804,7 @@ function App() {
             <p className="hint">Small synthetic held-out dataset + trained checkpoint. Loads a reviewed command; does not start execution.</p>
             {reviewedBenchmarks.map((benchmark) => <div key={benchmark.id}>
               <button className="download-button" type="button" onClick={() => loadPublishedBenchmark(benchmark.id)} disabled={executionBusy}>Load published {benchmark.datasetName} benchmark</button>
-              <p className="hint">Real UCI data + paper's pretrained model + original evaluation entry. Reference: {benchmark.reference.value} in the pinned README. Does not start execution.</p>
+              <p className="hint">Reviewed real-data paper case + original repository entry. Reference: {benchmark.reference.value} in the pinned README. Does not start execution.</p>
             </div>)}
             {reviewedTrainings.map((benchmark) => <div key={benchmark.id}>
               <button className="download-button" type="button" onClick={() => loadPublishedBenchmark(benchmark.id)} disabled={executionBusy}>Load {benchmark.datasetName} training reproduction</button>
@@ -991,11 +994,11 @@ function App() {
               <p>{selectedReviewedCase.dataset}</p>
               <p>{acceptance.model}</p>
               {selectedReviewedCase.training && <p className="runner-note">{selectedReviewedCase.training.scope}</p>}
-              <p><a href={selectedReviewedCase.reference.url} target="_blank" rel="noreferrer">Pinned reference: accuracy {selectedReviewedCase.reference.value} · tolerance {selectedReviewedCase.reference.tolerance}</a></p>
-              <p className="hint">Fixed output checks: published-benchmark-ok · fresh benchmark-result.json · accuracy = {selectedReviewedCase.reference.value} ± {selectedReviewedCase.reference.tolerance}.</p>
+              <p><a href={selectedReviewedCase.reference.url} target="_blank" rel="noreferrer">Pinned reference: {selectedReviewedCase.metricKey ?? "accuracy"} {selectedReviewedCase.reference.value} · tolerance {selectedReviewedCase.reference.tolerance}</a></p>
+              <p className="hint">Fixed output checks: published-benchmark-ok · fresh benchmark-result.json · {selectedReviewedCase.metricKey ?? "accuracy"} = {selectedReviewedCase.reference.value} ± {selectedReviewedCase.reference.tolerance}.</p>
               <p className="runner-note">{selectedReviewedCase.compatibility.note}</p>
               <p className="hint">Commands and expectations are fixed for this reviewed case. Choose another workflow or scan again to return to custom Evaluation.</p>
-              <details><summary>Review benchmark manifest and adapter source</summary><pre className="evaluation-source">{JSON.stringify(selectedReviewedCase, null, 2)}{"\n\n"}{publishedEvaluationSource}{selectedReviewedCase.training && <>{"\n\n"}{trainingSource}</>}</pre></details>
+              <details><summary>Review benchmark manifest and adapter source</summary><pre className="evaluation-source">{JSON.stringify(selectedReviewedCase, null, 2)}{"\n\n"}{selectedBenchmarkSource}{selectedReviewedCase.training && <>{"\n\n"}{trainingSource}</>}</pre></details>
             </div>}
             {["quick", "evaluation"].includes(activeWorkflow.id) && !acceptance.benchmarkId && (
               <fieldset className="run-options" disabled={optionsLocked}>

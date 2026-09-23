@@ -5,23 +5,26 @@ import { readFileSync } from "node:fs";
 import { getSavedRun, listSavedRuns, saveRun } from "./run-store.mjs";
 import { candidateWorkflow, captureMetricCommand, reviewedCandidate } from "./evaluation-config.mjs";
 import { MODEL_EXPORT_LIMIT, validateExperiment } from "./experiment-config.mjs";
-import { reviewedBenchmark, reviewedTraining, reviewedBenchmarks, reviewedTrainings, reviewedCaseById } from "./examples/bthowen-cases.mjs";
+import { reviewedBenchmark, reviewedTraining, reviewedBenchmarks, reviewedTrainings, reviewedCaseById } from "./examples/reviewed-cases.mjs";
 
-export { reviewedBenchmark, reviewedTraining, reviewedBenchmarks, reviewedTrainings };
+export { reviewedBenchmark, reviewedTraining, reviewedBenchmarks, reviewedTrainings, reviewedCaseById };
 
 const execFileAsync = promisify(execFile);
 const jobs = new Map();
 const LOG_LIMIT = 900_000;
 const collector = readFileSync(new URL("./collect-evidence.py", import.meta.url), "utf8");
-const benchmarkSource = readFileSync(new URL("./examples/evaluate-bthowen.py", import.meta.url), "utf8");
-const benchmarkCommand = (phase) => `python -c ${shellQuote(`exec(${JSON.stringify(benchmarkSource)})`)} ${phase}`;
+const benchmarkSources = {
+  bthowen: readFileSync(new URL("./examples/evaluate-bthowen.py", import.meta.url), "utf8"),
+  "capacity-probes": readFileSync(new URL("./examples/evaluate-capacity-probes.py", import.meta.url), "utf8"),
+};
+const benchmarkCommand = (benchmark, phase) => `python -c ${shellQuote(`exec(${JSON.stringify(benchmarkSources[benchmark.adapter])})`)} ${phase}`;
 const trainingSource = readFileSync(new URL("./examples/train-bthowen.py", import.meta.url), "utf8");
 const trainingCommand = () => `python -c ${shellQuote(`exec(${JSON.stringify(trainingSource)})`)}`;
 
 function benchmarkOptions(id = reviewedBenchmark.id) {
   const benchmark = reviewedCaseById.get(id);
-  return { benchmarkId: benchmark.id, quickCommand: benchmarkCommand("evaluate"), expectedText: "published-benchmark-ok",
-    outputFile: "benchmark-result.json", metricKey: "accuracy", metricOperator: "eq", metricTarget: benchmark.reference.value,
+  return { benchmarkId: benchmark.id, quickCommand: benchmarkCommand(benchmark, "evaluate"), expectedText: "published-benchmark-ok",
+    outputFile: "benchmark-result.json", metricKey: benchmark.metricKey ?? "accuracy", metricOperator: "eq", metricTarget: benchmark.reference.value,
     metricTolerance: benchmark.reference.tolerance, evaluation: { dataset: benchmark.dataset, model: benchmark.model,
       reference: benchmark.reference.url, assetsInEntry: false } };
 }
@@ -115,9 +118,9 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
     if (workflowId !== (benchmark.training ? "training" : "evaluation") || report.repository !== benchmark.repository || report.commit !== benchmark.commit) throw new Error("Reviewed benchmark requires its pinned repository, commit and matching Training/Evaluation workflow");
     workflow = { ...workflow, status: "REVIEWED_BENCHMARK", steps: [
       { id: "install", title: "Install reviewed Python 3.11 CPU compatibility dependencies", status: "DOCUMENTED", command: benchmark.installCommand },
-      { id: "prepare-assets", title: "Prepare hash-locked UCI data and explicit compatibility patch", status: "DOCUMENTED", command: benchmarkCommand("prepare") },
+      { id: "prepare-assets", title: "Prepare hash-locked public research data", status: "DOCUMENTED", command: benchmarkCommand(benchmark, "prepare") },
       ...(benchmark.training ? [{ id: "training-benchmark", title: `Train original Table 3 ${benchmark.datasetName} model from scratch and save checkpoint`, status: "DOCUMENTED", command: trainingCommand() }] : []),
-      { id: "evaluation-benchmark", title: benchmark.training ? "Evaluate newly trained checkpoint with the original entry" : `Run original ${benchmark.datasetName} evaluation entry and collect its score`, status: "DOCUMENTED", command: benchmarkCommand("evaluate") },
+      { id: "evaluation-benchmark", title: benchmark.training ? "Evaluate newly trained checkpoint with the original entry" : `Run original ${benchmark.datasetName} evaluation entry and collect its score`, status: "DOCUMENTED", command: benchmarkCommand(benchmark, "evaluate") },
     ] };
   }
   if (experiment) workflow = { id: "training", title: experiment.title, status: "USER_REVIEWED_EXPERIMENT", steps: [
@@ -190,7 +193,7 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
       cpus: 2,
       hostMounts: false,
       networkAccess: true,
-      image: "python:3.11",
+      image: benchmark?.image ?? "python:3.11",
     },
   };
 }

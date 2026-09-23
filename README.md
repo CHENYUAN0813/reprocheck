@@ -32,9 +32,9 @@ Open `http://127.0.0.1:5173`, submit a public GitHub repository URL, and downloa
 
 ## Local isolated execution
 
-Start Docker Desktop, scan a repository, choose **Quick verification** or **Evaluation**, and select **Check local runner**. **Training** also accepts a confirmed custom end-to-end experiment configuration; **Load Iris training reproduction** retains the separately reviewed fixed real-paper case. ReproCheck re-scans the pinned commit before allowing execution and shows every command for review. Training without either configuration remains disabled.
+Start Docker Desktop, scan a repository, choose **Quick verification** or **Evaluation**, and select **Check local runner**. **Training** also accepts a confirmed custom end-to-end experiment configuration; the BTHOWeN training buttons retain separately reviewed fixed real-paper cases. ReproCheck re-scans the pinned commit before allowing execution and shows every command for review. Training without either configuration remains disabled.
 
-After explicit confirmation, commands run in a temporary `python:3.11` container with 2 CPUs, 2 GB of memory, a 10-minute timeout, a 256-process limit, no host filesystem mounts, and no host credentials. Network access remains enabled because public source code, dependencies, and model files may need to be downloaded. Runs can be monitored and cancelled from the page, with per-step status and the exact failure stage.
+After explicit confirmation, commands run in a temporary container (default `python:3.11`; reviewed cases may pin another version) with 2 CPUs, 2 GB of memory, a 10-minute timeout, a 256-process limit, no host filesystem mounts, and no host credentials. Network access remains enabled because public source code, dependencies, and model files may need to be downloaded. Runs can be monitored and cancelled from the page, with per-step status and the exact failure stage.
 
 If dependency installation fails or times out while using a README-provided package index, the run can be retried against official PyPI. The retry keeps the repository commit and dependency declarations unchanged, replaces only pip index options, and records the override in the run result.
 
@@ -122,6 +122,14 @@ Fixed-seed local runs on 2026-09-23 all executed successfully but fell outside t
 
 `npm run test:training` opts into real Docker training, model export/persistence, original held-out evaluation, honest reference classification and an incorrect-code-hash case that must stop before training. `npm test` covers the route, fixed parameters/conditions, model freshness, download hash validation and pre-training gates offline.
 
+### Second reviewed paper: Sequential Capacity Probes
+
+**Load published Beauty benchmark** selects the Beauty/MC cell from Spotify Research's accepted RecSys 2026 paper, [“Do Sequential Recommendation Benchmarks Really Require Higher-Order Sequence Modelling?”](https://github.com/spotify-research/sequential-capacity-probes). The case pins repository commit `705710f`, the paper's pinned eSASRec data builder, the public S3Rec Beauty source, generated train/holdout hashes, seven source/configuration files and the exact Table 1 row.
+
+The run uses the authors' original deterministic empirical Markov Chain builder, full-catalogue ranking, RecTools NDCG@10 calculation and independent NDCG implementation under exact Python 3.10.12. It installs only the CPU code's imported dependencies. The adapter deliberately does not invoke the repository's full-matrix environment verifier because that requires unused Torch 2.7.1/CUDA even for MC; this compatibility boundary is displayed before execution and retained in evidence. No model, ranking or metric code is replaced.
+
+The 2026-09-23 local acceptance run completed in **22.796 seconds**. Original official NDCG@10 was **0.049176744331261055** and the paper's exact-four-decimal protocol produced **0.0492**, matching the pinned Table 1 value with zero tolerance. All ten code/data/reference identities passed. This is one deterministic CPU cell, not reproduction of the other four datasets, factorized methods, GPU transformer runs or the full paper.
+
 ### Configurable end-to-end CPU experiments
 
 The web log replaces the large structured-evidence/Base64 line with a short notice; complete evidence and model bytes remain in the downloadable record.
@@ -151,7 +159,7 @@ GitHub Actions runs the self-tests and production build on every push and pull r
 
 For the opt-in real Docker integration check, start the local server and run `npm run test:docker`. It scans the pinned Micrograd source, executes scalar-autodiff and held-out CPU Evaluation examples, checks checkpoint reload and reference tolerance, reloads evidence in a new process, replays frozen recipes, reports output differences, and checks that deliberately incorrect expectations/references fail. It does not run Micrograd's default pytest suite or reproduce a published benchmark.
 
-For the opt-in published suite, run `npm run test:benchmark` with Docker running. It downloads public source/data and CPU wheels, evaluates all three pretrained models, verifies their counts and every expected identity, checks Iris frozen replay, and proves a deliberately mismatched checkpoint hash prevents evaluation. `npm run test:training` trains and evaluates all three fresh models and preserves honest `OUTSIDE_REFERENCE` classifications. No repository code or pickle runs on the host. Ordinary `npm test` checks preset identity/immutability/evidence gates without network or Docker.
+For the opt-in published suite, run `npm run test:benchmark` with Docker running. It evaluates three BTHOWeN pretrained models plus the Sequential Capacity Probes Beauty/MC cell, verifies their counts and every expected identity, checks Iris frozen replay, and proves a deliberately mismatched checkpoint hash prevents evaluation. `npm run test:training` trains and evaluates all three fresh BTHOWeN models and preserves honest `OUTSIDE_REFERENCE` classifications. No repository code or pickle runs on the host. Ordinary `npm test` checks preset identity/immutability/evidence gates without network or Docker.
 
 ## Current checks
 
@@ -175,7 +183,7 @@ For the opt-in published suite, run `npm run test:benchmark` with Docker running
 
 - Public GitHub repositories only
 - README, the primary dependency file, and up to five likely evaluation/training/configuration files are analyzed; other files are checked by path
-- Quick verification, CPU-limited Evaluation, confirmed configuration-driven CPU Training and the reviewed BTHOWeN Training cases run only through the local Docker-backed server; unconfigured Training and automatic arbitrary-paper reproduction remain disabled
+- Quick verification, CPU-limited Evaluation, confirmed configuration-driven CPU Training and reviewed paper cases run only through the local Docker-backed server; unconfigured Training and automatic arbitrary-paper reproduction remain disabled
 - Hosted Sites deployments provide static scanning but not Docker execution
 - Local run history is single-user JSON storage; interrupted runs cannot recover their final outcome after a server restart
 - Official PyPI override supports a single pip install command, not arbitrary compound shell/Poetry/uv installs
