@@ -1,5 +1,6 @@
 import { buildEvaluationDraft, discoverPaperProvenance, suggestCandidate } from "./evaluation-config.mjs";
 import { buildPaperWorkflowDraft } from "./paper-workflow.mjs";
+import { buildProtocolLock } from "./protocol-lock.mjs";
 
 function expectEqual(actual, expected) {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -510,6 +511,7 @@ function standalonePlan(report) {
     evaluationDraft: report.evaluationDraft,
     paperProvenance: report.paperProvenance,
     paperWorkflowDraft: report.paperWorkflowDraft,
+    protocolLock: report.protocolLock,
   };
 }
 
@@ -924,6 +926,8 @@ export async function scan(input, token, pinnedCommit) {
   evaluationDraft.suggestion = suggestCandidate(report);
   report.paperProvenance = discoverPaperProvenance({ readme, readmeText, evaluationDraft });
   report.paperWorkflowDraft = buildPaperWorkflowDraft({ provenance: report.paperProvenance, makefile, makefileText, filePaths });
+  report.protocolLock = buildProtocolLock({ report, treeEntries: tree.tree, readme, makefile, dependencyFile: dependencies, dependencyVersions,
+    pythonVersionFile: pythonVersion, pythonVersionResult, seedConfiguration });
   return report;
 }
 

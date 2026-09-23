@@ -247,6 +247,28 @@ function PaperProvenance({ report }) {
   </section>;
 }
 
+function ProtocolLock({ report }) {
+  const lock = report.protocolLock;
+  if (!lock) return null;
+  return <section className="runner" aria-labelledby="protocol-lock-title">
+    <div className="runner-heading"><div><p className="eyebrow">Experiment identity</p><h2 id="protocol-lock-title">Protocol lock</h2>
+      <p>Commit-pinned source, environment declarations, paper claims and asset identities.</p></div>
+      <span className={`status status-${lock.status.toLowerCase()}`}>{lock.status.replaceAll("_", " ")}</span></div>
+    <div className="runner-result"><dl className="evaluation-summary">
+      <dt>Lock ID</dt><dd><code>{lock.lockId}</code></dd>
+      <dt>Source files pinned</dt><dd>{lock.sourceFiles.length}</dd>
+      <dt>Declared paths</dt><dd>{lock.declaredAssets.length}</dd>
+      <dt>Python</dt><dd>{lock.environment.python?.value ?? "not exactly pinned"}</dd>
+      <dt>Dependencies</dt><dd>{lock.environment.dependencies?.lockFile ? "lock file" : lock.environment.dependencyLocked ? "exact direct pins" : "not locked"}</dd>
+    </dl></div>
+    {lock.gaps.length > 0 && <div className="runner-result"><h3>Unresolved lock requirements</h3><ul>{lock.gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul></div>}
+    <details><summary>Source and asset identities</summary><pre className="evaluation-source">{JSON.stringify({ sourceFiles: lock.sourceFiles, declaredAssets: lock.declaredAssets,
+      seedEvidence: lock.seedEvidence, parameters: lock.parameters }, null, 2)}</pre></details>
+    {lock.warnings.map((warning) => <p className="runner-note" key={warning}>{warning}</p>)}
+    <button className="download-button" type="button" onClick={() => downloadJson(lock, `reprocheck-protocol-lock-${report.commit.slice(0, 7)}.json`)}>Download protocol lock</button>
+  </section>;
+}
+
 function CandidateConfig({ report, disabled, onApply }) {
   const draft = report.evaluationDraft;
   const suggested = draft.suggestion ?? suggestCandidate(report);
@@ -913,6 +935,7 @@ function App() {
         </section>
 
         {!isExample && <PaperProvenance report={report} />}
+        {!isExample && <ProtocolLock report={report} />}
 
         {displayedPlan && (
           <section className="plan" aria-labelledby="plan-title">
