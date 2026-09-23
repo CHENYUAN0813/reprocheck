@@ -1,10 +1,106 @@
-const metricNames = "accuracy|acc|precision|recall|f1(?:[-_ ]score)?|mse|mae|rmse|loss|perplexity";
+const cutoff = "(?:\\s*[@_-]?\\s*\\d+)?";
+const metricNames = `accuracy|acc|precision${cutoff}|recall${cutoff}|f1(?:[-_ ]score)?${cutoff}|ndcg${cutoff}|mrr${cutoff}|map${cutoff}|hit(?:[-_ ]?rate)?${cutoff}|auc|mse|mae|rmse|loss|perplexity`;
 const number = "[-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:e[-+]?\\d+)?";
 const metricKey = (label) => label.toLowerCase().replace(/[^\w]+/g, "_").replace(/^_|_$/g, "");
 const tableMetric = (label) => label.replace(/[*`]/g, "").match(new RegExp(`^(?:(?:test|train(?:ing)?|validation|val|software|top[- ]?[15])\\s+)?(${metricNames})(?:\\s*\\(%\\))?$`, "i"))?.[1];
-const metricType = (label) => label.replaceAll("_", " ").match(new RegExp(`\\b(${metricNames})\\b`, "i"))?.[1]?.toLowerCase().replace(/^acc$/, "accuracy").replace(/^f1(?:[-_ ]score)?$/, "f1_score");
+const metricType = (label) => label.replaceAll("_", " ").match(new RegExp(`\\b(${metricNames})\\b`, "i"))?.[1]?.toLowerCase()
+  .replace(/^acc$/, "accuracy").replace(/^f1(?:[-_ ]score)?/, "f1_score").replace(/\\s*[@_-]?\\s*(\\d+)$/, "_$1").replace(/[ -]+/g, "_");
 const source = (file, line, text) => ({ file, line, text: text.trim().slice(0, 500) });
 const quote = (text) => `'${text.replaceAll("'", "'\"'\"'")}'`;
+
+function paperSource(raw) {
+  const value = raw.trim().replace(/[.,;]+$/, "");
+  const doi = value.match(/^doi:\s*(10\.\d{4,9}\/[\w./:;()_-]+)$/i)?.[1];
+  if (doi) return { id: `doi:${doi.toLowerCase()}`, provider: "DOI", url: `https://doi.org/${doi}` };
+  let url;
+  try { url = new URL(value.replace(/[)>]+$/, "")); } catch { return null; }
+  const host = url.hostname.toLowerCase().replace(/^www\./, "");
+  if (host === "arxiv.org") {
+    const id = url.pathname.match(/^\/(?:abs|pdf)\/([\w.-]+\/\d{7}|\d{4}\.\d{4,5}(?:v\d+)?)(?:\.pdf)?$/i)?.[1];
+    return id ? { id: `arxiv:${id.toLowerCase()}`, provider: "arXiv", url: `https://arxiv.org/abs/${id}` } : null;
+  }
+  if (host === "openreview.net") {
+    const id = url.searchParams.get("id");
+    return id ? { id: `openreview:${id}`, provider: "OpenReview", url: `https://openreview.net/forum?id=${encodeURIComponent(id)}` } : null;
+  }
+  if (host === "doi.org" && /^\/10\.\d{4,9}\//i.test(url.pathname)) {
+    const id = decodeURIComponent(url.pathname.slice(1));
+    return { id: `doi:${id.toLowerCase()}`, provider: "DOI", url: `https://doi.org/${id}` };
+  }
+  const providers = { "aclanthology.org": "ACL Anthology", "proceedings.mlr.press": "PMLR", "papers.nips.cc": "NeurIPS",
+    "dl.acm.org": "ACM Digital Library", "ieeexplore.ieee.org": "IEEE Xplore" };
+  if (!providers[host]) return null;
+  url.hash = "";
+  return { id: `${host}:${url.pathname}${url.search}`, provider: providers[host], url: url.toString() };
+}
+
+export function discoverPaperProvenance({ readme, readmeText, evaluationDraft }) {
+  const sources = [];
+  const seen = new Set();
+  const add = (raw, label, line, text) => {
+    const normalized = paperSource(raw);
+    if (!normalized || seen.has(normalized.id) || sources.length >= 12) return;
+    seen.add(normalized.id);
+    sources.push({ ...normalized, kind: "link", label: label?.replace(/[*_`]/g, "").trim().slice(0, 200) || normalized.provider,
+      evidence: source(readme, line, text) });
+  };
+  const lines = readmeText.split(/\r?\n/);
+  lines.forEach((line, index) => {
+    for (const match of line.matchAll(/\[([^\]]{1,240})\]\((https?:\/\/[^\s)]+)\)/gi)) {
+      if (match.index && line[match.index - 1] === "!") continue;
+      add(match[2], match[1], index + 1, line);
+    }
+    for (const match of line.matchAll(/https?:\/\/[^\s<>"']+/gi)) add(match[0], null, index + 1, line);
+    for (const match of line.matchAll(/\bdoi\s*:\s*(10\.\d{4,9}\/[\w./:;()_-]+)/gi)) add(`doi:${match[1]}`, null, index + 1, line);
+  });
+  const declare = (title, line, text) => {
+    const label = title.replace(/[*_`]/g, "").trim().replace(/,\s+[A-Z][\w.-]+(?:\s+[A-Z][\w.-]+)+.*$/, "").slice(0, 200);
+    if (label.length < 8 || sources.some((item) => item.label.toLowerCase() === label.toLowerCase())) return;
+    const id = `readme:${metricKey(label).slice(0, 100)}`;
+    if (seen.has(id) || sources.length >= 12) return;
+    seen.add(id);
+    sources.push({ id, provider: "README paper declaration", kind: "declaration", url: null, label,
+      evidence: source(readme, line, text) });
+  };
+  for (const match of readmeText.matchAll(/(?:official\s+code|implementation)\s+for\s+\*{0,2}[“"]([\s\S]{8,300}?)[”"]\*{0,2}/gi)) {
+    const line = readmeText.slice(0, match.index).split(/\r?\n/).length;
+    declare(match[1].replace(/\s+/g, " "), line, match[0]);
+  }
+  lines.forEach((line, index) => {
+    if (/code\s+to\s+accompany\s+(?:the\s+)?paper\s*:?\s*$/i.test(line)) {
+      const next = lines.slice(index + 1).findIndex((item) => item.trim() && !/^#+\s/.test(item));
+      if (next >= 0) declare(lines[index + 1 + next], index + 2 + next, lines[index + 1 + next]);
+    }
+  });
+  const workflowHints = [];
+  let section = "";
+  lines.forEach((line, index) => {
+    section = line.match(/^\s*#{1,6}\s+(.+?)\s*$/)?.[1] ?? section;
+    const command = line.trim().replace(/^[$>]\s*/, "").replace(/\s+#.*$/, "").trim();
+    if (/(?:reproduc|reported|results?|table)/i.test(section)
+      && /^(?:make\s+(?:run[\w-]*|verify|test)\b|(?:\.\/?venv\/bin\/)?python3?\s+\S+\.py\b)/i.test(command)
+      && !command.endsWith("\\")
+      && workflowHints.length < 12) workflowHints.push({ id: `paper-workflow-${index + 1}`, command, evidence: source(readme, index + 1, line) });
+  });
+  const suggestion = evaluationDraft?.suggestion;
+  const entry = suggestion && evaluationDraft.entries.find((item) => item.id === suggestion.entryId);
+  const contexts = entry ? evaluationDraft.contexts.filter((item) => item.entryIds.includes(entry.id)) : [];
+  const gaps = [];
+  if (!sources.length) gaps.push("paper source");
+  else if (sources.length > 1) gaps.push("paper source selection");
+  if (!suggestion) {
+    if (!evaluationDraft?.entries.length) gaps.push(workflowHints.length ? "supported adapter for documented paper workflow" : "evaluation entry");
+    if (!evaluationDraft?.outputs.length) gaps.push("labelled or file metric output");
+    if (!evaluationDraft?.references.length) gaps.push("exact README reference metric");
+    if (evaluationDraft?.entries.length && evaluationDraft.outputs.length && evaluationDraft.references.length) gaps.push("unambiguous command/output/reference association");
+  } else {
+    if (!contexts.some((item) => ["dataset", "split"].includes(item.kind))) gaps.push("dataset/split evidence");
+    if (!contexts.some((item) => item.kind === "model")) gaps.push("model/checkpoint evidence");
+  }
+  const candidate = sources.length === 1 && suggestion ? { sourceId: sources[0].id, ...suggestion } : null;
+  return { status: candidate ? (gaps.length ? "NEEDS_WORK" : "READY_FOR_REVIEW") : sources.length ? "SOURCE_FOUND" : "NOT_FOUND",
+    sources, workflowHints, candidate, gaps };
+}
 
 // ponytail: bounded literal argparse declarations; dynamic parser construction/multi-value actions need a language parser.
 function executionArguments(file) {
@@ -73,22 +169,32 @@ export function buildEvaluationDraft({ readme, readmeText, entrypoints, files, f
   const references = [];
   const lines = readmeText.split(/\r?\n/);
   let header = null;
+  let tableContext = null;
   for (let index = 0; index < lines.length && references.length < 24; index += 1) {
     const line = lines[index];
     const cells = line.includes("|") ? line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim()) : null;
+    const contextMetric = !cells && /\b(?:table|reported|results?|scores?|metrics?)\b/i.test(line)
+      ? line.match(new RegExp(`\\b(${metricNames})\\b`, "i"))?.[1] : null;
+    if (contextMetric) tableContext = { metric: contextMetric, line: index + 1 };
     if (cells?.length === 2 && tableMetric(cells[0]) && /^[\d.+-]/.test(cells[1])) {
       const value = cells[1].match(new RegExp(`^(${number})\\s*(%)?$`, "i"));
       if (value && Number.isFinite(Number(value[1]))) references.push({ id: `reference-${index + 1}-1`, metricKey: metricKey(tableMetric(cells[0])), label: cells[0], value: Number(value[1]),
         unit: value[2] ? "percent" : "as printed (no conversion)", entryId: null, evidence: source(readme, index + 1, line), note: "Metric/value table candidate; dataset/model correspondence requires review" });
       continue;
     }
-    if (cells && cells.some(tableMetric)) {
+    const nextCells = lines[index + 1]?.includes("|") ? lines[index + 1].trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim()) : null;
+    const tableStart = cells && nextCells?.length === cells.length && nextCells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s/g, "")));
+    if (cells && (cells.some(tableMetric) || (tableStart && tableContext && index + 1 - tableContext.line <= 4))) {
       header = cells; continue;
     }
-    if (!cells) header = null;
+    if (!cells && !contextMetric) {
+      header = null;
+      if (tableContext && index + 1 - tableContext.line > 4) tableContext = null;
+    }
     const associated = entries.filter((entry) => entry.evidence.file === readme && entry.evidence.line < index + 1
       && index + 1 - entry.evidence.line <= 24).sort((a, b) => b.evidence.line - a.evidence.line)[0];
     const add = (label, raw, percent, column, row = null, key = label) => {
+      if (references.length >= 24) return;
       const value = Number(raw);
       if (!Number.isFinite(value)) return;
       references.push({ id: `reference-${index + 1}-${column}`, metricKey: metricKey(key), value,
@@ -102,6 +208,7 @@ export function buildEvaluationDraft({ readme, readmeText, entrypoints, files, f
         const match = cells[column].replace(/[*`]/g, "").match(new RegExp(`^(${number})\\s*(%)?$`, "i"));
         const key = tableMetric(clean);
         if (key && match) add(clean, match[1], match[2] || /\(%\)/.test(clean), column, cells[0], key);
+        else if (column && match && tableContext) add(`${clean} · ${tableContext.metric}`, match[1], match[2], column, cells[0], tableContext.metric);
       });
     } else {
       for (const match of line.matchAll(new RegExp(`^[\\s*\x60]*(${metricNames})[\\s*\x60]*(?::|=|is)[\\s*\x60]*(${number})\\s*(%)?[\\s*\x60]*$`, "gi"))) {

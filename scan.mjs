@@ -1,4 +1,4 @@
-import { buildEvaluationDraft, suggestCandidate } from "./evaluation-config.mjs";
+import { buildEvaluationDraft, discoverPaperProvenance, suggestCandidate } from "./evaluation-config.mjs";
 
 function expectEqual(actual, expected) {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -507,6 +507,7 @@ function standalonePlan(report) {
     entrypoints: report.entrypoints,
     workflows: report.workflows,
     evaluationDraft: report.evaluationDraft,
+    paperProvenance: report.paperProvenance,
   };
 }
 
@@ -917,6 +918,7 @@ export async function scan(input, token, pinnedCommit) {
     evaluationDraft,
   };
   evaluationDraft.suggestion = suggestCandidate(report);
+  report.paperProvenance = discoverPaperProvenance({ readme, readmeText, evaluationDraft });
   return report;
 }
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { buildEvaluationDraft, candidateCommand, candidateOptions, reviewedCandidate, suggestCandidate } from "./evaluation-config.mjs";
+import { buildEvaluationDraft, candidateCommand, candidateOptions, discoverPaperProvenance, reviewedCandidate, suggestCandidate } from "./evaluation-config.mjs";
 import { buildDockerInvocation, buildPreflight, buildReplayPreflight, createRecipe, validateExecutionOptions } from "./runner.mjs";
 
 const files = [{ path: "eval.py", text: "iris = load_iris()\ntrain_test_split(X, y, test_size=0.3, random_state=1)\nmodel = LogisticRegression()\nprint('Accuracy: %.4f' % score)" }];
@@ -15,6 +15,26 @@ const review = { entryId: entrypoints[0].id, referenceId: draft.references[0].id
 const options = candidateOptions(report, review);
 assert.deepEqual(suggestCandidate(report), { ...review, confirmed: false });
 assert.equal(suggestCandidate({ ...report, evaluationDraft: { ...draft, outputs: [...draft.outputs, { ...draft.outputs[0], id: "duplicate-output" }] } }), null, "Ambiguous candidates must not be guessed");
+const suggestedDraft = { ...draft, suggestion: suggestCandidate(report) };
+const provenance = discoverPaperProvenance({ readme: "README.md", readmeText: "[Our Paper](https://arxiv.org/pdf/2401.01234.pdf)\nhttps://arxiv.org/abs/2401.01234", evaluationDraft: suggestedDraft });
+assert.equal(provenance.status, "READY_FOR_REVIEW");
+assert.equal(provenance.sources.length, 1);
+assert.equal(provenance.sources[0].url, "https://arxiv.org/abs/2401.01234");
+assert.deepEqual(provenance.candidate, { sourceId: "arxiv:2401.01234", ...suggestedDraft.suggestion });
+const multiplePapers = discoverPaperProvenance({ readme: "README.md", readmeText: "[A](https://arxiv.org/abs/2401.01234)\n[B](https://openreview.net/forum?id=review-1)", evaluationDraft: suggestedDraft });
+assert.equal(multiplePapers.status, "SOURCE_FOUND");
+assert.equal(multiplePapers.candidate, null);
+assert.ok(multiplePapers.gaps.includes("paper source selection"));
+const doiProvenance = discoverPaperProvenance({ readme: "README.md", readmeText: "doi:10.1145/123.456\nhttps://github.com/owner/repo", evaluationDraft: { entries: [], outputs: [], references: [], contexts: [], suggestion: null } });
+assert.equal(doiProvenance.sources[0].url, "https://doi.org/10.1145/123.456");
+assert.equal(doiProvenance.sources.length, 1, "Ordinary repository links are not paper sources");
+const declaredPaper = discoverPaperProvenance({ readme: "README.md", readmeText: "Code to accompany the paper:\n\nWeightless Neural Networks for Efficient Edge Inference, Zachary Susskind, Aman Arora\nPresented at PACT 2022", evaluationDraft: { entries: [], outputs: [], references: [], contexts: [], suggestion: null } });
+assert.equal(declaredPaper.sources[0].label, "Weightless Neural Networks for Efficient Edge Inference");
+assert.equal(declaredPaper.sources[0].kind, "declaration");
+assert.equal(discoverPaperProvenance({ readme: "README.md", readmeText: "Official code for “Do Benchmarks Need Sequences?”, accepted at RecSys.", evaluationDraft: suggestedDraft }).sources[0].label, "Do Benchmarks Need Sequences?");
+const workflowProvenance = discoverPaperProvenance({ readme: "README.md", readmeText: "Official code for “A Paper Workflow”\n## Reproduce Table 1\nmake test\nmake run\nmake verify", evaluationDraft: { entries: [], outputs: [], references: [{ id: "r" }], contexts: [], suggestion: null } });
+assert.deepEqual(workflowProvenance.workflowHints.map((item) => item.command), ["make test", "make run", "make verify"]);
+assert.ok(workflowProvenance.gaps.includes("supported adapter for documented paper workflow"));
 assert.deepEqual(draft.references.map(({ value, entryId }) => [value, entryId]), [[0.91, "evaluation-1"], [0.82, "evaluation-2"]]);
 assert.equal(draft.outputs[0].evidence.line, 4);
 assert.equal(options.metricTarget, 0.91);
@@ -49,6 +69,13 @@ const prefixedTable = buildEvaluationDraft({ readme: "README.md", readmeText: "M
 assert.equal(prefixedTable.references[0].metricKey, "accuracy");
 assert.equal(prefixedTable.references[0].value, 0.98);
 assert.equal(prefixedTable.references[0].label, "Iris · Test Accuracy");
+const academicTable = buildEvaluationDraft({ readme: "README.md", readmeText: "Full-catalogue NDCG@10 from Table 1:\n\nData | MC | FMC\n--- | --- | ---\nBeauty | .0492 | .0481", entrypoints: [], files: [] });
+assert.deepEqual(academicTable.references.map(({ metricKey, label, value }) => [metricKey, label, value]), [
+  ["ndcg_10", "Beauty · MC · NDCG@10", 0.0492], ["ndcg_10", "Beauty · FMC · NDCG@10", 0.0481],
+]);
+const manyColumns = Array.from({ length: 30 }, (_, index) => `M${index + 1}`);
+const boundedTable = buildEvaluationDraft({ readme: "README.md", readmeText: `Reported NDCG@10 results:\nData | ${manyColumns.join(" | ")}\n--- | ${manyColumns.map(() => "---").join(" | ")}\nSet | ${manyColumns.map((_, index) => `.${String(index + 1).padStart(3, "0")}`).join(" | ")}`, entrypoints: [], files: [] });
+assert.equal(boundedTable.references.length, 24);
 const jsonDraft = buildEvaluationDraft({ readme: "README.md", readmeText: "Accuracy usually exceeds 90%", entrypoints,
   files: [{ path: "eval.py", text: 'json.dump({"accuracy":score}, open("results.json","w"))\njson.dump({},open("../escape.json","w"))' }] });
 assert.equal(jsonDraft.references.length, 0, "Narrative ranges are not exact reference values");

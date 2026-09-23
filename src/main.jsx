@@ -211,6 +211,32 @@ function downloadJson(data, filename) {
 
 const visibleRunLog = (log) => log?.replace(/^::reprocheck-evidence::.*$/gm, "[Structured evidence captured; download execution evidence for complete data.]");
 
+function PaperProvenance({ report }) {
+  const provenance = report.paperProvenance;
+  if (!provenance) return null;
+  const draft = report.evaluationDraft;
+  const entry = provenance.candidate && draft.entries.find((item) => item.id === provenance.candidate.entryId);
+  const reference = provenance.candidate && draft.references.find((item) => item.id === provenance.candidate.referenceId);
+  const output = provenance.candidate && draft.outputs.find((item) => item.id === provenance.candidate.outputId);
+  return <section className="runner" aria-labelledby="paper-provenance-title">
+    <div className="runner-heading"><div><p className="eyebrow">Paper provenance</p><h2 id="paper-provenance-title">Paper source and experiment claim</h2>
+      <p>Source discovery only. A repository link does not prove that its code reproduces the paper.</p></div>
+      <span className={`status status-${provenance.status.toLowerCase()}`}>{provenance.status.replaceAll("_", " ")}</span></div>
+    {provenance.sources.length ? <div className="runner-result"><h3>Paper declarations and scholarly links</h3><ul>
+      {provenance.sources.map((item) => <li key={item.id}>{item.url ? <a href={item.url} target="_blank" rel="noreferrer">{item.label}</a> : item.label} · {item.provider} · <EvidenceLink report={report} evidence={item.evidence} /></li>)}
+    </ul></div> : <p className="runner-note">No supported scholarly source was found in the README.</p>}
+    {provenance.workflowHints?.length > 0 && <div className="runner-result"><h3>Documented paper workflow hints</h3><ul>
+      {provenance.workflowHints.map((item) => <li key={item.id}><code>{item.command}</code> · <EvidenceLink report={report} evidence={item.evidence} /></li>)}
+    </ul><p className="runner-note">These commands are evidence only until ReproCheck can safely associate their inputs and metric outputs.</p></div>}
+    {provenance.candidate && <div className="runner-result"><h3>Unconfirmed reproduction candidate</h3>
+      <p><code>{entry.command}</code></p>
+      <p className="hint">Metric: {output.metricKey} · README target: {reference.value} {reference.unit}.</p>
+      <p className="runner-note">This pairing is source-backed and unique, but still requires protocol review and explicit confirmation below.</p>
+    </div>}
+    {provenance.gaps.length > 0 && <div className="runner-result"><h3>Still needed</h3><ul>{provenance.gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul></div>}
+  </section>;
+}
+
 function CandidateConfig({ report, disabled, onApply }) {
   const draft = report.evaluationDraft;
   const suggested = draft.suggestion ?? suggestCandidate(report);
@@ -875,6 +901,8 @@ function App() {
             ))}
           </div>
         </section>
+
+        {!isExample && <PaperProvenance report={report} />}
 
         {displayedPlan && (
           <section className="plan" aria-labelledby="plan-title">
