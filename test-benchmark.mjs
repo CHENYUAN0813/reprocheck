@@ -15,14 +15,30 @@ assert.ok(preview.automatedSteps.every((step) => step.command.length <= 6000));
 for (const benchmark of reviewedBenchmarks) {
   const caseOptions = validateExecutionOptions({ benchmarkId: benchmark.id });
   const caseReport = { ...report, repository: benchmark.repository, commit: benchmark.commit };
-  const casePreview = buildPreflight(caseReport, "evaluation", { available: true }, "readme", caseOptions);
+  const casePreview = buildPreflight(caseReport, benchmark.matrix ? "paper-matrix" : "evaluation", { available: true }, "readme", caseOptions);
   assert.equal(casePreview.benchmark.datasetName, benchmark.datasetName);
   assert.equal(casePreview.limits.image, benchmark.image);
-  assert.equal(casePreview.executionOptions.metricTarget, benchmark.reference.value);
-  assert.equal(casePreview.executionOptions.metricTolerance, benchmark.reference.tolerance);
-  assert.ok(casePreview.benchmark.assets.length > 0 && casePreview.benchmark.assets.length <= 10);
+  assert.ok(casePreview.benchmark.assets.length > 0 && casePreview.benchmark.assets.length <= 40);
+  if (benchmark.matrix) {
+    assert.equal(casePreview.paperMatrix.cells.length, 15);
+    assert.deepEqual(casePreview.limits, { timeoutMinutes: 60, memory: "6 GB", cpus: 4, hostMounts: false, networkAccess: true, image: "python:3.10.12" });
+    assert.deepEqual(casePreview.automatedSteps.map((step) => step.id), ["install", "prepare-assets", "evaluation-benchmark"]);
+    assert.equal(casePreview.executionOptions.outputFile, "results/table1-cpu.csv");
+  } else {
+    assert.equal(casePreview.executionOptions.metricTarget, benchmark.reference.value);
+    assert.equal(casePreview.executionOptions.metricTolerance, benchmark.reference.tolerance);
+  }
   assert.equal(casePreview.benchmark.assets.filter((asset) => asset.role === "checkpoint").length, benchmark.adapter === "bthowen" ? 1 : 0);
 }
+const matrixBenchmark = reviewedBenchmarks.find((benchmark) => benchmark.matrix);
+const matrixOptions = validateExecutionOptions({ benchmarkId: matrixBenchmark.id });
+const matrixAssets = matrixBenchmark.assets.map((asset) => ({ ...asset, exists: true, capture: "before-and-after-entry", status: "PASSED" }));
+const matrixEvidence = { assets: matrixAssets, referenceEvidence: { ...matrixBenchmark.reference, status: "PASSED" },
+  artifact: { fresh: true, size: 400 }, matrix: { summary: { total: 15, matched: 15, outside: 0, missing: 0 }, cells: matrixBenchmark.matrix.cells } };
+const matrixSample = { status: "SUCCEEDED", executionOptions: matrixOptions, benchmark: matrixBenchmark, paperMatrix: matrixBenchmark.matrix,
+  steps: [{ id: "evaluation-benchmark" }], log: `::reprocheck-step::evaluation-benchmark\npublished-matrix-ok\n::reprocheck-evidence::${JSON.stringify(matrixEvidence)}\n` };
+assert.equal(verifyOutcome(matrixSample).status, "VERIFIED");
+assert.equal(verifyOutcome({ ...matrixSample, log: matrixSample.log.replace('"matched":15', '"matched":14') }).status, "FAILED");
 assert.throws(() => validateExecutionOptions({ benchmarkId: "invented" }), /Unknown/);
 assert.throws(() => buildPreflight(report, "evaluation", { available: true }, "readme", { ...options, metricTarget: 0 }), /fixed/);
 assert.throws(() => buildPreflight(report, "evaluation", { available: true }, "readme", { ...options, quickCommand: "python fake.py" }), /fixed/);
@@ -98,7 +114,7 @@ if (process.argv.includes("--docker")) {
   assert.equal(getSavedRun(result.id).evaluation.status, "MATCHED_REFERENCE");
   assert.ok(result.recipe, result.recipeUnavailableReason);
   assert.equal(await inspectLockedImage(result.recipe.imageId), true);
-  for (const benchmark of reviewedBenchmarks.slice(1)) {
+  for (const benchmark of reviewedBenchmarks.slice(1).filter((entry) => !entry.matrix)) {
     const caseOptions = validateExecutionOptions({ benchmarkId: benchmark.id });
     const caseReport = { ...scanned, repository: benchmark.repository, commit: benchmark.commit };
     const caseResult = await execute(buildPreflight(caseReport, "evaluation", runtime, "readme", caseOptions));

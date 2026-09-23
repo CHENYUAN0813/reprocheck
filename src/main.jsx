@@ -5,13 +5,14 @@ import cpuEvaluationSource from "../examples/evaluate-micrograd.py?raw";
 import { reviewedBenchmarks, reviewedTrainings, reviewedCaseById } from "../examples/reviewed-cases.mjs";
 import publishedEvaluationSource from "../examples/evaluate-bthowen.py?raw";
 import capacityEvaluationSource from "../examples/evaluate-capacity-probes.py?raw";
+import capacityMatrixSource from "../examples/evaluate-capacity-matrix.py?raw";
 import trainingSource from "../examples/train-bthowen.py?raw";
 import { candidateOptions, candidateWorkflow, suggestCandidate } from "../evaluation-config.mjs";
 import { experimentDraft, experimentExecutionOptions, MODEL_EXPORT_LIMIT } from "../experiment-config.mjs";
 
 const emptyAcceptance = { expectedText: "", outputFile: "", metricKey: "", metricOperator: "gte", metricTarget: "", metricTolerance: "0", dataset: "", model: "", reference: "", assetsInEntry: false };
 const cpuEvaluationCommand = `python -c 'exec(${JSON.stringify(cpuEvaluationSource).replaceAll("'", "'\"'\"'")})'`;
-const benchmarkSources = { bthowen: publishedEvaluationSource, "capacity-probes": capacityEvaluationSource };
+const benchmarkSources = { bthowen: publishedEvaluationSource, "capacity-probes": capacityEvaluationSource, "capacity-matrix": capacityMatrixSource };
 const benchmarkEvaluationCommand = (benchmark) => `python -c 'exec(${JSON.stringify(benchmarkSources[benchmark.adapter]).replaceAll("'", "'\"'\"'")})' evaluate`;
 
 const exampleParameters = [
@@ -610,16 +611,21 @@ function App() {
     setPreflight(null);
     setRunConfirmed(false);
   }
+  const selectedReviewedCase = acceptance.benchmarkId ? reviewedCaseById.get(acceptance.benchmarkId) : null;
+  const reviewedMatrixWorkflow = selectedWorkflow === "paper-matrix" && selectedReviewedCase?.matrix ? { id: "paper-matrix", title: selectedReviewedCase.title, status: "REVIEWED_BENCHMARK", steps: [
+    { id: "install", title: "Install reviewed Python 3.10 CPU dependencies", status: "DOCUMENTED", command: selectedReviewedCase.installCommand },
+    { id: "prepare-assets", title: "Prepare five hash-locked public datasets", status: "DOCUMENTED", instruction: "The reviewed adapter runs the authors' public-data setup and preparation entries." },
+    { id: "evaluation-benchmark", title: `Run and verify all ${selectedReviewedCase.matrix.cells.length} original CPU result cells`, status: "DOCUMENTED", instruction: "The authors' deterministic launcher computes MC, SeqRules and PCTM on every dataset; ReproCheck verifies each original result and emits a CSV matrix." },
+  ] } : null;
   const selectedMatrixAdapter = report.paperMatrixDraft?.adapters.find((adapter) => adapter.id === acceptance.paperMatrix?.adapterId);
   const matrixWorkflow = selectedWorkflow === "paper-matrix" && selectedMatrixAdapter ? { id: "paper-matrix", title: "Paper result matrix", status: "USER_REVIEWED_MATRIX",
     steps: selectedMatrixAdapter.steps.map((step) => ({ ...step, title: `${step.role} · ${step.command}`, status: "USER_REVIEWED" })) } : null;
-  const activeWorkflow = matrixWorkflow ?? report.workflows?.find((workflow) => workflow.id === selectedWorkflow)
+  const activeWorkflow = reviewedMatrixWorkflow ?? matrixWorkflow ?? report.workflows?.find((workflow) => workflow.id === selectedWorkflow)
     ?? report.workflows?.[0]
     ?? null;
   const selectedCandidate = report.evaluationDraft?.entries.find((entry) => entry.id === acceptance.candidateReview?.entryId);
-  const selectedReviewedCase = acceptance.benchmarkId ? reviewedCaseById.get(acceptance.benchmarkId) : null;
   const selectedBenchmarkSource = selectedReviewedCase ? benchmarkSources[selectedReviewedCase.adapter] : null;
-  const displayedPlan = matrixWorkflow ?? (acceptance.experiment ? { title: acceptance.experiment.title, status: "USER_REVIEWED_EXPERIMENT", steps: [
+  const displayedPlan = reviewedMatrixWorkflow ?? matrixWorkflow ?? (acceptance.experiment ? { title: acceptance.experiment.title, status: "USER_REVIEWED_EXPERIMENT", steps: [
     ...(acceptance.experiment.installCommand ? [{ id: "install", title: "Install reviewed dependencies", status: "USER_REVIEWED", command: acceptance.experiment.installCommand }] : []),
     ...(acceptance.experiment.prepareCommand ? [{ id: "prepare-data", title: "Prepare data", status: "USER_REVIEWED", command: acceptance.experiment.prepareCommand }] : []),
     { id: "train", title: "Train and save new model", status: "USER_REVIEWED", command: acceptance.experiment.trainCommand },
@@ -714,11 +720,12 @@ function App() {
     setUrl(targetUrl);
     try {
       await runScan(targetUrl, benchmark.id);
-      setSelectedWorkflow(benchmark.training ? "training" : "evaluation");
-      setQuickCommand(benchmarkEvaluationCommand(benchmark));
-      setAcceptance({ ...emptyAcceptance, benchmarkId: benchmark.id, expectedText: "published-benchmark-ok", outputFile: "benchmark-result.json",
-        metricKey: benchmark.metricKey ?? "accuracy", metricOperator: "eq", metricTarget: String(benchmark.reference.value), metricTolerance: String(benchmark.reference.tolerance),
-        dataset: benchmark.dataset, model: benchmark.model, reference: benchmark.reference.url });
+      setSelectedWorkflow(benchmark.matrix ? "paper-matrix" : benchmark.training ? "training" : "evaluation");
+      setQuickCommand(benchmark.matrix ? "" : benchmarkEvaluationCommand(benchmark));
+      setAcceptance(benchmark.matrix ? { ...emptyAcceptance, benchmarkId: benchmark.id } : { ...emptyAcceptance, benchmarkId: benchmark.id,
+        expectedText: "published-benchmark-ok", outputFile: "benchmark-result.json", metricKey: benchmark.metricKey ?? "accuracy", metricOperator: "eq",
+        metricTarget: String(benchmark.reference.value), metricTolerance: String(benchmark.reference.tolerance), dataset: benchmark.dataset,
+        model: benchmark.model, reference: benchmark.reference.url });
     } catch { /* The scan error is already displayed. */ }
   }
 
@@ -909,7 +916,7 @@ function App() {
             <p className="hint">Small synthetic held-out dataset + trained checkpoint. Loads a reviewed command; does not start execution.</p>
             {reviewedBenchmarks.map((benchmark) => <div key={benchmark.id}>
               <button className="download-button" type="button" onClick={() => loadPublishedBenchmark(benchmark.id)} disabled={executionBusy}>Load published {benchmark.datasetName} benchmark</button>
-              <p className="hint">Reviewed real-data paper case + original repository entry. Reference: {benchmark.reference.value} in the pinned README. Does not start execution.</p>
+              <p className="hint">{benchmark.matrix ? `Reviewed real-data paper matrix: ${benchmark.matrix.cells.length} pinned result cells.` : `Reviewed real-data paper case. Reference: ${benchmark.reference.value} in the pinned README.`} Does not start execution.</p>
             </div>)}
             {reviewedTrainings.map((benchmark) => <div key={benchmark.id}>
               <button className="download-button" type="button" onClick={() => loadPublishedBenchmark(benchmark.id)} disabled={executionBusy}>Load {benchmark.datasetName} training reproduction</button>
@@ -981,7 +988,7 @@ function App() {
 
         {!isExample && <PaperProvenance report={report} />}
         {!isExample && <ProtocolLock report={report} />}
-        {!isExample && <PaperMatrix key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onApply={applyMatrix} />}
+        {!isExample && !acceptance.benchmarkId && <PaperMatrix key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onApply={applyMatrix} />}
 
         {displayedPlan && (
           <section className="plan" aria-labelledby="plan-title">
@@ -1101,10 +1108,10 @@ function App() {
             {acceptance.benchmarkId && <div className="run-comparison">
               <h3>{selectedReviewedCase.title}</h3>
               <p>{selectedReviewedCase.dataset}</p>
-              <p>{acceptance.model}</p>
+              <p>{selectedReviewedCase.model}</p>
               {selectedReviewedCase.training && <p className="runner-note">{selectedReviewedCase.training.scope}</p>}
-              <p><a href={selectedReviewedCase.reference.url} target="_blank" rel="noreferrer">Pinned reference: {selectedReviewedCase.metricKey ?? "accuracy"} {selectedReviewedCase.reference.value} · tolerance {selectedReviewedCase.reference.tolerance}</a></p>
-              <p className="hint">Fixed output checks: published-benchmark-ok · fresh benchmark-result.json · {selectedReviewedCase.metricKey ?? "accuracy"} = {selectedReviewedCase.reference.value} ± {selectedReviewedCase.reference.tolerance}.</p>
+              <p><a href={selectedReviewedCase.reference.url} target="_blank" rel="noreferrer">{selectedReviewedCase.matrix ? `Pinned Table 1 source · ${selectedReviewedCase.matrix.cells.length} result cells` : `Pinned reference: ${selectedReviewedCase.metricKey ?? "accuracy"} ${selectedReviewedCase.reference.value} · tolerance ${selectedReviewedCase.reference.tolerance}`}</a></p>
+              <p className="hint">{selectedReviewedCase.matrix ? `Fixed output checks: published-matrix-ok · fresh ${selectedReviewedCase.matrix.outputFile} · all ${selectedReviewedCase.matrix.cells.length} cells match at four decimals.` : `Fixed output checks: published-benchmark-ok · fresh benchmark-result.json · ${selectedReviewedCase.metricKey ?? "accuracy"} = ${selectedReviewedCase.reference.value} ± ${selectedReviewedCase.reference.tolerance}.`}</p>
               <p className="runner-note">{selectedReviewedCase.compatibility.note}</p>
               <p className="hint">Commands and expectations are fixed for this reviewed case. Choose another workflow or scan again to return to custom Evaluation.</p>
               <details><summary>Review benchmark manifest and adapter source</summary><pre className="evaluation-source">{JSON.stringify(selectedReviewedCase, null, 2)}{"\n\n"}{selectedBenchmarkSource}{selectedReviewedCase.training && <>{"\n\n"}{trainingSource}</>}</pre></details>

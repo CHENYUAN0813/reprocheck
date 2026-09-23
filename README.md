@@ -34,7 +34,7 @@ Open `http://127.0.0.1:5173`, submit a public GitHub repository URL, and downloa
 
 Start Docker Desktop, scan a repository, choose **Quick verification** or **Evaluation**, and select **Check local runner**. **Training** also accepts a confirmed custom end-to-end experiment configuration; the BTHOWeN training buttons retain separately reviewed fixed real-paper cases. ReproCheck re-scans the pinned commit before allowing execution and shows every command for review. Training without either configuration remains disabled.
 
-After explicit confirmation, commands run in a temporary container (default `python:3.11`; reviewed cases may pin another version) with 2 CPUs, 2 GB of memory, a 10-minute timeout, a 256-process limit, no host filesystem mounts, and no host credentials. Network access remains enabled because public source code, dependencies, and model files may need to be downloaded. Runs can be monitored and cancelled from the page, with per-step status and the exact failure stage.
+After explicit confirmation, commands run in a temporary container (default `python:3.11`; reviewed cases may pin another version) with 2 CPUs, 2 GB of memory, a 10-minute timeout, a 256-process limit, no host filesystem mounts, and no host credentials. The reviewed Spotify 15-cell matrix uses its fixed 4 CPU, 6 GB and 60-minute profile. Network access remains enabled because public source code, dependencies, and model files may need to be downloaded. Runs can be monitored and cancelled from the page, with per-step status and the exact failure stage.
 
 If dependency installation fails or times out while using a README-provided package index, the run can be retried against official PyPI. The retry keeps the repository commit and dependency declarations unchanged, replaces only pip index options, and records the override in the run result.
 
@@ -140,6 +140,10 @@ The run uses the authors' original deterministic empirical Markov Chain builder,
 
 The 2026-09-23 local acceptance run completed in **22.796 seconds**. Original official NDCG@10 was **0.049176744331261055** and the paper's exact-four-decimal protocol produced **0.0492**, matching the pinned Table 1 value with zero tolerance. All ten code/data/reference identities passed. This is one deterministic CPU cell, not reproduction of the other four datasets, factorized methods, GPU transformer runs or the full paper.
 
+**Load published Spotify CPU matrix benchmark** expands that acceptance to **5 datasets × 3 original CPU models = 15 Table 1 cells**: MC, SeqRules and PCTM on Beauty, Sports, Toys, ML-1M and ML-20M. It pins 16 source/configuration files and all ten generated train/holdout files, runs the authors' deterministic launcher, requires every original JSON result, checks the official and independent NDCG@10 values agree, and compares every value with the pinned README at four decimals. The fresh `results/table1-cpu.csv` is then checked cell by cell by the normal paper-matrix collector.
+
+The 2026-09-23 local acceptance finished the 15 original calculations in about **5 minutes 47 seconds**; all 15 matched Table 1 with zero four-decimal difference. The upstream launcher then raised `mc: torch None is not frozen` because its global verifier requires Torch 2.7.1 even for these three Torch-free CPU models. The reviewed adapter accepts only that exact post-computation compatibility boundary and performs the source, environment, data, metric and table checks itself. This reproduces the paper's deterministic CPU subset, not its four GPU/factorized model columns or the entire paper.
+
 ### Configurable end-to-end CPU experiments
 
 The web log replaces the large structured-evidence/Base64 line with a short notice; complete evidence and model bytes remain in the downloadable record.
@@ -175,7 +179,7 @@ GitHub Actions runs the self-tests and production build on every push and pull r
 
 For the opt-in real Docker integration check, start the local server and run `npm run test:docker`. It scans the pinned Micrograd source, executes scalar-autodiff and held-out CPU Evaluation examples, checks checkpoint reload and reference tolerance, reloads evidence in a new process, replays frozen recipes, reports output differences, and checks that deliberately incorrect expectations/references fail. It does not run Micrograd's default pytest suite or reproduce a published benchmark.
 
-For the opt-in published suite, run `npm run test:benchmark` with Docker running. It evaluates three BTHOWeN pretrained models plus the Sequential Capacity Probes Beauty/MC cell, verifies their counts and every expected identity, checks Iris frozen replay, and proves a deliberately mismatched checkpoint hash prevents evaluation. `npm run test:training` trains and evaluates all three fresh BTHOWeN models and preserves honest `OUTSIDE_REFERENCE` classifications. No repository code or pickle runs on the host. Ordinary `npm test` checks preset identity/immutability/evidence gates without network or Docker.
+For the opt-in published suite, run `npm run test:benchmark` with Docker running. It evaluates three BTHOWeN pretrained models plus the Sequential Capacity Probes Beauty/MC cell, verifies their counts and every expected identity, checks Iris frozen replay, and proves a deliberately mismatched checkpoint hash prevents evaluation. The Spotify 15-cell preset is tested offline for fixed identity, limits and evidence gates; its longer real run is started from the reviewed UI preset. `npm run test:training` trains and evaluates all three fresh BTHOWeN models and preserves honest `OUTSIDE_REFERENCE` classifications. No repository code or pickle runs on the host. Ordinary `npm test` checks preset identity/immutability/evidence gates without network or Docker.
 
 ## Current checks
 

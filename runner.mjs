@@ -17,6 +17,7 @@ const collector = readFileSync(new URL("./collect-evidence.py", import.meta.url)
 const benchmarkSources = {
   bthowen: readFileSync(new URL("./examples/evaluate-bthowen.py", import.meta.url), "utf8"),
   "capacity-probes": readFileSync(new URL("./examples/evaluate-capacity-probes.py", import.meta.url), "utf8"),
+  "capacity-matrix": readFileSync(new URL("./examples/evaluate-capacity-matrix.py", import.meta.url), "utf8"),
 };
 const benchmarkCommand = (benchmark, phase) => `python -c ${shellQuote(`exec(${JSON.stringify(benchmarkSources[benchmark.adapter])})`)} ${phase}`;
 const trainingSource = readFileSync(new URL("./examples/train-bthowen.py", import.meta.url), "utf8");
@@ -24,6 +25,9 @@ const trainingCommand = () => `python -c ${shellQuote(`exec(${JSON.stringify(tra
 
 function benchmarkOptions(id = reviewedBenchmark.id) {
   const benchmark = reviewedCaseById.get(id);
+  if (benchmark.matrix) return { benchmarkId: benchmark.id, quickCommand: "", expectedText: "published-matrix-ok",
+    outputFile: benchmark.matrix.outputFile, metricKey: "", metricOperator: "eq", metricTarget: null,
+    metricTolerance: 0, evaluation: null };
   return { benchmarkId: benchmark.id, quickCommand: benchmarkCommand(benchmark, "evaluate"), expectedText: "published-benchmark-ok",
     outputFile: "benchmark-result.json", metricKey: benchmark.metricKey ?? "accuracy", metricOperator: "eq", metricTarget: benchmark.reference.value,
     metricTolerance: benchmark.reference.tolerance, evaluation: { dataset: benchmark.dataset, model: benchmark.model,
@@ -111,27 +115,29 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
   const executionOptions = validateExecutionOptions(options);
   const { quickCommand } = executionOptions;
   const experiment = executionOptions.experiment;
+  const benchmark = executionOptions.benchmarkId ? { ...reviewedCaseById.get(executionOptions.benchmarkId), originalSteps: report.reproductionPlan?.steps ?? [] } : null;
   if (executionOptions.paperMatrix && workflowId !== "paper-matrix") throw new Error("Paper matrix options require the Paper matrix workflow");
-  if (workflowId === "paper-matrix" && !executionOptions.paperMatrix) throw new Error("Paper matrix requires a reviewed matrix configuration");
-  const paperMatrix = executionOptions.paperMatrix ? buildPaperMatrixExecution(report, executionOptions.paperMatrix) : null;
+  if (workflowId === "paper-matrix" && !executionOptions.paperMatrix && !benchmark?.matrix) throw new Error("Paper matrix requires a reviewed matrix configuration");
+  const paperMatrix = executionOptions.paperMatrix ? buildPaperMatrixExecution(report, executionOptions.paperMatrix) : benchmark?.matrix ?? null;
   if (experiment && (workflowId !== "training" || experiment.repository !== report.repository || experiment.commit !== report.commit)) throw new Error("Custom experiment requires Training and its reviewed pinned repository/commit");
   if (executionOptions.candidateReview && workflowId !== "evaluation") throw new Error("Generated candidates apply only to Evaluation");
   const candidate = executionOptions.candidateReview ? reviewedCandidate(report, executionOptions.candidateReview, executionOptions) : null;
   let workflow = paperMatrix ? { id: "paper-matrix", title: "Paper result matrix", status: "USER_REVIEWED_MATRIX",
-    steps: paperMatrix.adapter.steps.map((step) => ({ ...step, title: `${step.role[0].toUpperCase()}${step.role.slice(1)} · ${step.command}`, status: "DOCUMENTED" })) }
+    steps: (paperMatrix.adapter?.steps ?? []).map((step) => ({ ...step, title: `${step.role[0].toUpperCase()}${step.role.slice(1)} · ${step.command}`, status: "DOCUMENTED" })) }
     : report.workflows?.find((candidate) => candidate.id === workflowId);
   if (!workflow) throw new Error("A valid reproduction workflow is required");
   if (candidate) workflow = candidateWorkflow(report, candidate.entry);
-  const benchmark = executionOptions.benchmarkId ? { ...reviewedCaseById.get(executionOptions.benchmarkId), originalSteps: report.reproductionPlan?.steps ?? [] } : null;
   const reviewedTrainingRun = workflowId === "training" && (!!benchmark?.training || !!experiment);
   if (benchmark) {
     if (!isDeepStrictEqual(executionOptions, benchmarkOptions(benchmark.id))) throw new Error("Reviewed benchmark commands and reference conditions are fixed; use a custom Evaluation instead");
-    if (workflowId !== (benchmark.training ? "training" : "evaluation") || report.repository !== benchmark.repository || report.commit !== benchmark.commit) throw new Error("Reviewed benchmark requires its pinned repository, commit and matching Training/Evaluation workflow");
+    const benchmarkWorkflow = benchmark.matrix ? "paper-matrix" : benchmark.training ? "training" : "evaluation";
+    if (workflowId !== benchmarkWorkflow || report.repository !== benchmark.repository || report.commit !== benchmark.commit) throw new Error("Reviewed benchmark requires its pinned repository, commit and matching workflow");
     workflow = { ...workflow, status: "REVIEWED_BENCHMARK", steps: [
-      { id: "install", title: "Install reviewed Python 3.11 CPU compatibility dependencies", status: "DOCUMENTED", command: benchmark.installCommand },
+      { id: "install", title: `Install reviewed ${benchmark.image.replace("python:", "Python ")} CPU dependencies`, status: "DOCUMENTED", command: benchmark.installCommand },
       { id: "prepare-assets", title: "Prepare hash-locked public research data", status: "DOCUMENTED", command: benchmarkCommand(benchmark, "prepare") },
       ...(benchmark.training ? [{ id: "training-benchmark", title: `Train original Table 3 ${benchmark.datasetName} model from scratch and save checkpoint`, status: "DOCUMENTED", command: trainingCommand() }] : []),
-      { id: "evaluation-benchmark", title: benchmark.training ? "Evaluate newly trained checkpoint with the original entry" : `Run original ${benchmark.datasetName} evaluation entry and collect its score`, status: "DOCUMENTED", command: benchmarkCommand(benchmark, "evaluate") },
+      { id: "evaluation-benchmark", title: benchmark.matrix ? `Run and verify all ${benchmark.matrix.cells.length} original CPU result cells`
+        : benchmark.training ? "Evaluate newly trained checkpoint with the original entry" : `Run original ${benchmark.datasetName} evaluation entry and collect its score`, status: "DOCUMENTED", command: benchmarkCommand(benchmark, "evaluate") },
     ] };
   }
   if (experiment) workflow = { id: "training", title: experiment.title, status: "USER_REVIEWED_EXPERIMENT", steps: [
@@ -201,9 +207,9 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
     manualSteps,
     blockers,
     limits: {
-      timeoutMinutes: 10,
-      memory: "2 GB",
-      cpus: 2,
+      timeoutMinutes: benchmark?.matrix ? 60 : 10,
+      memory: benchmark?.matrix ? "6 GB" : "2 GB",
+      cpus: benchmark?.matrix ? 4 : 2,
       hostMounts: false,
       networkAccess: true,
       image: benchmark?.image ?? "python:3.11",
@@ -246,7 +252,7 @@ export function createRecipe(job) {
   if (job.executionOptions?.candidateReview && (job.candidate?.repository !== job.repository || job.candidate?.commit !== job.commit)) throw new Error("Reviewed candidate source context is missing from the saved record");
   if (!["readme", "pypi"].includes(job.packageIndex)) throw new Error("Invalid saved package source");
   if (!/^sha256:[a-f\d]{64}$/.test(job.environment?.imageId ?? "")) throw new Error("The exact Docker image ID was not observed; run again before freezing");
-  if (job.environment?.capture !== "before-entry" || !/^3\.11\.\d+$/.test(job.environment.python ?? "")) throw new Error("A pre-entry Python/dependency snapshot is required; run again");
+  if (job.environment?.capture !== "before-entry" || !/^3\.\d+\.\d+$/.test(job.environment.python ?? "")) throw new Error("A pre-entry Python/dependency snapshot is required; run again");
   if (!Array.isArray(job.environment.unlockedDependencies) || job.environment.unlockedDependencies.length) throw new Error("Direct/local dependency sources need an artifact lock; this version supports index packages only");
   const dependencies = job.dependencies;
   if (!Array.isArray(dependencies) || !dependencies.length || dependencies.length > 500
@@ -261,7 +267,8 @@ export function createRecipe(job) {
     || commands.some((step) => /\b(?:conda|poetry|uv|virtualenv)\b|\bpython3?\s+-m\s+venv\b/.test(step.command))) throw new Error("Recipes currently support validated Make/Python entries, not alternate environment managers");
   // ponytail: restore index packages with pip wheels; artifact locks and other environment managers are deferred.
   for (const step of commands.filter((step) => step.id === "install")) rewritePackageIndex(step.command, "pypi");
-  if (job.limits?.cpus !== 2 || job.limits.memory !== "2 GB" || job.limits.timeoutMinutes !== 10
+  const expectedLimits = job.benchmark?.matrix ? { cpus: 4, memory: "6 GB", timeoutMinutes: 60 } : { cpus: 2, memory: "2 GB", timeoutMinutes: 10 };
+  if (job.limits?.cpus !== expectedLimits.cpus || job.limits.memory !== expectedLimits.memory || job.limits.timeoutMinutes !== expectedLimits.timeoutMinutes
     || job.limits.hostMounts !== false || job.limits.networkAccess !== true) throw new Error("Unsupported saved execution limits");
   const recipe = { schemaVersion: 1, baselineRunId: job.id, repository: job.repository, commit: job.commit,
     workflowId: job.workflowId, packageIndex: job.packageIndex, executionOptions: validateExecutionOptions(job.executionOptions),
@@ -381,7 +388,7 @@ export function buildDockerInvocation(preflight, containerName) {
     "--init",
     "--pull", preflight.recipe ? "never" : "missing",
     "--cpus", String(preflight.limits.cpus),
-    "--memory", "2g",
+    "--memory", preflight.limits.memory === "6 GB" ? "6g" : "2g",
     "--pids-limit", "256",
     "--security-opt", "no-new-privileges",
     "--cap-drop", "ALL",
@@ -441,7 +448,7 @@ export function readEvidence(log) {
     }
     if (evidence.matrix?.cells != null && (!Array.isArray(evidence.matrix.cells) || evidence.matrix.cells.length > 96
       || evidence.matrix.cells.some((cell) => !cell || typeof cell !== "object" || Array.isArray(cell)))) return null;
-    if (evidence.assets != null && (!Array.isArray(evidence.assets) || evidence.assets.length > 10
+    if (evidence.assets != null && (!Array.isArray(evidence.assets) || evidence.assets.length > 40
       || evidence.assets.some((asset) => !asset || typeof asset !== "object" || Array.isArray(asset)))) return null;
     if (evidence.referenceEvidence != null && (typeof evidence.referenceEvidence !== "object" || Array.isArray(evidence.referenceEvidence))) return null;
     if (evidence.trainingCheckpoint?.base64) {
@@ -507,8 +514,8 @@ export function verifyOutcome(job) {
         status: !observed ? "UNKNOWN" : observed.status === "PASSED" && observed.capture === "before-and-after-entry" && observed.sha256 === asset.sha256 && !observed.error ? "PASSED" : "FAILED", observed: observed ?? null });
     }
     const observed = evidence?.referenceEvidence;
-    checks.push({ id: "reference-source", expected: `${job.benchmark.reference.file}:${job.benchmark.reference.line} = ${options.metricTarget}`,
-      status: !observed ? "UNKNOWN" : observed.status === "PASSED" && observed.text === job.benchmark.reference.text && observed.value === options.metricTarget ? "PASSED" : "FAILED", observed: observed ?? null });
+    checks.push({ id: "reference-source", expected: `${job.benchmark.reference.file}:${job.benchmark.reference.line} = ${job.benchmark.reference.value}`,
+      status: !observed ? "UNKNOWN" : observed.status === "PASSED" && observed.text === job.benchmark.reference.text && observed.value === job.benchmark.reference.value ? "PASSED" : "FAILED", observed: observed ?? null });
   }
   if (job.status !== "SUCCEEDED") {
     for (const check of checks) check.status = "NOT_RUN";

@@ -33,7 +33,7 @@ def observe_environment():
     }
 
 
-def observe_file(name=None):
+def observe_file(name=None, max_size=64 * 1024 * 1024):
     name = name or options.get("outputFile")
     if not name:
         return None
@@ -45,8 +45,8 @@ def observe_file(name=None):
         if not path.is_file():
             return result
         result.update(exists=True, size=path.stat().st_size)
-        if result["size"] > 64 * 1024 * 1024:
-            raise ValueError("Output evidence is limited to files up to 64 MB")
+        if result["size"] > max_size:
+            raise ValueError("Evidence file exceeds its reviewed size limit")
         with path.open("rb") as stream:
             digest = hashlib.sha256()
             for block in iter(lambda: stream.read(1 << 20), b""):
@@ -64,7 +64,7 @@ def observe_benchmark():
         return None
     assets = []
     for expected in case["assets"]:
-        observed = observe_file(expected["path"])
+        observed = observe_file(expected["path"], 2 * 1024 * 1024 * 1024)
         assets.append({**observed, "role": expected["role"], "expectedSha256": expected["sha256"],
                        "status": "PASSED" if not observed.get("error") and observed.get("sha256") == expected["sha256"] else "FAILED"})
     source = case["reference"]
