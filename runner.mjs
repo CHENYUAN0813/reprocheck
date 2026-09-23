@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { getSavedRun, listSavedRuns, saveRun } from "./run-store.mjs";
 import { candidateWorkflow, captureMetricCommand, reviewedCandidate } from "./evaluation-config.mjs";
 import { MODEL_EXPORT_LIMIT, validateExperiment } from "./experiment-config.mjs";
+import { buildPaperMatrixExecution, validatePaperMatrixRequest } from "./paper-matrix.mjs";
 import { reviewedBenchmark, reviewedTraining, reviewedBenchmarks, reviewedTrainings, reviewedCaseById } from "./examples/reviewed-cases.mjs";
 
 export { reviewedBenchmark, reviewedTraining, reviewedBenchmarks, reviewedTrainings, reviewedCaseById };
@@ -70,7 +71,8 @@ export function validateExecutionOptions(input = {}) {
   const evaluation = input.evaluation ?? null;
   const candidateReview = input.candidateReview ?? null;
   const experiment = input.experiment == null ? null : validateExperiment(input.experiment);
-  if (experiment && (benchmarkId || candidateReview)) throw new Error("A custom experiment cannot be mixed with a reviewed preset/candidate");
+  const paperMatrix = input.paperMatrix == null ? null : validatePaperMatrixRequest(input.paperMatrix);
+  if (experiment && (benchmarkId || candidateReview || paperMatrix)) throw new Error("A custom experiment cannot be mixed with a reviewed preset/candidate");
   if (candidateReview !== null && (benchmarkId || typeof candidateReview !== "object" || Array.isArray(candidateReview)
     || Object.keys(candidateReview).some((key) => !["entryId", "referenceId", "outputId", "confirmed", "argumentValues"].includes(key))
     || (candidateReview.argumentValues !== undefined && (!candidateReview.argumentValues || typeof candidateReview.argumentValues !== "object" || Array.isArray(candidateReview.argumentValues)
@@ -96,8 +98,12 @@ export function validateExecutionOptions(input = {}) {
       || ["dataset", "model", "reference"].some((key) => typeof evaluation[key] !== "string" || !evaluation[key].trim() || evaluation[key].length > 500 || /\0/.test(evaluation[key]))
       || typeof evaluation.assetsInEntry !== "boolean") throw new Error("Evaluation needs dataset, model, reference source and an explicit asset-preparation choice");
   }
+  if (paperMatrix && (benchmarkId || candidateReview || quickCommand.trim() || expectedText || metricKey || metricTarget !== null || evaluation)) {
+    throw new Error("Paper matrix cannot be mixed with scalar Evaluation options");
+  }
   if (experiment && (!quickCommand.trim() || !evaluation || evaluation.assetsInEntry || !metricKey || metricTarget === null || outputFile === experiment.checkpoint)) throw new Error("Experiment needs a separate evaluator, metric output and declared evaluation context; checkpoint and score paths must differ");
-  return { ...(benchmarkId ? { benchmarkId } : {}), ...(candidateReview ? { candidateReview: { ...candidateReview } } : {}), ...(experiment ? { experiment } : {}), quickCommand: quickCommand.trim(), expectedText, outputFile, metricKey, metricOperator, metricTarget, metricTolerance,
+  return { ...(benchmarkId ? { benchmarkId } : {}), ...(candidateReview ? { candidateReview: { ...candidateReview } } : {}), ...(experiment ? { experiment } : {}), ...(paperMatrix ? { paperMatrix } : {}), quickCommand: quickCommand.trim(), expectedText,
+    outputFile: paperMatrix?.outputFile ?? outputFile, metricKey, metricOperator, metricTarget, metricTolerance,
     evaluation: evaluation ? { dataset: evaluation.dataset.trim(), model: evaluation.model.trim(), reference: evaluation.reference.trim(), assetsInEntry: evaluation.assetsInEntry } : null };
 }
 
@@ -105,10 +111,15 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
   const executionOptions = validateExecutionOptions(options);
   const { quickCommand } = executionOptions;
   const experiment = executionOptions.experiment;
+  if (executionOptions.paperMatrix && workflowId !== "paper-matrix") throw new Error("Paper matrix options require the Paper matrix workflow");
+  if (workflowId === "paper-matrix" && !executionOptions.paperMatrix) throw new Error("Paper matrix requires a reviewed matrix configuration");
+  const paperMatrix = executionOptions.paperMatrix ? buildPaperMatrixExecution(report, executionOptions.paperMatrix) : null;
   if (experiment && (workflowId !== "training" || experiment.repository !== report.repository || experiment.commit !== report.commit)) throw new Error("Custom experiment requires Training and its reviewed pinned repository/commit");
   if (executionOptions.candidateReview && workflowId !== "evaluation") throw new Error("Generated candidates apply only to Evaluation");
   const candidate = executionOptions.candidateReview ? reviewedCandidate(report, executionOptions.candidateReview, executionOptions) : null;
-  let workflow = report.workflows?.find((candidate) => candidate.id === workflowId);
+  let workflow = paperMatrix ? { id: "paper-matrix", title: "Paper result matrix", status: "USER_REVIEWED_MATRIX",
+    steps: paperMatrix.adapter.steps.map((step) => ({ ...step, title: `${step.role[0].toUpperCase()}${step.role.slice(1)} · ${step.command}`, status: "DOCUMENTED" })) }
+    : report.workflows?.find((candidate) => candidate.id === workflowId);
   if (!workflow) throw new Error("A valid reproduction workflow is required");
   if (candidate) workflow = candidateWorkflow(report, candidate.entry);
   const benchmark = executionOptions.benchmarkId ? { ...reviewedCaseById.get(executionOptions.benchmarkId), originalSteps: report.reproductionPlan?.steps ?? [] } : null;
@@ -165,6 +176,7 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
     .filter((step) => step.status === "BLOCKED" || (step.status === "MISSING" && step.id !== "environment"))
     .map(({ id, title }) => ({ id, title }));
   if (workflowId === "evaluation") blockers.push(...manualSteps.filter((step) => step.id !== "environment").map(({ id, title }) => ({ id, title })));
+  const supportedWorkflow = ["quick", "evaluation", "paper-matrix"].includes(workflowId) || reviewedTrainingRun;
 
   return {
     repository: report.repository,
@@ -174,11 +186,12 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
     executionOptions,
     benchmark,
     candidate,
+    paperMatrix,
     commandOverride: quickCommand && !benchmark && !experiment ? { original: entry.command, actual: quickCommand, origin: "user-reviewed" } : null,
     runtime,
     preparationOverride: assetsInEntry ? { origin: "user-reviewed", instruction: "Dataset and model preparation are handled by the reviewed entry command", originalSteps: originalSteps.filter((step) => ["data", "model"].includes(step.id)) } : null,
-    runnable: (["quick", "evaluation"].includes(workflowId) || reviewedTrainingRun) && runtime.available && automatedSteps.length > 0 && blockers.length === 0,
-    reason: !["quick", "evaluation"].includes(workflowId) && !reviewedTrainingRun ? "Training requires a confirmed custom experiment configuration or a reviewed paper case"
+    runnable: supportedWorkflow && runtime.available && automatedSteps.length > 0 && blockers.length === 0,
+    reason: !supportedWorkflow ? "Training requires a confirmed custom experiment configuration or a reviewed paper case"
       : !runtime.available ? runtime.reason : blockers.length ? "The workflow has missing or blocked steps"
         : !automatedSteps.length ? "No executable commands were found" : null,
     automatedSteps: automatedSteps.map((step) => ({ ...step,
@@ -226,7 +239,7 @@ function sourceSteps(job) {
 
 export function createRecipe(job) {
   if (job.status !== "SUCCEEDED" || job.verification?.status !== "VERIFIED") throw new Error("Pass configured output checks before freezing a recipe");
-  if ((!["quick", "evaluation"].includes(job.workflowId) && !(job.workflowId === "training" && (job.benchmark?.training || job.executionOptions?.experiment))) || !/^[\w.-]+\/[\w.-]+$/.test(job.repository) || !/^[a-f\d]{40}$/i.test(job.commit)) throw new Error("Invalid executable source identity");
+  if ((!["quick", "evaluation", "paper-matrix"].includes(job.workflowId) && !(job.workflowId === "training" && (job.benchmark?.training || job.executionOptions?.experiment))) || !/^[\w.-]+\/[\w.-]+$/.test(job.repository) || !/^[a-f\d]{40}$/i.test(job.commit)) throw new Error("Invalid executable source identity");
   if (job.executionOptions?.experiment && (job.executionOptions.experiment.repository !== job.repository || job.executionOptions.experiment.commit !== job.commit)) throw new Error("Experiment source context does not match the saved record");
   if (job.executionOptions?.benchmarkId && (job.benchmark?.id !== job.executionOptions.benchmarkId || job.benchmark.repository !== job.repository
     || job.benchmark.commit !== job.commit)) throw new Error("Reviewed benchmark asset/source locks are missing from the saved record");
@@ -244,16 +257,17 @@ export function createRecipe(job) {
   if (!commands.length || commands.length > 20 || commands.some((step) => !/^[\w.-]{1,80}$/.test(step.id)
     || typeof step.title !== "string" || typeof step.command !== "string" || !step.command || step.command.length > 6000 || /[\r\n\0]/.test(step.command))) throw new Error("Invalid saved commands");
   if (new Set(commands.map((step) => step.id)).size !== commands.length) throw new Error("Duplicate command IDs");
-  if (!/^python3?\s/.test(commands.at(-1).command) || commands.some((step) => /\b(?:conda|poetry|uv|virtualenv)\b|\bpython3?\s+-m\s+venv\b/.test(step.command))) throw new Error("Recipes currently support the container's default Python entry point, not alternate environment managers");
+  if ((job.workflowId === "paper-matrix" ? commands.some((step) => !/^(?:make\s+[\w.-]+|(?:\.\/?venv\/bin\/)?python3?\s+)/.test(step.command)) : !/^python3?\s/.test(commands.at(-1).command))
+    || commands.some((step) => /\b(?:conda|poetry|uv|virtualenv)\b|\bpython3?\s+-m\s+venv\b/.test(step.command))) throw new Error("Recipes currently support validated Make/Python entries, not alternate environment managers");
   // ponytail: restore index packages with pip wheels; artifact locks and other environment managers are deferred.
   for (const step of commands.filter((step) => step.id === "install")) rewritePackageIndex(step.command, "pypi");
   if (job.limits?.cpus !== 2 || job.limits.memory !== "2 GB" || job.limits.timeoutMinutes !== 10
     || job.limits.hostMounts !== false || job.limits.networkAccess !== true) throw new Error("Unsupported saved execution limits");
   const recipe = { schemaVersion: 1, baselineRunId: job.id, repository: job.repository, commit: job.commit,
     workflowId: job.workflowId, packageIndex: job.packageIndex, executionOptions: validateExecutionOptions(job.executionOptions),
-    commandOverride: job.commandOverride ?? null, preparationOverride: job.preparationOverride ?? null, ...(job.benchmark ? { benchmark: job.benchmark } : {}), ...(job.candidate ? { candidate: job.candidate } : {}), imageId: job.environment.imageId, python: job.environment.python,
+    commandOverride: job.commandOverride ?? null, preparationOverride: job.preparationOverride ?? null, ...(job.benchmark ? { benchmark: job.benchmark } : {}), ...(job.candidate ? { candidate: job.candidate } : {}), ...(job.paperMatrix ? { paperMatrix: job.paperMatrix } : {}), imageId: job.environment.imageId, python: job.environment.python,
     dependencies: [...dependencies].sort(), commands, limits: { ...job.limits, image: job.environment.imageId },
-    baselineResults: { artifact: job.artifact ?? null, metric: job.metric ?? null, ...(job.benchmark ? { assets: job.assets, reference: job.referenceEvidence } : {}) },
+    baselineResults: { artifact: job.artifact ?? null, metric: job.metric ?? null, matrix: job.matrix ?? null, ...(job.benchmark ? { assets: job.assets, reference: job.referenceEvidence } : {}) },
     warnings: ["Local image ID must still exist on this computer.", "Package versions are pinned, not wheel hashes or build artifacts.",
       "External data/models and randomness are not automatically frozen; equal results are not guaranteed."],
   };
@@ -272,7 +286,7 @@ export function buildReplayPreflight(baseline, runtime, imageAvailable) {
   const recipe = createRecipe(baseline);
   return { repository: recipe.repository, commit: recipe.commit, workflow: { id: recipe.workflowId, title: "Locked recipe replay", status: "FROZEN" },
     packageIndex: recipe.packageIndex, executionOptions: recipe.executionOptions, commandOverride: recipe.commandOverride, preparationOverride: recipe.preparationOverride, benchmark: recipe.benchmark ?? null,
-    candidate: recipe.candidate ?? null, runtime, runnable: runtime.available && imageAvailable, reason: !runtime.available ? runtime.reason
+    candidate: recipe.candidate ?? null, paperMatrix: recipe.paperMatrix ?? null, runtime, runnable: runtime.available && imageAvailable, reason: !runtime.available ? runtime.reason
       : !imageAvailable ? "The locked image is missing locally; replay will not substitute a newer image" : null,
     recipe, replayOf: baseline.id, baseline: { ...baseline, log: undefined, recipe: undefined, comparison: undefined }, frozenCommands: true, experimentParameters: baseline.experimentParameters ?? [],
     automatedSteps: [
@@ -315,6 +329,7 @@ export function compareRuns(baseline, current) {
     compare("metric", before, after, { key: baseline.executionOptions.metricKey,
       delta: Number.isFinite(before) && Number.isFinite(after) ? after - before : null });
   }
+  if (baseline.paperMatrix) compare("matrix", baseline.matrix?.cells, current.matrix?.cells);
   if (baseline.benchmark) {
     compare("asset-hashes", baseline.assets?.map(({ path, sha256 }) => ({ path, sha256 })), current.assets?.map(({ path, sha256 }) => ({ path, sha256 })));
     compare("reference-source", baseline.referenceEvidence, current.referenceEvidence);
@@ -328,7 +343,8 @@ export function compareRuns(baseline, current) {
 export function buildDockerInvocation(preflight, containerName) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(preflight.repository)) throw new Error("Invalid repository identity");
   if (!/^[a-f\d]{40}$/i.test(preflight.commit)) throw new Error("Invalid commit identity");
-  const options = { ...validateExecutionOptions(preflight.executionOptions), ...(preflight.benchmark ? { benchmark: preflight.benchmark } : {}), ...(preflight.recipe ? {
+  const options = { ...validateExecutionOptions(preflight.executionOptions), ...(preflight.benchmark ? { benchmark: preflight.benchmark } : {}),
+    ...(preflight.paperMatrix ? { paperMatrixExecution: preflight.paperMatrix } : {}), ...(preflight.recipe ? {
     lockedEnvironment: { python: preflight.recipe.python, dependencies: preflight.recipe.dependencies },
   } : {}) };
   const collectCommand = `python -c ${shellQuote(collector)} ${shellQuote(JSON.stringify(options))}`;
@@ -420,9 +436,11 @@ export function readEvidence(log) {
     if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) return null;
     if (evidence.dependencies !== undefined && (!Array.isArray(evidence.dependencies)
       || evidence.dependencies.length > 500 || evidence.dependencies.some((item) => typeof item !== "string" || item.length > 240))) return null;
-    for (const key of ["environment", "artifact", "metric", "evaluationOutput", "trainingCheckpoint"]) {
+    for (const key of ["environment", "artifact", "metric", "evaluationOutput", "trainingCheckpoint", "matrix"]) {
       if (evidence[key] != null && (typeof evidence[key] !== "object" || Array.isArray(evidence[key]))) return null;
     }
+    if (evidence.matrix?.cells != null && (!Array.isArray(evidence.matrix.cells) || evidence.matrix.cells.length > 96
+      || evidence.matrix.cells.some((cell) => !cell || typeof cell !== "object" || Array.isArray(cell)))) return null;
     if (evidence.assets != null && (!Array.isArray(evidence.assets) || evidence.assets.length > 10
       || evidence.assets.some((asset) => !asset || typeof asset !== "object" || Array.isArray(asset)))) return null;
     if (evidence.referenceEvidence != null && (typeof evidence.referenceEvidence !== "object" || Array.isArray(evidence.referenceEvidence))) return null;
@@ -467,6 +485,10 @@ export function verifyOutcome(job) {
     status: !evidence ? "UNKNOWN" : !evidence.metric?.error && metricMatches(evidence.metric?.value, options) ? "PASSED" : "FAILED",
     observed: evidence?.metric ?? null,
   });
+  if (job.paperMatrix) checks.push({ id: "matrix", expected: `${job.paperMatrix.cells.length} paper reference cells within ± ${job.paperMatrix.metricTolerance}`,
+    status: !evidence ? "UNKNOWN" : evidence.matrix?.summary?.total === job.paperMatrix.cells.length
+      && evidence.matrix.summary.matched === job.paperMatrix.cells.length && evidence.matrix.summary.missing === 0 ? "PASSED" : "FAILED",
+    observed: evidence?.matrix?.summary ?? null });
   if (options.experiment) {
     const observed = evidence?.trainingCheckpoint;
     checks.push({ id: "trained-checkpoint", expected: `New ${options.experiment.checkpoint}, saved during training and unchanged during evaluation`,
@@ -509,6 +531,8 @@ function publicJob(job) {
     executionOptions: job.executionOptions,
     benchmark: job.benchmark ?? null,
     candidate: job.candidate ?? null,
+    paperMatrix: job.paperMatrix ?? null,
+    matrix: evidence?.matrix ?? null,
     assets: evidence?.assets ?? null,
     referenceEvidence: evidence?.referenceEvidence ?? null,
     trainingCheckpoint: evidence?.trainingCheckpoint ?? null,
@@ -565,7 +589,7 @@ function persist(job) {
 }
 
 export function startRun(preflight) {
-  if (!["quick", "evaluation"].includes(preflight.workflow.id) && !(preflight.workflow.id === "training" && (preflight.benchmark?.training || preflight.executionOptions?.experiment))) throw new Error("Training requires a confirmed experiment or reviewed paper case");
+  if (!["quick", "evaluation", "paper-matrix"].includes(preflight.workflow.id) && !(preflight.workflow.id === "training" && (preflight.benchmark?.training || preflight.executionOptions?.experiment))) throw new Error("Training requires a confirmed experiment or reviewed paper case");
   if (!preflight.runnable) throw new Error("The selected workflow is not ready to run");
 
   const id = randomUUID();
@@ -587,6 +611,7 @@ export function startRun(preflight) {
     executionOptions: validateExecutionOptions(preflight.executionOptions),
     benchmark: preflight.benchmark ?? null,
     candidate: preflight.candidate ?? null,
+    paperMatrix: preflight.paperMatrix ?? null,
     commandOverride: preflight.commandOverride ?? null,
     preparationOverride: preflight.preparationOverride ?? null,
     experimentParameters: preflight.experimentParameters ?? [],

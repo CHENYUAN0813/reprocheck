@@ -269,6 +269,36 @@ function ProtocolLock({ report }) {
   </section>;
 }
 
+function PaperMatrix({ report, disabled, onApply }) {
+  const draft = report.paperMatrixDraft;
+  const ready = draft?.adapters?.[0];
+  const [config, setConfig] = useState({ adapterId: ready?.id ?? "", outputFile: "", rowKey: "dataset", metricTolerance: "0", confirmed: false,
+    acknowledgeGaps: report.protocolLock?.gaps.length === 0 });
+  if (!draft) return null;
+  const update = (field, value) => setConfig((current) => ({ ...current, [field]: value, ...(field === "confirmed" ? {} : { confirmed: false }) }));
+  const apply = () => onApply({ adapterId: config.adapterId, protocolLockId: report.protocolLock.lockId, outputFile: config.outputFile.trim(), rowKey: config.rowKey.trim(),
+    metricTolerance: Number(config.metricTolerance), confirmed: true, acknowledgedGaps: config.acknowledgeGaps ? report.protocolLock.gaps : [] });
+  return <section className="runner" aria-labelledby="paper-matrix-title">
+    <div className="runner-heading"><div><p className="eyebrow">Multi-experiment reproduction</p><h2 id="paper-matrix-title">Paper result matrix</h2>
+      <p>Run one reviewed source workflow, then compare every dataset × model × seed cell with the pinned README table.</p></div>
+      <span className={`status status-${draft.status.toLowerCase()}`}>{draft.status.replaceAll("_", " ")}</span></div>
+    {draft.cells.length > 0 && <div className="matrix-scroll"><table className="matrix-table"><thead><tr><th>Dataset</th><th>Model</th><th>Seed</th><th>Metric</th><th>Paper reference</th></tr></thead>
+      <tbody>{draft.cells.map((cell) => <tr key={cell.id}><td>{cell.dataset}</td><td>{cell.model}</td><td>{cell.seed ?? "—"}</td><td>{cell.metricLabel}</td><td>{cell.target} · {cell.unit}</td></tr>)}</tbody></table></div>}
+    {draft.gaps.length > 0 && <p className="runner-note">Blocked by: {draft.gaps.join("; ")}.</p>}
+    {ready && report.protocolLock && <fieldset className="run-options" disabled={disabled}>
+      <legend>Reviewed matrix output contract</legend>
+      <label>Source workflow adapter<select value={config.adapterId} onChange={(event) => update("adapterId", event.target.value)}>{draft.adapters.map((adapter) => <option key={adapter.id} value={adapter.id}>{adapter.title}</option>)}</select></label>
+      <label>Produced CSV path<input maxLength={240} value={config.outputFile} placeholder="results/table1.csv" onChange={(event) => update("outputFile", event.target.value)} /></label>
+      <label>Dataset row-key column<input maxLength={100} value={config.rowKey} onChange={(event) => update("rowKey", event.target.value)} /></label>
+      <label>Absolute tolerance for every cell<input type="number" min="0" step="any" value={config.metricTolerance} onChange={(event) => update("metricTolerance", event.target.value)} /></label>
+      {report.protocolLock.gaps.length > 0 && <label className="runner-confirm"><input type="checkbox" checked={config.acknowledgeGaps} onChange={(event) => update("acknowledgeGaps", event.target.checked)} />I reviewed and accept these unresolved lock gaps for this run: {report.protocolLock.gaps.join("; ")}.</label>}
+      <label className="runner-confirm"><input type="checkbox" checked={config.confirmed} onChange={(event) => update("confirmed", event.target.checked)} />I reviewed the adapter, CSV row/column labels, paper references and protocol lock. The workflow is untrusted code.</label>
+      <button type="button" disabled={!config.confirmed || !config.outputFile.trim() || !config.acknowledgeGaps || !Number.isFinite(Number(config.metricTolerance)) || Number(config.metricTolerance) < 0} onClick={apply}>Use matrix in local runner</button>
+    </fieldset>}
+    {draft.warnings.map((warning) => <p className="runner-note" key={warning}>{warning}</p>)}
+  </section>;
+}
+
 function CandidateConfig({ report, disabled, onApply }) {
   const draft = report.evaluationDraft;
   const suggested = draft.suggestion ?? suggestCandidate(report);
@@ -423,6 +453,13 @@ function ExecutionEvidence({ job, onPrepareReplay, replayDisabled }) {
           </li>
         ))}
       </ul>
+      {job.paperMatrix && <div className="run-comparison">
+        <h3>Paper matrix · {job.matrix ? `${job.matrix.summary.matched}/${job.matrix.summary.total} matched` : "incomplete"}</h3>
+        <p className="hint">Observed values come from the fresh CSV produced by the reviewed source workflow. References come from the commit-pinned README table.</p>
+        {job.matrix?.error && <p className="runner-error">{job.matrix.error}</p>}
+        {job.matrix?.cells?.length > 0 && <div className="matrix-scroll"><table className="matrix-table"><thead><tr><th>Dataset</th><th>Model</th><th>Paper</th><th>Observed</th><th>Delta</th><th>Status</th></tr></thead>
+          <tbody>{job.matrix.cells.map((cell) => <tr key={cell.id}><td>{cell.dataset}</td><td>{cell.model}{cell.seed ? ` · seed ${cell.seed}` : ""}</td><td>{cell.target}</td><td>{cell.observed ?? "—"}{cell.compared !== cell.observed && cell.compared != null ? ` → ${cell.compared}` : ""}</td><td>{cell.delta ?? "—"}</td><td>{cell.status}</td></tr>)}</tbody></table></div>}
+      </div>}
       {job.evaluation && <div className="run-comparison">
         <h3>Evaluation report · {job.evaluation.status.replaceAll("_", " ")}</h3>
         <p className="hint">{job.benchmark ? `Reviewed ${job.benchmark.datasetName} software case: input hashes and the pinned README row must pass checks before entry and at completion. This is not full-paper reproduction or a security attestation.` : "Dataset, model and reference source below are user declarations, not independently verified paper claims."}</p>
@@ -573,13 +610,16 @@ function App() {
     setPreflight(null);
     setRunConfirmed(false);
   }
-  const activeWorkflow = report.workflows?.find((workflow) => workflow.id === selectedWorkflow)
+  const selectedMatrixAdapter = report.paperMatrixDraft?.adapters.find((adapter) => adapter.id === acceptance.paperMatrix?.adapterId);
+  const matrixWorkflow = selectedWorkflow === "paper-matrix" && selectedMatrixAdapter ? { id: "paper-matrix", title: "Paper result matrix", status: "USER_REVIEWED_MATRIX",
+    steps: selectedMatrixAdapter.steps.map((step) => ({ ...step, title: `${step.role} · ${step.command}`, status: "USER_REVIEWED" })) } : null;
+  const activeWorkflow = matrixWorkflow ?? report.workflows?.find((workflow) => workflow.id === selectedWorkflow)
     ?? report.workflows?.[0]
     ?? null;
   const selectedCandidate = report.evaluationDraft?.entries.find((entry) => entry.id === acceptance.candidateReview?.entryId);
   const selectedReviewedCase = acceptance.benchmarkId ? reviewedCaseById.get(acceptance.benchmarkId) : null;
   const selectedBenchmarkSource = selectedReviewedCase ? benchmarkSources[selectedReviewedCase.adapter] : null;
-  const displayedPlan = acceptance.experiment ? { title: acceptance.experiment.title, status: "USER_REVIEWED_EXPERIMENT", steps: [
+  const displayedPlan = matrixWorkflow ?? (acceptance.experiment ? { title: acceptance.experiment.title, status: "USER_REVIEWED_EXPERIMENT", steps: [
     ...(acceptance.experiment.installCommand ? [{ id: "install", title: "Install reviewed dependencies", status: "USER_REVIEWED", command: acceptance.experiment.installCommand }] : []),
     ...(acceptance.experiment.prepareCommand ? [{ id: "prepare-data", title: "Prepare data", status: "USER_REVIEWED", command: acceptance.experiment.prepareCommand }] : []),
     { id: "train", title: "Train and save new model", status: "USER_REVIEWED", command: acceptance.experiment.trainCommand },
@@ -589,7 +629,7 @@ function App() {
     { id: "prepare-assets", title: `Prepare hash-locked real UCI ${selectedReviewedCase.datasetName} data`, status: "DOCUMENTED", instruction: "Reviewed adapter downloads UCI data and applies the explicit MNIST-only import compatibility patch. Check the local runner for exact commands." },
     { id: "training-benchmark", title: "Train from scratch and save a new model", status: "DOCUMENTED", command: `cd software_model && python train_swept_models.py ${selectedReviewedCase.training.arguments.join(" ")}`, instruction: `Reviewed launcher sets NumPy seed ${selectedReviewedCase.training.seed} before calling the original trainer. This is the original invocation, not the complete seeded adapter.` },
     { id: "evaluation-benchmark", title: `Evaluate the newly trained model and compare with ${selectedReviewedCase.reference.value}`, status: "DOCUMENTED", instruction: "Original evaluate.py reads the newly trained checkpoint; the adapter records actual held-out accuracy as JSON." },
-  ] } : selectedCandidate ? candidateWorkflow(report, selectedCandidate) : activeWorkflow ?? report.reproductionPlan;
+  ] } : selectedCandidate ? candidateWorkflow(report, selectedCandidate) : activeWorkflow ?? report.reproductionPlan);
 
   function applyCandidate(options) {
     setSelectedWorkflow("evaluation");
@@ -605,6 +645,11 @@ function App() {
     setSelectedWorkflow("training"); setQuickCommand(options.quickCommand);
     setAcceptance({ ...emptyAcceptance, ...options.evaluation, experiment: options.experiment, outputFile: options.outputFile, metricKey: options.metricKey,
       metricOperator: options.metricOperator, metricTarget: String(options.metricTarget), metricTolerance: String(options.metricTolerance), expectedText: options.expectedText });
+    setPreflight(null); setRunConfirmed(false); setRunJob(null); setPreflightError("");
+  }
+
+  function applyMatrix(paperMatrix) {
+    setSelectedWorkflow("paper-matrix"); setQuickCommand(""); setAcceptance({ ...emptyAcceptance, paperMatrix });
     setPreflight(null); setRunConfirmed(false); setRunJob(null); setPreflightError("");
   }
 
@@ -710,7 +755,7 @@ function App() {
           url: `https://github.com/${report.repository}`,
           commit: report.commit,
           workflowId: activeWorkflow.id,
-          executionOptions: acceptance.benchmarkId ? { benchmarkId: acceptance.benchmarkId } : { quickCommand, expectedText: acceptance.expectedText, outputFile: acceptance.outputFile, metricKey: acceptance.metricKey,
+          executionOptions: acceptance.benchmarkId ? { benchmarkId: acceptance.benchmarkId } : acceptance.paperMatrix ? { paperMatrix: acceptance.paperMatrix } : { quickCommand, expectedText: acceptance.expectedText, outputFile: acceptance.outputFile, metricKey: acceptance.metricKey,
             metricOperator: acceptance.metricOperator, metricTarget: acceptance.metricTarget === "" ? null : Number(acceptance.metricTarget), metricTolerance: acceptance.metricOperator === "eq" ? Number(acceptance.metricTolerance) : 0,
             ...(acceptance.candidateReview ? { candidateReview: acceptance.candidateReview } : {}),
             ...(acceptance.experiment ? { experiment: acceptance.experiment } : {}),
@@ -936,6 +981,7 @@ function App() {
 
         {!isExample && <PaperProvenance report={report} />}
         {!isExample && <ProtocolLock report={report} />}
+        {!isExample && <PaperMatrix key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onApply={applyMatrix} />}
 
         {displayedPlan && (
           <section className="plan" aria-labelledby="plan-title">
@@ -1032,7 +1078,7 @@ function App() {
           </section>
         )}
 
-        {!isExample && report.evaluationDraft && !acceptance.benchmarkId && <CandidateConfig key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onApply={applyCandidate} />}
+        {!isExample && report.evaluationDraft && !acceptance.benchmarkId && selectedWorkflow !== "paper-matrix" && <CandidateConfig key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onApply={applyCandidate} />}
 
         {!isExample && activeWorkflow && (
           <section className="runner" aria-labelledby="runner-title">
@@ -1148,7 +1194,7 @@ function App() {
                   onClick={() => startExecution("readme")}
                   disabled={!preflight.runnable || !runConfirmed || executionBusy}
                 >
-                  {runLoading ? "Starting…" : activeWorkflow.id === "training" ? "Run Training reproduction" : activeWorkflow.id === "evaluation" ? "Run Evaluation" : "Run Quick verification"}
+                  {runLoading ? "Starting…" : activeWorkflow.id === "training" ? "Run Training reproduction" : activeWorkflow.id === "evaluation" ? "Run Evaluation" : activeWorkflow.id === "paper-matrix" ? "Run paper matrix" : "Run Quick verification"}
                 </button>
                 {!preflight.runnable && (
                   <p className="runner-note">{preflight.reason ?? "The workflow is not ready to execute."}</p>
@@ -1179,6 +1225,9 @@ function App() {
                   <p className="runner-error">Stopped at: {runJob.failureStep.title}</p>
                 )}
                 {runJob.diagnosis && <p className="run-diagnosis">{runJob.diagnosis}</p>}
+                {["FAILED", "TIMED_OUT"].includes(runJob.status) && runJob.workflowId === "paper-matrix" && !runJob.replayOf && (
+                  <button type="button" onClick={() => startExecution("readme", runJob)} disabled={executionBusy || !runConfirmed}>Retry complete paper workflow</button>
+                )}
                 {["FAILED", "TIMED_OUT"].includes(runJob.status)
                   && runJob.failureStep?.id === "install"
                   && !runJob.replayOf && runJob.packageIndex === "readme" && (

@@ -7,6 +7,7 @@ const metricType = (label) => label.replaceAll("_", " ").match(new RegExp(`\\b($
   .replace(/^acc$/, "accuracy").replace(/^f1(?:[-_ ]score)?/, "f1_score").replace(/\\s*[@_-]?\\s*(\\d+)$/, "_$1").replace(/[ -]+/g, "_");
 const source = (file, line, text) => ({ file, line, text: text.trim().slice(0, 500) });
 const quote = (text) => `'${text.replaceAll("'", "'\"'\"'")}'`;
+const precision = (raw) => raw.toLowerCase().split("e")[0].split(".")[1]?.length ?? 0;
 
 function paperSource(raw) {
   const value = raw.trim().replace(/[.,;]+$/, "");
@@ -77,10 +78,13 @@ export function discoverPaperProvenance({ readme, readmeText, evaluationDraft })
   lines.forEach((line, index) => {
     section = line.match(/^\s*#{1,6}\s+(.+?)\s*$/)?.[1] ?? section;
     const command = line.trim().replace(/^[$>]\s*/, "").replace(/\s+#.*$/, "").trim();
-    if (/(?:reproduc|reported|results?|table)/i.test(section)
-      && /^(?:make\s+(?:run[\w-]*|verify|test)\b|(?:\.\/?venv\/bin\/)?python3?\s+\S+\.py\b)/i.test(command)
-      && !command.endsWith("\\")
-      && workflowHints.length < 12) workflowHints.push({ id: `paper-workflow-${index + 1}`, command, evidence: source(readme, index + 1, line) });
+    const role = /(?:install|setup|prereq|dependenc)/i.test(section) && /^make\s+(?:setup|dependency|install)\b/i.test(command) ? "setup"
+      : /(?:data|prepare)/i.test(section) && /^make\s+(?:data[\w-]*|prepare[\w-]*)\b/i.test(command) ? "prepare"
+        : /(?:reproduc|reported|results?|table)/i.test(section) && /^make\s+test\b/i.test(command) ? "preflight"
+          : /(?:reproduc|reported|results?|table)/i.test(section) && /^make\s+verify\b/i.test(command) ? "verify"
+            : /(?:reproduc|reported|results?|table)/i.test(section)
+              && /^(?:make\s+run[\w-]*\b|(?:\.\/?venv\/bin\/)?python3?\s+\S+\.py\b)/i.test(command) ? "experiment" : null;
+    if (role && !command.endsWith("\\") && workflowHints.length < 16) workflowHints.push({ id: `paper-workflow-${index + 1}`, role, command, evidence: source(readme, index + 1, line) });
   });
   const suggestion = evaluationDraft?.suggestion;
   const entry = suggestion && evaluationDraft.entries.find((item) => item.id === suggestion.entryId);
@@ -170,7 +174,7 @@ export function buildEvaluationDraft({ readme, readmeText, entrypoints, files, f
   const lines = readmeText.split(/\r?\n/);
   let header = null;
   let tableContext = null;
-  for (let index = 0; index < lines.length && references.length < 24; index += 1) {
+  for (let index = 0; index < lines.length && references.length < 96; index += 1) {
     const line = lines[index];
     const cells = line.includes("|") ? line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim()) : null;
     const contextMetric = !cells && /\b(?:table|reported|results?|scores?|metrics?)\b/i.test(line)
@@ -178,7 +182,7 @@ export function buildEvaluationDraft({ readme, readmeText, entrypoints, files, f
     if (contextMetric) tableContext = { metric: contextMetric, line: index + 1 };
     if (cells?.length === 2 && tableMetric(cells[0]) && /^[\d.+-]/.test(cells[1])) {
       const value = cells[1].match(new RegExp(`^(${number})\\s*(%)?$`, "i"));
-      if (value && Number.isFinite(Number(value[1]))) references.push({ id: `reference-${index + 1}-1`, metricKey: metricKey(tableMetric(cells[0])), label: cells[0], value: Number(value[1]),
+      if (value && Number.isFinite(Number(value[1]))) references.push({ id: `reference-${index + 1}-1`, metricKey: metricKey(tableMetric(cells[0])), label: cells[0], value: Number(value[1]), precision: precision(value[1]),
         unit: value[2] ? "percent" : "as printed (no conversion)", entryId: null, evidence: source(readme, index + 1, line), note: "Metric/value table candidate; dataset/model correspondence requires review" });
       continue;
     }
@@ -194,10 +198,10 @@ export function buildEvaluationDraft({ readme, readmeText, entrypoints, files, f
     const associated = entries.filter((entry) => entry.evidence.file === readme && entry.evidence.line < index + 1
       && index + 1 - entry.evidence.line <= 24).sort((a, b) => b.evidence.line - a.evidence.line)[0];
     const add = (label, raw, percent, column, row = null, key = label) => {
-      if (references.length >= 24) return;
+      if (references.length >= 96) return;
       const value = Number(raw);
       if (!Number.isFinite(value)) return;
-      references.push({ id: `reference-${index + 1}-${column}`, metricKey: metricKey(key), value,
+      references.push({ id: `reference-${index + 1}-${column}`, metricKey: metricKey(key), value, precision: precision(raw),
         unit: percent ? "percent" : "as printed (no conversion)", label: row ? `${row} · ${label}` : label,
         entryId: row ? null : associated?.id ?? null, evidence: source(readme, index + 1, line),
         note: "README report/example candidate, not independently verified paper or dataset/model correspondence" });

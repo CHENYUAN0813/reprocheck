@@ -33,7 +33,7 @@ export function buildProtocolLock({ report, treeEntries = [], readme, makefile, 
   if (declaredAssets.some((item) => item.status === "ROLE_UNRESOLVED")) gaps.push("data/output path role review");
   if (readyAdapters.length && !seedConfiguration) gaps.push("random seed evidence or an explicit deterministic-protocol review");
   const manifest = { schemaVersion: 1, repository: report.repository, commit: report.commit,
-    paperSources: report.paperProvenance?.sources ?? [], claims: (report.evaluationDraft?.references ?? []).map(({ id, metricKey, label, value, unit, evidence }) => ({ id, metricKey, label, value, unit, evidence })),
+    paperSources: report.paperProvenance?.sources ?? [], claims: (report.evaluationDraft?.references ?? []).map(({ id, metricKey, label, value, precision, unit, evidence }) => ({ id, metricKey, label, value, precision: precision ?? null, unit, evidence })),
     adapters: readyAdapters, environment: { python: pythonVersionResult ?? null, pythonFile: pythonVersionFile ?? null,
       dependencies: dependencyVersions ?? null, dependencyFile: dependencyFile ?? null, dependencyLocked },
     sourceFiles, declaredAssets, seedEvidence: seedConfiguration ?? null, parameters: report.experimentParameters ?? [] };

@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { buildPaperWorkflowDraft } from "./paper-workflow.mjs";
 
 const hint = (line, command) => ({ id: `paper-workflow-${line}`, command, evidence: { file: "README.md", line } });
-const makefileText = "test:\n\tpython -m pytest\nrun:\n\tpython run.py\nrun-cpu:\n\tpython run.py --cpu\nverify:\n\tpython verify.py\n";
-const provenance = { workflowHints: [hint(10, "make test"), hint(11, "make run"), hint(12, "make run-cpu"), hint(13, "make verify")] };
+const makefileText = "setup:\n\tpython -m venv .venv\ndependency:\n\tpip install -r requirements.txt\ndata-public:\n\tpython data.py\ntest:\n\tpython -m pytest\nrun:\n\tpython run.py\nrun-cpu:\n\tpython run.py --cpu\nverify:\n\tpython verify.py\n";
+const provenance = { workflowHints: [{ ...hint(7, "make setup"), role: "setup" }, { ...hint(8, "make dependency"), role: "setup" },
+  { ...hint(9, "make data-public"), role: "prepare" }, hint(10, "make test"), hint(11, "make run"), hint(12, "make run-cpu"), hint(13, "make verify")] };
 const draft = buildPaperWorkflowDraft({ provenance, makefile: "Makefile", makefileText, filePaths: [] });
 assert.equal(draft.status, "NEEDS_REVIEW");
 assert.equal(draft.adapters.length, 2);
 assert.deepEqual(draft.adapters[0].steps.map(({ role, command, supported }) => [role, command, supported]), [
+  ["setup", "make setup", true], ["setup", "make dependency", true], ["prepare", "make data-public", true],
   ["preflight", "make test", true], ["experiment", "make run", true], ["verify", "make verify", true],
 ]);
 assert.equal(draft.adapters[0].reviewRequired, true);

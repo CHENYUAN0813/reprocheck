@@ -4,6 +4,7 @@ import base64
 import csv
 import importlib.metadata
 import json
+import math
 import platform
 import re
 import sys
@@ -133,6 +134,7 @@ else:
     if artifact and artifact.get("sha256"):
         artifact["fresh"] = artifact["sha256"] != (previous or {}).get("sha256")
     metric = None
+    matrix = None
     evaluation_output = None
     if options.get("metricKey"):
         metric = {"key": options["metricKey"], "value": None}
@@ -164,12 +166,63 @@ else:
                     value = value[key]
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise ValueError("Metric is not a number")
-            import math
             if not math.isfinite(value):
                 raise ValueError("Metric is not finite")
             metric["value"] = value
         except Exception as error:
             metric["error"] = str(error)
+    matrix_spec = options.get("paperMatrixExecution")
+    if matrix_spec:
+        matrix = {"cells": [], "summary": {"total": len(matrix_spec["cells"]), "matched": 0, "outside": 0, "missing": 0}}
+        try:
+            if not artifact or not artifact.get("sha256") or artifact["size"] > 1024 * 1024:
+                raise ValueError("Paper matrix needs a readable CSV output file up to 1 MB")
+            with (root / matrix_spec["outputFile"]).resolve().open(encoding="utf-8", newline="") as stream:
+                reader = csv.DictReader(stream)
+                if not reader.fieldnames or any(not name.strip() for name in reader.fieldnames) or len(set(reader.fieldnames)) != len(reader.fieldnames):
+                    raise ValueError("Paper matrix CSV requires a unique header")
+                if matrix_spec["rowKey"] not in reader.fieldnames:
+                    raise ValueError("Paper matrix row-key column is missing")
+                rows = list(reader)
+            if len(rows) > 10000 or any(None in row or any(value is None for value in row.values()) for row in rows):
+                raise ValueError("Paper matrix CSV is incomplete or too large")
+            # ponytail: match presentation labels by normalized text, with a unique "rec" abbreviation fallback; expose the matched header in evidence.
+            normalize = lambda value: re.sub(r"[^a-z0-9]+", "", value.lower().replace("+", "plus"))
+            aliases = lambda value: {normalize(value), normalize(value).replace("rec", "")}
+            keyed = {}
+            for row in rows:
+                key = normalize(row[matrix_spec["rowKey"]].strip())
+                if not key or key in keyed:
+                    raise ValueError("Paper matrix row keys must be non-empty and unique")
+                keyed[key] = row
+            numeric = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?")
+            for expected in matrix_spec["cells"]:
+                observed = None
+                error = None
+                csv_column = None
+                try:
+                    row = keyed[normalize(expected["dataset"])]
+                    candidates = [name for name in reader.fieldnames if name != matrix_spec["rowKey"] and aliases(name) & aliases(expected["column"])]
+                    if len(candidates) != 1:
+                        raise ValueError("output column has no unique label match")
+                    csv_column = candidates[0]
+                    raw = row[csv_column].strip()
+                    if not numeric.fullmatch(raw):
+                        raise ValueError("cell is not a finite number")
+                    observed = float(raw)
+                    if not math.isfinite(observed):
+                        raise ValueError("cell is not finite")
+                except Exception as failure:
+                    error = str(failure)
+                compared = round(observed, expected["precision"]) if observed is not None and expected.get("precision") is not None else observed
+                delta = abs(compared - expected["target"]) if compared is not None else None
+                tolerance = matrix_spec["metricTolerance"]
+                status = "MISSING" if error else "MATCHED" if delta <= tolerance or tolerance > 0 and delta - tolerance <= sys.float_info.epsilon * max(abs(observed), abs(expected["target"]), tolerance) else "OUTSIDE_REFERENCE"
+                matrix["summary"]["matched" if status == "MATCHED" else "outside" if status == "OUTSIDE_REFERENCE" else "missing"] += 1
+                matrix["cells"].append({**expected, "csvColumn": csv_column, "observed": observed, "compared": compared, "delta": delta, "tolerance": tolerance, "status": status, **({"error": error} if error else {})})
+        except Exception as error:
+            matrix["error"] = str(error)
+            matrix["summary"]["missing"] = matrix["summary"]["total"]
     snapshot = json.loads(environment_file.read_text(encoding="utf-8")) if environment_file.exists() else observe_environment()
     if not environment_file.exists():
         snapshot["environment"]["capture"] = "after-failure"
@@ -217,6 +270,7 @@ else:
         **(identities or {}),
         "artifact": artifact,
         "metric": metric,
+        "matrix": matrix,
         "evaluationOutput": evaluation_output,
         **({"trainingCheckpoint": training_checkpoint} if training_checkpoint else {}),
     }

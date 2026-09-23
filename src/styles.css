@@ -667,6 +667,11 @@ code {
 .evaluation-summary dt { color: #8d99aa; }
 .evaluation-summary dd { margin: 0 0 12px; }
 
+.matrix-scroll { overflow-x: auto; }
+.matrix-table { width: 100%; border-collapse: collapse; margin: 18px 0; }
+.matrix-table th, .matrix-table td { padding: 10px 12px; border-bottom: 1px solid #253044; text-align: left; white-space: nowrap; }
+.matrix-table th { color: #8da9d8; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; }
+
 .evaluation-source { max-height: 400px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .recipe-preview {

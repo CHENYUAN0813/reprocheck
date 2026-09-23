@@ -161,6 +161,12 @@ Two public repositories were run on 2026-09-15 using only the JSON configuration
 
 These are **educational software pipeline acceptance cases**, not two reproduced papers. Times are local observations, not guarantees. Both cases exercise configuration-driven original training → new saved model → original held-out evaluation → downloadable model/evidence. `npm run test:experiments` additionally checks trainer-only stale scores, evaluator-modified models, absent outputs and pre-existing models; missing/pre-existing model cases must stop before the evaluation entry. Ordinary `npm test` covers configuration/identity/review/capture/model checks and replay ordering offline. Existing reviewed BTHOWeN/Evaluation/Quick regression suites remain in place. No extra application dependency or remote execution service was added.
 
+### Source-generated paper matrices
+
+When a README contains a contextual result table, ReproCheck builds a dataset × model × optional-seed matrix from its pinned numeric cells. A runnable matrix requires a source-validated paper adapter, the current protocol-lock ID, an explicitly reviewed CSV output path/row key/tolerance, and exact acknowledgement of any unresolved lock gaps. The adapter now includes validated setup/dependency/data Make targets before test/run/verify when those commands are documented in the relevant README sections.
+
+The temporary Docker run executes one selected source workflow and requires a fresh CSV. Dataset rows and model (or model/seed) columns are compared cell by cell with the README references; the evidence report retains observed values, absolute differences and `MATCHED`, `OUTSIDE_REFERENCE` or `MISSING` status. A failed/timed-out matrix can rerun the same pinned configuration in a fresh container; a successful fully matched run can use the existing frozen-recipe replay. ReproCheck does not infer cross-container checkpoint resume or invent per-cell commands the source repository does not document.
+
 ## Self-test
 
 `node scan.mjs --self-test`
@@ -199,3 +205,4 @@ For the opt-in published suite, run `npm run test:benchmark` with Docker running
 - Official PyPI override supports a single pip install command, not arbitrary compound shell/Poetry/uv installs
 - Output checks require explicit reviewed expectations; literal metric candidates and declared protocols do not establish paper equivalence. Custom experiments export one newly trained model up to 512 KiB, not large model files/directories
 - Recipe replay requires the observed local image and index packages available as wheels; downloaded recipe JSON is not an import/execution interface
+- Paper matrices currently accept one metric per CSV table and exact dataset/model column labels; arbitrary multi-metric schemas and checkpoint resume remain explicit future work

@@ -51,6 +51,31 @@ assert.equal(buildPreflight(evaluationReport, "evaluation", { available: true },
 assert.equal(buildPreflight(evaluationReport, "training", { available: true }).runnable, false);
 console.log("PASS  Evaluation execution preview and reference tolerance self-test");
 
+const matrixAdapter = { id: "paper-adapter-1", status: "NEEDS_REVIEW", steps: [
+  { id: "setup-1", role: "setup", command: "make setup", supported: true },
+  { id: "experiment-2", role: "experiment", command: "make run", supported: true },
+  { id: "verify-3", role: "verify", command: "make verify", supported: true },
+] };
+const matrixReport = { repository: "owner/repo", commit: "a".repeat(40), workflows: [], paperWorkflowDraft: { adapters: [matrixAdapter] },
+  protocolLock: { lockId: "d".repeat(64), gaps: [], status: "READY_FOR_REVIEW" }, evaluationDraft: { references: [
+    { id: "reference-1", label: "Beauty · SASRec · NDCG@10", metricKey: "ndcg_10", value: 0.31, unit: "as printed", evidence: { file: "README.md", line: 20 } },
+    { id: "reference-2", label: "Games · SASRec · NDCG@10", metricKey: "ndcg_10", value: 0.29, unit: "as printed", evidence: { file: "README.md", line: 21 } },
+  ] } };
+const matrixOptions = { paperMatrix: { adapterId: matrixAdapter.id, protocolLockId: matrixReport.protocolLock.lockId,
+  outputFile: "results/table1.csv", rowKey: "dataset", metricTolerance: 0.001, confirmed: true, acknowledgedGaps: [] } };
+const matrixPreview = buildPreflight(matrixReport, "paper-matrix", { available: true }, "readme", matrixOptions);
+assert.equal(matrixPreview.runnable, true);
+assert.deepEqual(matrixPreview.automatedSteps.map((step) => step.command), ["make setup", "make run", "make verify"]);
+const matrixEvidence = { artifact: { fresh: true, size: 40 }, matrix: { summary: { total: 2, matched: 2, outside: 0, missing: 0 }, cells: [
+  { id: "matrix-reference-1", observed: 0.31, target: 0.31, status: "MATCHED" },
+  { id: "matrix-reference-2", observed: 0.29, target: 0.29, status: "MATCHED" },
+] } };
+const matrixJob = { status: "SUCCEEDED", steps: matrixPreview.automatedSteps, executionOptions: matrixPreview.executionOptions,
+  paperMatrix: matrixPreview.paperMatrix, log: `::reprocheck-step::${matrixPreview.automatedSteps.at(-1).id}\n::reprocheck-evidence::${JSON.stringify(matrixEvidence)}\n` };
+assert.equal(verifyOutcome(matrixJob).status, "VERIFIED");
+assert.equal(verifyOutcome({ ...matrixJob, log: matrixJob.log.replace('"matched":2', '"matched":1').replace('"outside":0', '"outside":1') }).status, "FAILED");
+console.log("PASS  reviewed paper matrix preflight and multi-cell verification self-test");
+
 const frozen = { ...sample, id: randomUUID(), repository: "owner/repo", commit: "a".repeat(40), workflowId: "quick", packageIndex: "readme",
   steps: [{ id: "install", title: "Install", command: "pip install example==1.0" }, { id: "run", title: "Run", command: "python demo.py" }],
   environment: { imageId: `sha256:${"b".repeat(64)}`, python: "3.11.9", platform: "Linux-test", capture: "before-entry", unlockedDependencies: [] },
@@ -58,6 +83,11 @@ const frozen = { ...sample, id: randomUUID(), repository: "owner/repo", commit: 
   limits: { cpus: 2, memory: "2 GB", timeoutMinutes: 10, hostMounts: false, networkAccess: true, image: "python:3.11" },
 };
 const recipe = createRecipe(frozen);
+const frozenMatrix = { ...frozen, workflowId: "paper-matrix", executionOptions: matrixPreview.executionOptions,
+  paperMatrix: matrixPreview.paperMatrix, matrix: matrixEvidence.matrix, verification: verifyOutcome(matrixJob),
+  steps: matrixPreview.automatedSteps.map(({ id, title, command }) => ({ id, title, command })) };
+assert.equal(createRecipe(frozenMatrix).workflowId, "paper-matrix");
+assert.equal(buildReplayPreflight(frozenMatrix, { available: true }, true).paperMatrix.cells.length, 2);
 const frozenEvaluation = { ...frozen, workflowId: "evaluation", executionOptions: evaluationOptions, evaluation: { status: "MATCHED_REFERENCE" } };
 assert.equal(createRecipe(frozenEvaluation).workflowId, "evaluation");
 assert.equal(buildReplayPreflight(frozenEvaluation, { available: true }, true).workflow.id, "evaluation");

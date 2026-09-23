@@ -17,13 +17,15 @@ function validateHint(hint, makefile, makefileText, filePaths) {
 
 export function buildPaperWorkflowDraft({ provenance, makefile, makefileText = "", filePaths = [] }) {
   const hints = (provenance?.workflowHints ?? []).map((hint) => validateHint(hint, makefile, makefileText, filePaths));
-  const test = hints.find((hint) => hint.command === "make test");
-  const verify = hints.find((hint) => hint.command === "make verify");
-  const runs = hints.filter((hint) => hint !== test && hint !== verify);
+  const role = (hint) => hint.role ?? (hint.command === "make test" ? "preflight" : hint.command === "make verify" ? "verify" : "experiment");
+  const prerequisites = hints.filter((hint) => ["setup", "prepare"].includes(role(hint)));
+  const test = hints.find((hint) => role(hint) === "preflight");
+  const verify = hints.find((hint) => role(hint) === "verify");
+  const runs = hints.filter((hint) => role(hint) === "experiment");
   const adapters = runs.map((run, index) => {
-    const steps = [test, run, verify].filter(Boolean).map((hint) => {
-      const role = hint === test ? "preflight" : hint === verify ? "verify" : "experiment";
-      return { id: `${role}-${hint.id}`, role, command: hint.command, evidence: hint.evidence, validation: hint.validation, supported: hint.supported };
+    const steps = [...prerequisites, test, run, verify].filter(Boolean).map((hint) => {
+      const stepRole = role(hint);
+      return { id: `${stepRole}-${hint.id}`, role: stepRole, command: hint.command, evidence: hint.evidence, validation: hint.validation, supported: hint.supported };
     });
     const gaps = [...(!test ? ["preflight command"] : []), ...(!verify ? ["verification command"] : []),
       ...steps.filter((step) => !step.supported).map((step) => `validated ${step.role} command`)];

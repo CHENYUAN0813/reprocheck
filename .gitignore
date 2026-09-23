@@ -1,3 +1,5 @@
 node_modules/
 dist/
 .reprocheck/
+__pycache__/
+*.pyc

@@ -73,9 +73,9 @@ const academicTable = buildEvaluationDraft({ readme: "README.md", readmeText: "F
 assert.deepEqual(academicTable.references.map(({ metricKey, label, value }) => [metricKey, label, value]), [
   ["ndcg_10", "Beauty · MC · NDCG@10", 0.0492], ["ndcg_10", "Beauty · FMC · NDCG@10", 0.0481],
 ]);
-const manyColumns = Array.from({ length: 30 }, (_, index) => `M${index + 1}`);
+const manyColumns = Array.from({ length: 120 }, (_, index) => `M${index + 1}`);
 const boundedTable = buildEvaluationDraft({ readme: "README.md", readmeText: `Reported NDCG@10 results:\nData | ${manyColumns.join(" | ")}\n--- | ${manyColumns.map(() => "---").join(" | ")}\nSet | ${manyColumns.map((_, index) => `.${String(index + 1).padStart(3, "0")}`).join(" | ")}`, entrypoints: [], files: [] });
-assert.equal(boundedTable.references.length, 24);
+assert.equal(boundedTable.references.length, 96);
 const jsonDraft = buildEvaluationDraft({ readme: "README.md", readmeText: "Accuracy usually exceeds 90%", entrypoints,
   files: [{ path: "eval.py", text: 'json.dump({"accuracy":score}, open("results.json","w"))\njson.dump({},open("../escape.json","w"))' }] });
 assert.equal(jsonDraft.references.length, 0, "Narrative ranges are not exact reference values");
