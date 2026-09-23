@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { buildDockerInvocation, buildPreflight, buildReplayPreflight, cancelRun, getRun, inspectRuntime, reviewedBenchmark, reviewedTraining, startRun, validateExecutionOptions, verifyOutcome } from "./runner.mjs";
+import { buildDockerInvocation, buildPreflight, buildReplayPreflight, cancelRun, getRun, inspectRuntime, reviewedBenchmark, reviewedTraining, reviewedTrainings, startRun, validateExecutionOptions, verifyOutcome } from "./runner.mjs";
 import { getSavedRun } from "./run-store.mjs";
 import worker from "./worker.mjs";
 
@@ -15,6 +15,15 @@ assert.deepEqual(preflight.automatedSteps.map((step) => step.id), ["install", "p
 assert.equal(preflight.benchmark.assets.some((asset) => asset.role === "checkpoint"), false, "Pretrained model must not be a training input");
 assert.deepEqual(preflight.benchmark.training.parameters, { bits_per_input: 3, filter_inputs: 2, filter_entries: 128, filter_hashes: 1, num_workers: 1 });
 assert.ok(preflight.automatedSteps.every((step) => step.command.length <= 6000));
+for (const benchmark of reviewedTrainings) {
+  const caseOptions = validateExecutionOptions({ benchmarkId: benchmark.id });
+  const caseReport = { ...report, repository: benchmark.repository, commit: benchmark.commit };
+  const casePreview = buildPreflight(caseReport, "training", { available: true }, "readme", caseOptions);
+  assert.equal(casePreview.benchmark.datasetName, benchmark.datasetName);
+  assert.deepEqual(casePreview.benchmark.training.parameters, benchmark.training.parameters);
+  assert.equal(casePreview.benchmark.assets.some((asset) => asset.role === "checkpoint"), false);
+  assert.equal(casePreview.executionOptions.metricTarget, benchmark.reference.value);
+}
 assert.throws(() => buildPreflight(report, "evaluation", { available: true }, "readme", options), /matching/);
 assert.throws(() => buildPreflight({ ...report, commit: "a".repeat(40) }, "training", { available: true }, "readme", options), /pinned/);
 assert.throws(() => buildPreflight(report, "training", { available: true }, "readme", { ...options, metricTarget: 0.8 }), /fixed/);
@@ -55,33 +64,25 @@ console.log("PASS  reviewed Training route, paper parameters, no pretrained inpu
 if (process.argv.includes("--docker")) {
   const runtime = await inspectRuntime();
   assert.equal(runtime.available, true, runtime.reason);
-  const base = process.env.REPROCHECK_TEST_URL ?? "http://127.0.0.1:5173";
-  async function request(path, body) {
-    const response = await fetch(`${base}${path}`, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : undefined);
-    const result = await response.json();
-    assert.equal(response.ok, true, JSON.stringify(result));
-    return result;
-  }
-  const input = { url: `https://github.com/${report.repository}`, commit: report.commit, workflowId: "training", executionOptions: { benchmarkId: reviewedTraining.id } };
-  const preview = await request("/api/preflight", input);
+  const preview = buildPreflight(report, "training", runtime, "readme", options);
   assert.equal(preview.runnable, true);
-  async function wait(initial, api = false) {
+  async function wait(initial) {
     let job = initial;
     const deadline = Date.now() + 660_000;
     console.log(`Training run ${job.id}`);
     let stage;
     while (job.status === "RUNNING" && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 2000));
-      job = api ? await request(`/api/runs/${job.id}`) : getRun(job.id);
+      job = getRun(job.id);
       if (stage !== job.currentStep?.id) { stage = job.currentStep?.id; console.log(`Stage: ${stage ?? "setup"}`); }
     }
     if (job.status === "RUNNING") {
-      if (api) await fetch(`${base}/api/runs/${job.id}`, { method: "DELETE" }); else cancelRun(job.id);
+      cancelRun(job.id);
       assert.fail("Training exceeded its bounded execution window");
     }
     return job;
   }
-  const job = await wait(await request("/api/run", { ...input, confirmUnknownCode: true }), true);
+  const job = await wait(startRun(preview));
   assert.equal(job.status, "SUCCEEDED", job.log.slice(-5000));
   assert.ok(job.log.includes("Training model") && job.log.includes("training-checkpoint-saved"));
   assert.equal(job.trainingCheckpoint.status, "PASSED");
@@ -100,6 +101,23 @@ if (process.argv.includes("--docker")) {
   console.log(JSON.stringify({ id: job.id, metric: job.metric.value, reference: 0.98, evaluation: job.evaluation.status,
     checkpointBytes: modelBytes.length, checkpointSha256: job.trainingCheckpoint.sha256, trainingSeconds: job.trainingCheckpoint.trainingSeconds,
     totalSeconds: (Date.parse(job.finishedAt) - Date.parse(job.startedAt)) / 1000 }));
+  for (const benchmark of reviewedTrainings.slice(1)) {
+    const caseOptions = validateExecutionOptions({ benchmarkId: benchmark.id });
+    const caseJob = await wait(startRun(buildPreflight(report, "training", runtime, "readme", caseOptions)));
+    assert.equal(caseJob.status, "SUCCEEDED", caseJob.log.slice(-5000));
+    assert.ok(caseJob.verification.checks.every((check) => check.id === "metric" || check.status === "PASSED"), JSON.stringify(caseJob.verification));
+    assert.equal(caseJob.trainingCheckpoint.status, "PASSED");
+    assert.equal(caseJob.trainingCheckpoint.fresh, true);
+    assert.equal(caseJob.evaluation.output.data.training.pretrained_checkpoint_used, false);
+    assert.equal(caseJob.evaluation.output.data.train_samples, benchmark.split.trainSamples);
+    assert.equal(caseJob.evaluation.output.data.test_samples, benchmark.split.testSamples);
+    assert.equal(caseJob.metric.value, caseJob.evaluation.output.data.correct / benchmark.split.testSamples);
+    assert.equal(caseJob.evaluation.status,
+      Math.abs(caseJob.metric.value - benchmark.reference.value) <= benchmark.reference.tolerance ? "MATCHED_REFERENCE" : "OUTSIDE_REFERENCE");
+    console.log(JSON.stringify({ dataset: benchmark.datasetName, id: caseJob.id, metric: caseJob.metric.value,
+      reference: benchmark.reference.value, evaluation: caseJob.evaluation.status,
+      checkpointBytes: caseJob.trainingCheckpoint.size, checkpointSha256: caseJob.trainingCheckpoint.sha256 }));
+  }
   const wrongInput = structuredClone(buildPreflight(report, "training", runtime, "readme", options));
   wrongInput.benchmark.assets.find((asset) => asset.role === "inference").sha256 = "0".repeat(64);
   const blocked = await wait(startRun(wrongInput));

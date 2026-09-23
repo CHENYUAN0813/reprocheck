@@ -3,6 +3,7 @@
   "title": "BTHOWeN · Iris published software benchmark",
   "repository": "ZSusskind/BTHOWeN",
   "commit": "94e33e4ce3e46e8e88a409dcca044e5f7544858d",
+  "datasetName": "Iris",
   "dataset": "UCI Iris, 150 original rows; repository shuffle random_state=123; 100 train / 50 held-out test",
   "model": "Paper's selected_models/iris.pickle.lzma; pretrained BTHOWeN; no retraining",
   "reference": {
@@ -21,6 +22,7 @@
     "beforeSha256": "e026effc3dbf1081375a12765e47c2acd1cbf99d5d100823b488d9527d6faf08",
     "removeLines": ["import torchvision.datasets as dsets", "import torchvision.transforms as transforms"]
   },
+  "split": {"trainSamples": 100, "testSamples": 50, "seed": 123},
   "assets": [
     {"role": "dataset", "path": "software_model/datasets/iris/iris.data", "sha256": "6f608b71a7317216319b4d27b4d9bc84e6abd734eda7872b71a458569e2656c0", "url": "https://archive.ics.uci.edu/ml/machine-learning-databases/iris/iris.data"},
     {"role": "checkpoint", "path": "software_model/selected_models/iris.pickle.lzma", "sha256": "47847744b61c779a321dc6ea9b3bd5998f0dbba135bfb192a3371ca01de2901e"},

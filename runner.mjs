@@ -5,22 +5,21 @@ import { readFileSync } from "node:fs";
 import { getSavedRun, listSavedRuns, saveRun } from "./run-store.mjs";
 import { candidateWorkflow, captureMetricCommand, reviewedCandidate } from "./evaluation-config.mjs";
 import { MODEL_EXPORT_LIMIT, validateExperiment } from "./experiment-config.mjs";
+import { reviewedBenchmark, reviewedTraining, reviewedBenchmarks, reviewedTrainings, reviewedCaseById } from "./examples/bthowen-cases.mjs";
+
+export { reviewedBenchmark, reviewedTraining, reviewedBenchmarks, reviewedTrainings };
 
 const execFileAsync = promisify(execFile);
 const jobs = new Map();
 const LOG_LIMIT = 900_000;
 const collector = readFileSync(new URL("./collect-evidence.py", import.meta.url), "utf8");
-export const reviewedBenchmark = JSON.parse(readFileSync(new URL("./examples/bthowen-iris.json", import.meta.url), "utf8"));
-const trainingProfile = JSON.parse(readFileSync(new URL("./examples/bthowen-training.json", import.meta.url), "utf8"));
-export const reviewedTraining = { ...reviewedBenchmark, id: trainingProfile.id, title: trainingProfile.title, model: trainingProfile.model,
-  reference: { ...reviewedBenchmark.reference, scope: trainingProfile.scope }, assets: reviewedBenchmark.assets.filter((asset) => asset.role !== "checkpoint"), training: trainingProfile };
 const benchmarkSource = readFileSync(new URL("./examples/evaluate-bthowen.py", import.meta.url), "utf8");
 const benchmarkCommand = (phase) => `python -c ${shellQuote(`exec(${JSON.stringify(benchmarkSource)})`)} ${phase}`;
 const trainingSource = readFileSync(new URL("./examples/train-bthowen.py", import.meta.url), "utf8");
 const trainingCommand = () => `python -c ${shellQuote(`exec(${JSON.stringify(trainingSource)})`)}`;
 
 function benchmarkOptions(id = reviewedBenchmark.id) {
-  const benchmark = id === reviewedTraining.id ? reviewedTraining : reviewedBenchmark;
+  const benchmark = reviewedCaseById.get(id);
   return { benchmarkId: benchmark.id, quickCommand: benchmarkCommand("evaluate"), expectedText: "published-benchmark-ok",
     outputFile: "benchmark-result.json", metricKey: "accuracy", metricOperator: "eq", metricTarget: benchmark.reference.value,
     metricTolerance: benchmark.reference.tolerance, evaluation: { dataset: benchmark.dataset, model: benchmark.model,
@@ -53,7 +52,7 @@ export async function inspectRuntime() {
 export function validateExecutionOptions(input = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid execution options");
   const benchmarkId = input.benchmarkId ?? null;
-  if (benchmarkId !== null && ![reviewedBenchmark.id, reviewedTraining.id].includes(benchmarkId)) throw new Error("Unknown reviewed benchmark");
+  if (benchmarkId !== null && !reviewedCaseById.has(benchmarkId)) throw new Error("Unknown reviewed benchmark");
   if (benchmarkId) input = { ...benchmarkOptions(benchmarkId), ...input };
   const quickCommand = input.quickCommand ?? "";
   if (typeof quickCommand !== "string" || quickCommand.length > 6000 || /[\r\n\0]/.test(quickCommand)) {
@@ -109,7 +108,7 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
   let workflow = report.workflows?.find((candidate) => candidate.id === workflowId);
   if (!workflow) throw new Error("A valid reproduction workflow is required");
   if (candidate) workflow = candidateWorkflow(report, candidate.entry);
-  const benchmark = executionOptions.benchmarkId ? { ...(executionOptions.benchmarkId === reviewedTraining.id ? reviewedTraining : reviewedBenchmark), originalSteps: report.reproductionPlan?.steps ?? [] } : null;
+  const benchmark = executionOptions.benchmarkId ? { ...reviewedCaseById.get(executionOptions.benchmarkId), originalSteps: report.reproductionPlan?.steps ?? [] } : null;
   const reviewedTrainingRun = workflowId === "training" && (!!benchmark?.training || !!experiment);
   if (benchmark) {
     if (!isDeepStrictEqual(executionOptions, benchmarkOptions(benchmark.id))) throw new Error("Reviewed benchmark commands and reference conditions are fixed; use a custom Evaluation instead");
@@ -117,8 +116,8 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
     workflow = { ...workflow, status: "REVIEWED_BENCHMARK", steps: [
       { id: "install", title: "Install reviewed Python 3.11 CPU compatibility dependencies", status: "DOCUMENTED", command: benchmark.installCommand },
       { id: "prepare-assets", title: "Prepare hash-locked UCI data and explicit compatibility patch", status: "DOCUMENTED", command: benchmarkCommand("prepare") },
-      ...(benchmark.training ? [{ id: "training-benchmark", title: "Train original Table 3 Iris model from scratch and save checkpoint", status: "DOCUMENTED", command: trainingCommand() }] : []),
-      { id: "evaluation-benchmark", title: benchmark.training ? "Evaluate newly trained checkpoint with the original entry" : "Run original Iris evaluation entry and collect its score", status: "DOCUMENTED", command: benchmarkCommand("evaluate") },
+      ...(benchmark.training ? [{ id: "training-benchmark", title: `Train original Table 3 ${benchmark.datasetName} model from scratch and save checkpoint`, status: "DOCUMENTED", command: trainingCommand() }] : []),
+      { id: "evaluation-benchmark", title: benchmark.training ? "Evaluate newly trained checkpoint with the original entry" : `Run original ${benchmark.datasetName} evaluation entry and collect its score`, status: "DOCUMENTED", command: benchmarkCommand("evaluate") },
     ] };
   }
   if (experiment) workflow = { id: "training", title: experiment.title, status: "USER_REVIEWED_EXPERIMENT", steps: [
@@ -176,7 +175,7 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
     runtime,
     preparationOverride: assetsInEntry ? { origin: "user-reviewed", instruction: "Dataset and model preparation are handled by the reviewed entry command", originalSteps: originalSteps.filter((step) => ["data", "model"].includes(step.id)) } : null,
     runnable: (["quick", "evaluation"].includes(workflowId) || reviewedTrainingRun) && runtime.available && automatedSteps.length > 0 && blockers.length === 0,
-    reason: !["quick", "evaluation"].includes(workflowId) && !reviewedTrainingRun ? "Training requires a confirmed custom experiment configuration or the reviewed Iris case"
+    reason: !["quick", "evaluation"].includes(workflowId) && !reviewedTrainingRun ? "Training requires a confirmed custom experiment configuration or a reviewed paper case"
       : !runtime.available ? runtime.reason : blockers.length ? "The workflow has missing or blocked steps"
         : !automatedSteps.length ? "No executable commands were found" : null,
     automatedSteps: automatedSteps.map((step) => ({ ...step,
@@ -563,7 +562,7 @@ function persist(job) {
 }
 
 export function startRun(preflight) {
-  if (!["quick", "evaluation"].includes(preflight.workflow.id) && !(preflight.workflow.id === "training" && (preflight.benchmark?.training || preflight.executionOptions?.experiment))) throw new Error("Training requires a confirmed experiment or reviewed Iris case");
+  if (!["quick", "evaluation"].includes(preflight.workflow.id) && !(preflight.workflow.id === "training" && (preflight.benchmark?.training || preflight.executionOptions?.experiment))) throw new Error("Training requires a confirmed experiment or reviewed paper case");
   if (!preflight.runnable) throw new Error("The selected workflow is not ready to run");
 
   const id = randomUUID();

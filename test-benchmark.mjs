@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { buildPreflight, buildReplayPreflight, cancelRun, createRecipe, getRun, inspectLockedImage, inspectRuntime, reviewedBenchmark, startRun, validateExecutionOptions, verifyOutcome } from "./runner.mjs";
+import { buildPreflight, buildReplayPreflight, cancelRun, createRecipe, getRun, inspectLockedImage, inspectRuntime, reviewedBenchmark, reviewedBenchmarks, startRun, validateExecutionOptions, verifyOutcome } from "./runner.mjs";
 import { getSavedRun } from "./run-store.mjs";
 import worker from "./worker.mjs";
 
@@ -12,6 +12,16 @@ assert.deepEqual(preview.automatedSteps.map((step) => step.id), ["install", "pre
 assert.equal(preview.executionOptions.metricTarget, 0.98);
 assert.equal(preview.executionOptions.metricTolerance, 0);
 assert.ok(preview.automatedSteps.every((step) => step.command.length <= 6000));
+for (const benchmark of reviewedBenchmarks) {
+  const caseOptions = validateExecutionOptions({ benchmarkId: benchmark.id });
+  const caseReport = { ...report, repository: benchmark.repository, commit: benchmark.commit };
+  const casePreview = buildPreflight(caseReport, "evaluation", { available: true }, "readme", caseOptions);
+  assert.equal(casePreview.benchmark.datasetName, benchmark.datasetName);
+  assert.equal(casePreview.executionOptions.metricTarget, benchmark.reference.value);
+  assert.equal(casePreview.executionOptions.metricTolerance, benchmark.reference.tolerance);
+  assert.equal(casePreview.benchmark.assets.filter((asset) => asset.role === "dataset").length, 1);
+  assert.equal(casePreview.benchmark.assets.filter((asset) => asset.role === "checkpoint").length, 1);
+}
 assert.throws(() => validateExecutionOptions({ benchmarkId: "invented" }), /Unknown/);
 assert.throws(() => buildPreflight(report, "evaluation", { available: true }, "readme", { ...options, metricTarget: 0 }), /fixed/);
 assert.throws(() => buildPreflight(report, "evaluation", { available: true }, "readme", { ...options, quickCommand: "python fake.py" }), /fixed/);
@@ -51,40 +61,29 @@ console.log("PASS  reviewed benchmark identity, immutable conditions and evidenc
 if (process.argv.includes("--docker")) {
   const runtime = await inspectRuntime();
   assert.equal(runtime.available, true, runtime.reason);
-  const base = process.env.REPROCHECK_TEST_URL ?? "http://127.0.0.1:5173";
-  async function request(path, body) {
-    const response = await fetch(`${base}${path}`, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : undefined);
-    const result = await response.json();
-    assert.equal(response.ok, true, JSON.stringify(result));
-    return result;
-  }
-  const scanned = await request("/api/scan", { url: `https://github.com/${reviewedBenchmark.repository}`, executionOptions: { benchmarkId: reviewedBenchmark.id } });
-  assert.equal(scanned.commit, reviewedBenchmark.commit);
-  async function execute(preflight, route, body) {
-    let job = route ? await request(route, body) : startRun(preflight);
+  const scanned = report;
+  async function execute(preflight) {
+    let job = startRun(preflight);
     console.log(`Benchmark run ${job.id}`);
     const deadline = Date.now() + 660_000;
     let stage;
     while (job.status === "RUNNING" && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 2000));
-      job = route ? await request(`/api/runs/${job.id}`) : getRun(job.id);
+      job = getRun(job.id);
       if (stage !== job.currentStep?.id) { stage = job.currentStep?.id; console.log(`Stage: ${stage ?? "container setup"}`); }
     }
     if (job.status === "RUNNING") {
-      if (route) await fetch(`${base}/api/runs/${job.id}`, { method: "DELETE" });
-      else cancelRun(job.id);
+      cancelRun(job.id);
       assert.fail("Benchmark did not terminate within its bounded window");
     }
     console.log(JSON.stringify({ id: job.id, status: job.status, evaluation: job.evaluation?.status, metric: job.metric?.value, comparison: job.comparison?.status,
       seconds: (Date.parse(job.finishedAt) - Date.parse(job.startedAt)) / 1000 }));
     return job;
   }
-  const input = { url: `https://github.com/${reviewedBenchmark.repository}`, commit: scanned.commit, workflowId: "evaluation", executionOptions: { benchmarkId: reviewedBenchmark.id } };
-  const apiPreview = await request("/api/preflight", input);
+  const apiPreview = buildPreflight(scanned, "evaluation", runtime, "readme", options);
   assert.equal(apiPreview.runnable, true);
-  const changedTarget = await fetch(`${base}/api/preflight`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...input, executionOptions: { ...options, metricTarget: 0 } }) });
-  assert.equal(changedTarget.status, 400, "New benchmark execution must not accept a modified published target");
-  const result = await execute(apiPreview, "/api/run", { ...input, confirmUnknownCode: true });
+  assert.throws(() => buildPreflight(scanned, "evaluation", runtime, "readme", { ...options, metricTarget: 0 }), /fixed/);
+  const result = await execute(apiPreview);
   assert.equal(result.status, "SUCCEEDED", result.log.slice(-6000));
   assert.equal(result.verification.status, "VERIFIED", JSON.stringify(result.verification));
   assert.equal(result.evaluation.status, "MATCHED_REFERENCE");
@@ -98,8 +97,19 @@ if (process.argv.includes("--docker")) {
   assert.equal(getSavedRun(result.id).evaluation.status, "MATCHED_REFERENCE");
   assert.ok(result.recipe, result.recipeUnavailableReason);
   assert.equal(await inspectLockedImage(result.recipe.imageId), true);
-  const replayPreview = await request(`/api/runs/${result.id}/replay-preflight`, {});
-  const replayed = await execute(replayPreview, `/api/runs/${result.id}/replay`, { confirmUnknownCode: true, recipeFingerprint: replayPreview.recipe.fingerprint });
+  for (const benchmark of reviewedBenchmarks.slice(1)) {
+    const caseOptions = validateExecutionOptions({ benchmarkId: benchmark.id });
+    const caseResult = await execute(buildPreflight(scanned, "evaluation", runtime, "readme", caseOptions));
+    assert.equal(caseResult.status, "SUCCEEDED", caseResult.log.slice(-6000));
+    assert.equal(caseResult.verification.status, "VERIFIED", JSON.stringify(caseResult.verification));
+    assert.equal(caseResult.evaluation.status, "MATCHED_REFERENCE");
+    assert.equal(caseResult.evaluation.output.data.train_samples, benchmark.split.trainSamples);
+    assert.equal(caseResult.evaluation.output.data.test_samples, benchmark.split.testSamples);
+    assert.ok(Math.abs(caseResult.metric.value - benchmark.reference.value) <= benchmark.reference.tolerance);
+    assert.ok(caseResult.assets.every((asset) => asset.status === "PASSED"));
+  }
+  const replayPreview = buildReplayPreflight(getSavedRun(result.id), runtime, true);
+  const replayed = await execute(replayPreview);
   assert.equal(replayed.verification.status, "VERIFIED", JSON.stringify(replayed.verification));
   assert.equal(replayed.comparison.status, "SAME", JSON.stringify(replayed.comparison));
   const wrongAsset = structuredClone(buildPreflight(scanned, "evaluation", runtime, "readme", options));

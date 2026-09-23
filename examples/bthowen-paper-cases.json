@@ -1,0 +1,60 @@
+[
+  {
+    "id": "bthowen-ecoli",
+    "title": "BTHOWeN · Ecoli published software benchmark",
+    "datasetName": "Ecoli",
+    "dataset": "UCI Ecoli, 336 rows; repository shuffle random_state=123; 224 train / 112 held-out test",
+    "model": "Paper's selected_models/ecoli.pickle.lzma; pretrained BTHOWeN; no retraining",
+    "reference": {
+      "file": "README.md",
+      "line": 65,
+      "text": "| Ecoli | 10 | 10 | 128 | 2 | 0.875 | 0.875 |",
+      "url": "https://github.com/ZSusskind/BTHOWeN/blob/94e33e4ce3e46e8e88a409dcca044e5f7544858d/README.md#L65",
+      "value": 0.875,
+      "tolerance": 0,
+      "scope": "README replication of paper Table 3, Ecoli software test accuracy only; not MNIST or RTL power/area reproduction"
+    },
+    "split": {"trainSamples": 224, "testSamples": 112, "seed": 123},
+    "datasetAsset": {"role": "dataset", "path": "software_model/datasets/ecoli/ecoli.data", "sha256": "008bd8fbb1d8b34040c3c8c4e987cac2a7ebf116e008b140cc6441be5261ba1d", "url": "https://archive.ics.uci.edu/ml/machine-learning-databases/ecoli/ecoli.data"},
+    "checkpointAsset": {"role": "checkpoint", "path": "software_model/selected_models/ecoli.pickle.lzma", "sha256": "1605a57b91b6c0367e04f5da7a87630563f60c8ad48e81b8cbde82cc4581f27d"},
+    "training": {
+      "id": "bthowen-ecoli-training",
+      "title": "BTHOWeN · Ecoli train from scratch",
+      "model": "New BTHOWeN checkpoint trained by the original repository; Table 3 Ecoli configuration, one run, NumPy seed 42",
+      "scope": "Real-paper Ecoli software training and evaluation, one fixed configuration/run; not the authors' unspecified random-model selection, full parameter sweep, MNIST or RTL reproduction. No pretrained checkpoint is used and 87.5% is not guaranteed.",
+      "seed": 42,
+      "parameters": {"bits_per_input": 10, "filter_inputs": 10, "filter_entries": 128, "filter_hashes": 2, "num_workers": 1},
+      "arguments": ["Ecoli", "--bits_per_input", "10", "--filter_inputs", "10", "--filter_entries", "128", "--filter_hashes", "2", "--num_workers", "1", "--save_prefix", "reprocheck"],
+      "checkpoint": "software_model/models/Ecoli/reprocheck_10input_128entry_2hash_10bpi.pickle.lzma"
+    }
+  },
+  {
+    "id": "bthowen-wine",
+    "title": "BTHOWeN · Wine published software benchmark",
+    "datasetName": "Wine",
+    "dataset": "UCI Wine, 178 rows; repository shuffle random_state=123; 119 train / 59 held-out test",
+    "model": "Paper's selected_models/wine.pickle.lzma; pretrained BTHOWeN; no retraining",
+    "reference": {
+      "file": "README.md",
+      "line": 72,
+      "text": "| Wine | 9 | 13 | 128 | 3 | 0.422 | 0.983 |",
+      "url": "https://github.com/ZSusskind/BTHOWeN/blob/94e33e4ce3e46e8e88a409dcca044e5f7544858d/README.md#L72",
+      "value": 0.983,
+      "tolerance": 0.0005,
+      "scope": "README replication of paper Table 3, Wine software test accuracy only; reference is rounded to three decimals; not MNIST or RTL power/area reproduction"
+    },
+    "split": {"trainSamples": 119, "testSamples": 59, "seed": 123},
+    "datasetAsset": {"role": "dataset", "path": "software_model/datasets/wine/wine.data", "sha256": "6be6b1203f3d51df0b553a70e57b8a723cd405683958204f96d23d7cd6aea659", "url": "https://archive.ics.uci.edu/ml/machine-learning-databases/wine/wine.data"},
+    "checkpointAsset": {"role": "checkpoint", "path": "software_model/selected_models/wine.pickle.lzma", "sha256": "63fe5582b9936965e69db3c920ac281ca1aaa577e7442394a94757ffe40585c9"},
+    "training": {
+      "id": "bthowen-wine-training",
+      "title": "BTHOWeN · Wine train from scratch",
+      "model": "New BTHOWeN checkpoint trained by the original repository; Table 3 Wine configuration, one run, NumPy seed 42",
+      "scope": "Real-paper Wine software training and evaluation, one fixed configuration/run; not the authors' unspecified random-model selection, full parameter sweep, MNIST or RTL reproduction. No pretrained checkpoint is used and 98.3% is not guaranteed.",
+      "seed": 42,
+      "parameters": {"bits_per_input": 9, "filter_inputs": 13, "filter_entries": 128, "filter_hashes": 3, "num_workers": 1},
+      "arguments": ["Wine", "--bits_per_input", "9", "--filter_inputs", "13", "--filter_entries", "128", "--filter_hashes", "3", "--num_workers", "1", "--save_prefix", "reprocheck"],
+      "checkpoint": "software_model/models/Wine/reprocheck_13input_128entry_3hash_9bpi.pickle.lzma"
+    }
+  }
+]

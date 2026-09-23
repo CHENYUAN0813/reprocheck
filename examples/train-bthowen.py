@@ -22,7 +22,7 @@ import train_swept_models as trainer
 trainer.np.random.seed(profile["seed"])
 sys.argv = ["train_swept_models.py", *profile["arguments"]]
 started = time.monotonic()
-print("Training from scratch: original trainer, one configuration, one worker; seed=42", flush=True)
+print(f"Training {case['datasetName']} from scratch: original trainer, one configuration, one worker; seed={profile['seed']}", flush=True)
 trainer.main()
 if not checkpoint.is_file() or not 0 < checkpoint.stat().st_size <= 65536:
     raise RuntimeError("Original trainer must save a new checkpoint up to 64 KiB")

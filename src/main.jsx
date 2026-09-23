@@ -2,8 +2,7 @@ import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 import cpuEvaluationSource from "../examples/evaluate-micrograd.py?raw";
-import publishedBenchmark from "../examples/bthowen-iris.json";
-import trainingProfile from "../examples/bthowen-training.json";
+import { reviewedBenchmarks, reviewedTrainings, reviewedCaseById } from "../examples/bthowen-cases.mjs";
 import publishedEvaluationSource from "../examples/evaluate-bthowen.py?raw";
 import trainingSource from "../examples/train-bthowen.py?raw";
 import { candidateOptions, candidateWorkflow } from "../evaluation-config.mjs";
@@ -364,11 +363,11 @@ function ExecutionEvidence({ job, onPrepareReplay, replayDisabled }) {
       </ul>
       {job.evaluation && <div className="run-comparison">
         <h3>Evaluation report · {job.evaluation.status.replaceAll("_", " ")}</h3>
-        <p className="hint">{job.benchmark ? "Reviewed Iris software case: input hashes and the pinned README row must pass checks before entry and at completion. This is not full-paper reproduction or a security attestation." : "Dataset, model and reference source below are user declarations, not independently verified paper claims."}</p>
+        <p className="hint">{job.benchmark ? `Reviewed ${job.benchmark.datasetName} software case: input hashes and the pinned README row must pass checks before entry and at completion. This is not full-paper reproduction or a security attestation.` : "Dataset, model and reference source below are user declarations, not independently verified paper claims."}</p>
         <dl className="evaluation-summary">
           <dt>Dataset / split</dt><dd>{job.evaluation.dataset}</dd>
           <dt>Model / checkpoint</dt><dd>{job.evaluation.model}</dd>
-          <dt>Reference source</dt><dd>{job.benchmark ? <a href={job.benchmark.reference.url} target="_blank" rel="noreferrer">Pinned README · Table 3 · Iris</a> : job.evaluation.reference}</dd>
+          <dt>Reference source</dt><dd>{job.benchmark ? <a href={job.benchmark.reference.url} target="_blank" rel="noreferrer">Pinned README · Table 3 · {job.benchmark.datasetName}</a> : job.evaluation.reference}</dd>
           <dt>Observed / reference</dt><dd>{job.evaluation.observedValue ?? "unknown"} / {job.evaluation.referenceValue} · {job.evaluation.metricKey}</dd>
           <dt>Difference / tolerance</dt><dd>{Number.isFinite(job.evaluation.delta) ? Number(job.evaluation.delta.toPrecision(12)) : "unknown"} / {job.evaluation.tolerance} · condition {job.evaluation.operator}</dd>
         </dl>
@@ -516,16 +515,17 @@ function App() {
     ?? report.workflows?.[0]
     ?? null;
   const selectedCandidate = report.evaluationDraft?.entries.find((entry) => entry.id === acceptance.candidateReview?.entryId);
+  const selectedReviewedCase = acceptance.benchmarkId ? reviewedCaseById.get(acceptance.benchmarkId) : null;
   const displayedPlan = acceptance.experiment ? { title: acceptance.experiment.title, status: "USER_REVIEWED_EXPERIMENT", steps: [
     ...(acceptance.experiment.installCommand ? [{ id: "install", title: "Install reviewed dependencies", status: "USER_REVIEWED", command: acceptance.experiment.installCommand }] : []),
     ...(acceptance.experiment.prepareCommand ? [{ id: "prepare-data", title: "Prepare data", status: "USER_REVIEWED", command: acceptance.experiment.prepareCommand }] : []),
     { id: "train", title: "Train and save new model", status: "USER_REVIEWED", command: acceptance.experiment.trainCommand },
     { id: "evaluate", title: "Evaluate new model", status: "USER_REVIEWED", command: quickCommand },
-  ] } : acceptance.benchmarkId === trainingProfile.id ? { title: trainingProfile.title, status: "REVIEWED_TRAINING", steps: [
-    { id: "install", title: "Install reviewed CPU dependencies", status: "DOCUMENTED", command: publishedBenchmark.installCommand },
-    { id: "prepare-assets", title: "Prepare hash-locked real UCI Iris data", status: "DOCUMENTED", instruction: "Reviewed adapter downloads UCI data and applies the explicit MNIST-only import compatibility patch. Check the local runner for exact commands." },
-    { id: "training-benchmark", title: "Train from scratch and save a new model", status: "DOCUMENTED", command: `cd software_model && python train_swept_models.py ${trainingProfile.arguments.join(" ")}`, instruction: "Reviewed launcher sets NumPy seed 42 before calling the original trainer. This is the original invocation, not the complete seeded adapter." },
-    { id: "evaluation-benchmark", title: "Evaluate the newly trained model and compare with 98%", status: "DOCUMENTED", instruction: "Original evaluate.py reads the newly trained checkpoint; the adapter records actual held-out accuracy as JSON." },
+  ] } : selectedReviewedCase?.training ? { title: selectedReviewedCase.title, status: "REVIEWED_TRAINING", steps: [
+    { id: "install", title: "Install reviewed CPU dependencies", status: "DOCUMENTED", command: selectedReviewedCase.installCommand },
+    { id: "prepare-assets", title: `Prepare hash-locked real UCI ${selectedReviewedCase.datasetName} data`, status: "DOCUMENTED", instruction: "Reviewed adapter downloads UCI data and applies the explicit MNIST-only import compatibility patch. Check the local runner for exact commands." },
+    { id: "training-benchmark", title: "Train from scratch and save a new model", status: "DOCUMENTED", command: `cd software_model && python train_swept_models.py ${selectedReviewedCase.training.arguments.join(" ")}`, instruction: `Reviewed launcher sets NumPy seed ${selectedReviewedCase.training.seed} before calling the original trainer. This is the original invocation, not the complete seeded adapter.` },
+    { id: "evaluation-benchmark", title: `Evaluate the newly trained model and compare with ${selectedReviewedCase.reference.value}`, status: "DOCUMENTED", instruction: "Original evaluate.py reads the newly trained checkpoint; the adapter records actual held-out accuracy as JSON." },
   ] } : selectedCandidate ? candidateWorkflow(report, selectedCandidate) : activeWorkflow ?? report.reproductionPlan;
 
   function applyCandidate(options) {
@@ -600,17 +600,17 @@ function App() {
     } catch { /* The scan error is already displayed. */ }
   }
 
-  async function loadPublishedBenchmark(training = false) {
-    const benchmark = training ? { ...publishedBenchmark, ...trainingProfile } : publishedBenchmark;
-    const targetUrl = `https://github.com/${publishedBenchmark.repository}`;
+  async function loadPublishedBenchmark(benchmarkId) {
+    const benchmark = reviewedCaseById.get(benchmarkId);
+    const targetUrl = `https://github.com/${benchmark.repository}`;
     setUrl(targetUrl);
     try {
       await runScan(targetUrl, benchmark.id);
-      setSelectedWorkflow(training ? "training" : "evaluation");
+      setSelectedWorkflow(benchmark.training ? "training" : "evaluation");
       setQuickCommand(publishedEvaluationCommand);
       setAcceptance({ ...emptyAcceptance, benchmarkId: benchmark.id, expectedText: "published-benchmark-ok", outputFile: "benchmark-result.json",
-        metricKey: "accuracy", metricOperator: "eq", metricTarget: String(publishedBenchmark.reference.value), metricTolerance: "0",
-        dataset: publishedBenchmark.dataset, model: benchmark.model, reference: publishedBenchmark.reference.url });
+        metricKey: "accuracy", metricOperator: "eq", metricTarget: String(benchmark.reference.value), metricTolerance: String(benchmark.reference.tolerance),
+        dataset: benchmark.dataset, model: benchmark.model, reference: benchmark.reference.url });
     } catch { /* The scan error is already displayed. */ }
   }
 
@@ -799,10 +799,14 @@ function App() {
             <p className="hint">Public repositories only · Results pinned to a commit</p>
             <button className="download-button" type="button" onClick={loadCpuEvaluation} disabled={executionBusy}>Load CPU evaluation example</button>
             <p className="hint">Small synthetic held-out dataset + trained checkpoint. Loads a reviewed command; does not start execution.</p>
-            <button className="download-button" type="button" onClick={() => loadPublishedBenchmark()} disabled={executionBusy}>Load published Iris benchmark</button>
-            <p className="hint">Real UCI data + paper's pretrained model + original evaluation entry. Reference: 98% in the pinned README; explicit CPU compatibility profile. Does not start execution.</p>
-            <button className="download-button" type="button" onClick={() => loadPublishedBenchmark(true)} disabled={executionBusy}>Load Iris training reproduction</button>
-            <p className="hint">Train the original paper model from scratch on real Iris data, save a new checkpoint, then evaluate. One fixed run; 98% is a comparison, not a promised result. Does not start execution.</p>
+            {reviewedBenchmarks.map((benchmark) => <div key={benchmark.id}>
+              <button className="download-button" type="button" onClick={() => loadPublishedBenchmark(benchmark.id)} disabled={executionBusy}>Load published {benchmark.datasetName} benchmark</button>
+              <p className="hint">Real UCI data + paper's pretrained model + original evaluation entry. Reference: {benchmark.reference.value} in the pinned README. Does not start execution.</p>
+            </div>)}
+            {reviewedTrainings.map((benchmark) => <div key={benchmark.id}>
+              <button className="download-button" type="button" onClick={() => loadPublishedBenchmark(benchmark.id)} disabled={executionBusy}>Load {benchmark.datasetName} training reproduction</button>
+              <p className="hint">Train the original paper model once, save a new checkpoint, then evaluate against {benchmark.reference.value}. The reference is a comparison, not a promised result.</p>
+            </div>)}
           </form>
 
           {error && <p className="error" role="alert">{error}</p>}
@@ -983,15 +987,15 @@ function App() {
               <p className="hint" role="status">{acceptance.experiment ? "Reviewed experiment applied. Check local runner to inspect every effective command before execution." : "Review and apply an experiment configuration to enable the runner check."}</p>
             </>}
             {acceptance.benchmarkId && <div className="run-comparison">
-              <h3>{acceptance.benchmarkId === trainingProfile.id ? trainingProfile.title : publishedBenchmark.title}</h3>
-              <p>{publishedBenchmark.dataset}</p>
+              <h3>{selectedReviewedCase.title}</h3>
+              <p>{selectedReviewedCase.dataset}</p>
               <p>{acceptance.model}</p>
-              {acceptance.benchmarkId === trainingProfile.id && <p className="runner-note">{trainingProfile.scope}</p>}
-              <p><a href={publishedBenchmark.reference.url} target="_blank" rel="noreferrer">Pinned reference: accuracy 0.98 · exact numeric match</a></p>
-              <p className="hint">Fixed output checks: published-benchmark-ok · fresh benchmark-result.json · accuracy = 0.98 ± 0.</p>
-              <p className="runner-note">{publishedBenchmark.compatibility.note}</p>
+              {selectedReviewedCase.training && <p className="runner-note">{selectedReviewedCase.training.scope}</p>}
+              <p><a href={selectedReviewedCase.reference.url} target="_blank" rel="noreferrer">Pinned reference: accuracy {selectedReviewedCase.reference.value} · tolerance {selectedReviewedCase.reference.tolerance}</a></p>
+              <p className="hint">Fixed output checks: published-benchmark-ok · fresh benchmark-result.json · accuracy = {selectedReviewedCase.reference.value} ± {selectedReviewedCase.reference.tolerance}.</p>
+              <p className="runner-note">{selectedReviewedCase.compatibility.note}</p>
               <p className="hint">Commands and expectations are fixed for this reviewed case. Choose another workflow or scan again to return to custom Evaluation.</p>
-              <details><summary>Review benchmark manifest and adapter source</summary><pre className="evaluation-source">{JSON.stringify(publishedBenchmark, null, 2)}{"\n\n"}{publishedEvaluationSource}{acceptance.benchmarkId === trainingProfile.id && <>{"\n\n"}{JSON.stringify(trainingProfile, null, 2)}{"\n\n"}{trainingSource}</>}</pre></details>
+              <details><summary>Review benchmark manifest and adapter source</summary><pre className="evaluation-source">{JSON.stringify(selectedReviewedCase, null, 2)}{"\n\n"}{publishedEvaluationSource}{selectedReviewedCase.training && <>{"\n\n"}{trainingSource}</>}</pre></details>
             </div>}
             {["quick", "evaluation"].includes(activeWorkflow.id) && !acceptance.benchmarkId && (
               <fieldset className="run-options" disabled={optionsLocked}>
