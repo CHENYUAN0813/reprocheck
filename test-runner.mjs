@@ -200,16 +200,17 @@ if (process.argv.includes("--docker")) {
   }
   const url = "https://github.com/karpathy/micrograd";
   const report = await request("/api/scan", { url });
+  const quickSelection = report.quickEntries?.length ? { quickEntryId: report.recommendedQuickEntryId ?? report.quickEntries[0].id } : {};
   const executionOptions = {
     quickCommand: `python -c 'import json, pathlib, micrograd.engine; from micrograd.engine import Value; assert pathlib.Path(micrograd.engine.__file__).resolve().is_relative_to(pathlib.Path("/workspace")); a=Value(-4.0); b=Value(2.0); c=a*b+a; c.backward(); assert (c.data,a.grad,b.grad)==(-12.0,3.0,-4.0); json.dump({"value":c.data,"a_grad":a.grad,"b_grad":b.grad},open("repro-result.json","w")); print("autodiff-ok")'`,
     expectedText: "autodiff-ok", outputFile: "repro-result.json", metricKey: "a_grad", metricTarget: 3,
   };
-  const input = { url, commit: report.commit, workflowId: "quick", packageIndex: "pypi", executionOptions };
+  const input = { url, commit: report.commit, workflowId: "quick", packageIndex: "pypi", executionOptions: { ...executionOptions, ...quickSelection } };
   const preview = await request("/api/preflight", input);
   assert.equal(preview.runnable, true);
   assert.equal(preview.commandOverride.origin, "user-reviewed");
   async function execute(options, workflowId = "quick") {
-    let job = await request("/api/run", { ...input, workflowId, executionOptions: options, confirmUnknownCode: true });
+    let job = await request("/api/run", { ...input, workflowId, executionOptions: { ...options, ...(workflowId === "quick" ? quickSelection : {}) }, confirmUnknownCode: true });
     const deadline = Date.now() + 120_000;
     while (job.status === "RUNNING" && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 500));

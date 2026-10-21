@@ -5,7 +5,7 @@ export function importedExperimentDraft(config) {
   const options = config?.executionOptions;
   if (config?.schemaVersion !== 1 || config.workflowId !== "training" || !options?.experiment
     || config.repository !== options.experiment.repository || config.commit !== options.experiment.commit
-    || options.benchmarkId || options.candidateReview || options.paperMatrix || options.evaluation?.assetsInEntry) {
+    || options.benchmarkId || options.candidateReview || options.paperMatrix || options.quickEntryId || options.evaluation?.assetsInEntry) {
     throw new Error("Import requires a consistent custom Training repository and pinned commit");
   }
   const draft = { ...options.experiment, evaluationCommand: options.quickCommand, outputFile: options.outputFile, metricKey: options.metricKey,

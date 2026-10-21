@@ -74,6 +74,9 @@ export function validateExecutionOptions(input = {}) {
   const metricTolerance = input.metricTolerance ?? 0;
   const evaluation = input.evaluation ?? null;
   const candidateReview = input.candidateReview ?? null;
+  const quickEntryId = input.quickEntryId ?? null;
+  if (quickEntryId !== null && (typeof quickEntryId !== "string" || !/^[\w-]{1,100}$/.test(quickEntryId)
+    || benchmarkId || candidateReview || input.experiment || input.paperMatrix)) throw new Error("Quick entry selection cannot be mixed with another workflow");
   const experiment = input.experiment == null ? null : validateExperiment(input.experiment);
   const paperMatrix = input.paperMatrix == null ? null : validatePaperMatrixRequest(input.paperMatrix);
   if (experiment && (benchmarkId || candidateReview || paperMatrix)) throw new Error("A custom experiment cannot be mixed with a reviewed preset/candidate");
@@ -106,7 +109,7 @@ export function validateExecutionOptions(input = {}) {
     throw new Error("Paper matrix cannot be mixed with scalar Evaluation options");
   }
   if (experiment && (!quickCommand.trim() || !evaluation || evaluation.assetsInEntry || !metricKey || metricTarget === null || outputFile === experiment.checkpoint)) throw new Error("Experiment needs a separate evaluator, metric output and declared evaluation context; checkpoint and score paths must differ");
-  return { ...(benchmarkId ? { benchmarkId } : {}), ...(candidateReview ? { candidateReview: { ...candidateReview } } : {}), ...(experiment ? { experiment } : {}), ...(paperMatrix ? { paperMatrix } : {}), quickCommand: quickCommand.trim(), expectedText,
+  return { ...(quickEntryId ? { quickEntryId } : {}), ...(benchmarkId ? { benchmarkId } : {}), ...(candidateReview ? { candidateReview: { ...candidateReview } } : {}), ...(experiment ? { experiment } : {}), ...(paperMatrix ? { paperMatrix } : {}), quickCommand: quickCommand.trim(), expectedText,
     outputFile: paperMatrix?.outputFile ?? outputFile, metricKey, metricOperator, metricTarget, metricTolerance,
     evaluation: evaluation ? { dataset: evaluation.dataset.trim(), model: evaluation.model.trim(), reference: evaluation.reference.trim(), assetsInEntry: evaluation.assetsInEntry } : null };
 }
@@ -126,6 +129,13 @@ export function buildPreflight(report, workflowId, runtime, packageIndex = "read
     steps: (paperMatrix.adapter?.steps ?? []).map((step) => ({ ...step, title: `${step.role[0].toUpperCase()}${step.role.slice(1)} · ${step.command}`, status: "DOCUMENTED" })) }
     : report.workflows?.find((candidate) => candidate.id === workflowId);
   if (!workflow) throw new Error("A valid reproduction workflow is required");
+  if (executionOptions.quickEntryId) {
+    const selected = report.quickEntries?.find((entry) => entry.id === executionOptions.quickEntryId);
+    if (workflowId !== "quick" || !selected) throw new Error("Select a Quick entry from this scanned repository version");
+    workflow = { ...workflow, status: selected.status, steps: selected.steps };
+  } else if (workflowId === "quick" && report.quickEntries?.length) {
+    throw new Error("Choose a source-validated entry for Quick verification first");
+  }
   if (candidate) workflow = candidateWorkflow(report, candidate.entry);
   const reviewedTrainingRun = workflowId === "training" && (!!benchmark?.training || !!experiment);
   if (benchmark) {

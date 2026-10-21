@@ -397,7 +397,7 @@ function buildReproductionPlan({
   const gaps = [
     ...steps
       .filter((step) => step.status === "MISSING")
-      .map((step) => ({ type: "missing_step", step: step.id, message: `${step.title} is not documented` })),
+      .map((step) => ({ type: "missing_step", step: step.id, message: `${step.title} was not automatically recognized; review the source instructions` })),
     ...missingReferences.map((reference) => ({
       type: "missing_reference",
       step: reference.step,
@@ -497,6 +497,64 @@ function statusFor(failures, warnings) {
   return "READY_FOR_REVIEW";
 }
 
+function reconcileWorkflowFindings(report) {
+  const commands = report.paperWorkflowDraft.commands;
+  const setup = commands.filter((command) => command.role === "setup");
+  const runs = commands.filter((command) => ["preflight", "experiment"].includes(command.role) && command.supported);
+  const check = (id) => report.checks.find((item) => item.id === id);
+  const plan = report.reproductionPlan;
+  const install = plan.steps.find((step) => step.id === "install");
+  if (setup.length && install.status === "MISSING") {
+    const supported = setup.every((command) => command.supported);
+    Object.assign(check("install_command"), { status: supported ? "PASS" : "WARN",
+      message: supported ? "Setup workflow identified; command targets validated (not executed)" : "Setup workflow identified, but some command targets could not be validated",
+      evidence: setup[0].evidence, suggestion: supported ? null : "Review the documented setup commands and their source targets" });
+    Object.assign(install, { status: supported ? "DOCUMENTED" : "BLOCKED", command: supported ? setup.map((item) => item.command).join(" && ") : null,
+      evidence: setup[0].evidence });
+  }
+  if (runs.length) {
+    Object.assign(check("run_command"), { status: "PASS", message: "Run/test workflow identified; command targets validated (not executed)", evidence: runs[0].evidence, suggestion: null });
+    const run = plan.steps.find((step) => step.id === "run");
+    if (run.status === "MISSING") Object.assign(run, { status: "NEEDS_SELECTION", instruction: "Choose a source-validated entry below for Quick verification", evidence: runs[0].evidence });
+  }
+  const testEntry = runs.find((command) => command.role === "preflight");
+  if (testEntry && check("tests").status === "WARN") Object.assign(check("tests"), {
+    status: "PASS", message: "Test workflow target validated (not executed)", evidence: testEntry.evidence, suggestion: null });
+  const validated = commands.filter((command) => command.supported);
+  if (validated.length && check("command_references").status === "WARN") {
+    Object.assign(check("command_references"), { status: "PASS", message: `${validated.length} workflow command target(s) validated; internal dependencies are not checked`, evidence: validated[0].validation, suggestion: null });
+  }
+  const workflowStatus = (steps) => steps.some((step) => step.status === "BLOCKED") ? "BLOCKED"
+    : steps.some((step) => step.status === "MISSING") ? "INCOMPLETE" : "NEEDS_REVIEW";
+  const prerequisites = commands.filter((command) => ["setup", "prepare"].includes(command.role));
+  const asStep = (item) => ({ id: item.id, title: `${item.role} · ${item.command}`, command: item.command,
+    status: item.supported ? "DOCUMENTED" : "BLOCKED", evidence: item.evidence, validation: item.validation });
+  const paperEntries = runs.map((run) => {
+    const steps = [...(setup.length ? [] : [install]), ...prerequisites.map(asStep), asStep(run)];
+    return { id: run.id, command: run.command, role: run.role, evidence: run.evidence, steps, status: workflowStatus(steps) };
+  });
+  const pythonEntries = report.entrypoints.filter((entry) => /^(?:(?:cd|pushd)\s+\S+\s*&&\s*)?python3?\s/.test(entry.command)
+    && entry.references.some((ref) => ref.exists && /\.py$/i.test(ref.path))
+    && entry.references.every((ref) => ref.exists === true)
+    && !paperEntries.some((item) => item.command === entry.command)).map((entry) => {
+      const steps = buildWorkflows(plan, [entry])[0].steps;
+      return { id: entry.id, command: entry.command, role: entry.category, evidence: entry.evidence, steps, status: workflowStatus(steps) };
+    });
+  report.quickEntries = [...paperEntries, ...pythonEntries].filter((entry, index, all) => all.findIndex((item) => item.command === entry.command) === index);
+  const available = report.quickEntries.filter((entry) => entry.status !== "BLOCKED");
+  const tests = available.filter((entry) => entry.role === "preflight");
+  report.recommendedQuickEntryId = tests.length === 1 ? tests[0].id : available.length === 1 ? available[0].id : null;
+  report.workflows = buildWorkflows(plan, report.entrypoints);
+  if (report.quickEntries.length) Object.assign(report.workflows[0], { status: "NEEDS_SELECTION", steps: [] });
+  plan.gaps = plan.gaps.filter((gap) => gap.type !== "missing_step" || plan.steps.find((step) => step.id === gap.step)?.status === "MISSING");
+  plan.status = plan.steps.some((step) => step.status === "BLOCKED") || plan.gaps.some((gap) => gap.type === "missing_reference") ? "BLOCKED"
+    : plan.steps.some((step) => ["MISSING", "NEEDS_SELECTION"].includes(step.status)) ? "INCOMPLETE" : "READY";
+  const failures = report.checks.filter((item) => item.status === "FAIL").length;
+  const warnings = report.checks.filter((item) => item.status === "WARN").length;
+  report.summary = { failures, warnings };
+  report.status = statusFor(failures, warnings);
+}
+
 function strictExitCode(status) {
   return status === "READY_FOR_REVIEW" ? 0 : 1;
 }
@@ -514,6 +572,8 @@ function standalonePlan(report) {
     paperWorkflowDraft: report.paperWorkflowDraft,
     protocolLock: report.protocolLock,
     paperMatrixDraft: report.paperMatrixDraft,
+    quickEntries: report.quickEntries,
+    recommendedQuickEntryId: report.recommendedQuickEntryId,
   };
 }
 
@@ -730,24 +790,24 @@ export async function scan(input, token, pinnedCommit) {
       status: installCommand ? "PASS" : "WARN",
       message: installCommand
         ? "Install command found in README"
-        : "Install command not found in README",
+        : "Installation command not automatically recognized",
       evidence: installCommand
         ? { file: readme, ...installCommand }
         : null,
       suggestion: installCommand
         ? null
-        : "Add a supported installation command to README.md",
+        : "Review README setup instructions and dependency files; unsupported syntax may still document installation",
     },
     {
       id: "run_command",
       status: runCommands.length ? "PASS" : "WARN",
       message: runCommands.length
-        ? `${runCommands.length} runnable command(s) found and categorized`
-        : "Runnable command not found in README",
+        ? `${runCommands.length} Python run command candidate(s) identified (not executed)`
+        : "Run command not automatically recognized",
       evidence: runCommand ? { file: readme, ...runCommand } : null,
       suggestion: runCommand
         ? null
-        : "Add a Python run command to README.md",
+        : "Review README usage instructions and source entry points; absence of detection does not mean no instructions exist",
     },
     {
       id: "data_instructions",
@@ -928,6 +988,7 @@ export async function scan(input, token, pinnedCommit) {
   evaluationDraft.suggestion = suggestCandidate(report);
   report.paperProvenance = discoverPaperProvenance({ readme, readmeText, evaluationDraft });
   report.paperWorkflowDraft = buildPaperWorkflowDraft({ provenance: report.paperProvenance, makefile, makefileText, filePaths });
+  reconcileWorkflowFindings(report);
   report.protocolLock = buildProtocolLock({ report, treeEntries: tree.tree, readme, makefile, dependencyFile: dependencies, dependencyVersions,
     pythonVersionFile: pythonVersion, pythonVersionResult, seedConfiguration });
   report.paperMatrixDraft = buildPaperMatrixDraft(report);
@@ -1111,7 +1172,7 @@ function main() {
       {
         type: "missing_step",
         step: "environment",
-        message: "Prepare Python environment is not documented",
+        message: "Prepare Python environment was not automatically recognized; review the source instructions",
       },
       {
         type: "missing_reference",

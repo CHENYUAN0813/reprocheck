@@ -33,6 +33,6 @@ export function buildPaperWorkflowDraft({ provenance, makefile, makefileText = "
       reviewRequired: true, steps, gaps };
   });
   return { status: adapters.some((adapter) => adapter.status === "NEEDS_REVIEW") ? "NEEDS_REVIEW" : adapters.length ? "BLOCKED" : "NOT_FOUND",
-    makefile: makefile || null, adapters, warnings: ["README commands and Make targets are untrusted code and require explicit review before container execution.",
+    makefile: makefile || null, commands: hints.map((hint) => ({ ...hint, role: role(hint) })), adapters, warnings: ["README commands and Make targets are untrusted code and require explicit review before container execution.",
       "A valid target proves only that the command exists, not that its data, model or paper protocol is correct."] };
 }

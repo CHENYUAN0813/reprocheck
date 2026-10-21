@@ -325,7 +325,7 @@ function CandidateConfig({ report, disabled, onApply }) {
     <div className="runner-heading"><div><p className="eyebrow">Generated configuration · Needs review</p><h2 id="candidate-title">Build an Evaluation from this scan</h2>
       <p>Choose source-backed candidates, then review or complete the editable form. This does not execute code.</p></div></div>
     {suggested && <p className="runner-note">One unambiguous candidate was preselected from a matching README command, source metric and printed output. It is still unconfirmed.</p>}
-    {draft.entries.length === 0 ? <p className="runner-note">No suitable entry candidate was found in the sampled files. Supply a custom Evaluation below; no command or benchmark is invented.</p> : <fieldset className="run-options" disabled={disabled}>
+    {draft.entries.length === 0 ? <p className="runner-note">No supported metric-evaluation candidate was found in the sampled Python files. A Quick/Make entry may still be available above. Supply a custom Evaluation below; no command or benchmark is invented.</p> : <fieldset className="run-options" disabled={disabled}>
       <legend>Source-backed candidate choices</legend>
       <label>Candidate entry<select value={review.entryId} onChange={(event) => setReview(selections(event.target.value))}>
         {draft.entries.map((entry) => <option value={entry.id} key={entry.id}>{entry.command}{entry.origin ? " · inferred, review arguments" : ""}</option>)}
@@ -391,6 +391,29 @@ function SavedExperimentImport({ disabled, onOpenVersion }) {
       <button type="button" onClick={() => setPendingImport(null)}>Cancel import</button></div>}
     {error && <p className="runner-error" role="alert">{error}</p>}
   </fieldset>;
+}
+
+function SuggestedEntry({ report, disabled, onChoose }) {
+  const entries = report.quickEntries ?? [];
+  const [id, setId] = useState(report.recommendedQuickEntryId ?? "");
+  const selected = entries.find((entry) => entry.id === id);
+  const readme = report.checks.find((check) => check.id === "readme")?.evidence;
+  return <section className="runner candidate-config" aria-labelledby="suggested-entry-title">
+    <h2 id="suggested-entry-title">Start here · check one entry</h2>
+    <p>Quick checks whether the selected entry executes. It is not full training or metric acceptance. Commands remain untrusted and will not run until you review and confirm. Prerequisites can download large dependencies or datasets; Quick does not mean a small download.</p>
+    {entries.length ? <>
+      <label>Suggested entry<select value={id} disabled={disabled} onChange={(event) => setId(event.target.value)}>
+        <option value="">Choose an entry — no automatic choice</option>
+        {entries.map((entry) => <option key={entry.id} value={entry.id}>{entry.id === report.recommendedQuickEntryId ? "Recommended · " : ""}{entry.command} · {entry.status}</option>)}
+      </select></label>
+      {selected && <><p><EvidenceLink report={report} evidence={selected.evidence} /></p>
+        <p className="hint">{selected.role === "preflight" ? "A source-validated test entry is available; start here before the experiment." : "Review this entry and its prerequisites; Quick does not imply a short or inexpensive run."}</p>
+        <ol>{selected.steps.map((step) => <li key={step.id}>{step.title} · {step.status}{step.command && <pre>{step.command}</pre>}</li>)}</ol>
+      </>}
+      <button type="button" disabled={disabled || !selected || selected.status === "BLOCKED"} onClick={() => onChoose(selected)}>Review selected entry in Quick</button>
+      {selected?.status === "BLOCKED" && <p className="runner-note">Some prerequisite targets could not be validated. Review their source before execution.</p>}
+    </> : <p className="runner-note">No supported entry was automatically validated. Review {readme ? <EvidenceLink report={report} evidence={readme} /> : <a href={`https://github.com/${report.repository}/tree/${report.commit}`} target="_blank" rel="noreferrer">repository source</a>} and the repository's Python scripts{report.paperWorkflowDraft?.makefile && <> / <EvidenceLink report={report} evidence={{ file: report.paperWorkflowDraft.makefile }} /></>}. This does not mean the repository has no instructions.</p>}
+  </section>;
 }
 
 function ExperimentConfig({ report, disabled, onApply, onInvalidate, importedDraft }) {
@@ -632,7 +655,8 @@ function App() {
   const selectedMatrixAdapter = report.paperMatrixDraft?.adapters.find((adapter) => adapter.id === acceptance.paperMatrix?.adapterId);
   const matrixWorkflow = selectedWorkflow === "paper-matrix" && selectedMatrixAdapter ? { id: "paper-matrix", title: "Paper result matrix", status: "USER_REVIEWED_MATRIX",
     steps: selectedMatrixAdapter.steps.map((step) => ({ ...step, title: `${step.role} · ${step.command}`, status: "USER_REVIEWED" })) } : null;
-  const activeWorkflow = reviewedMatrixWorkflow ?? matrixWorkflow ?? report.workflows?.find((workflow) => workflow.id === selectedWorkflow)
+  const selectedQuickEntry = selectedWorkflow === "quick" && report.quickEntries?.find((entry) => entry.id === acceptance.quickEntryId);
+  const activeWorkflow = reviewedMatrixWorkflow ?? matrixWorkflow ?? (selectedQuickEntry ? { id: "quick", title: "Quick verification", status: selectedQuickEntry.status, steps: selectedQuickEntry.steps } : null) ?? report.workflows?.find((workflow) => workflow.id === selectedWorkflow)
     ?? report.workflows?.[0]
     ?? null;
   const selectedCandidate = report.evaluationDraft?.entries.find((entry) => entry.id === acceptance.candidateReview?.entryId);
@@ -655,6 +679,12 @@ function App() {
     setAcceptance({ ...emptyAcceptance, ...options.evaluation, expectedText: options.expectedText, outputFile: options.outputFile,
       metricKey: options.metricKey, metricOperator: options.metricOperator, metricTarget: options.metricTarget === null ? "" : String(options.metricTarget),
       candidateReview: options.candidateReview });
+    setPreflight(null); setRunConfirmed(false); setRunJob(null); setPreflightError("");
+    document.getElementById("runner-title")?.focus();
+  }
+
+  function chooseQuickEntry(entry) {
+    setSelectedWorkflow("quick"); setQuickCommand(""); setAcceptance({ ...emptyAcceptance, quickEntryId: entry.id });
     setPreflight(null); setRunConfirmed(false); setRunJob(null); setPreflightError("");
     document.getElementById("runner-title")?.focus();
   }
@@ -789,6 +819,7 @@ function App() {
             metricOperator: acceptance.metricOperator, metricTarget: acceptance.metricTarget === "" ? null : Number(acceptance.metricTarget), metricTolerance: acceptance.metricOperator === "eq" ? Number(acceptance.metricTolerance) : 0,
             ...(acceptance.candidateReview ? { candidateReview: acceptance.candidateReview } : {}),
             ...(acceptance.experiment ? { experiment: acceptance.experiment } : {}),
+            ...(acceptance.quickEntryId ? { quickEntryId: acceptance.quickEntryId } : {}),
             evaluation: activeWorkflow.id === "evaluation" || acceptance.experiment ? { dataset: acceptance.dataset, model: acceptance.model, reference: acceptance.reference, assetsInEntry: acceptance.assetsInEntry } : null },
         }),
       });
@@ -951,6 +982,7 @@ function App() {
           {error && <p className="error" role="alert">{error}</p>}
         </section>
 
+        {!isExample && !acceptance.benchmarkId && <SuggestedEntry key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onChoose={chooseQuickEntry} />}
         <section className="report" aria-labelledby="report-title">
           <div className="report-heading">
             <div>
@@ -1073,7 +1105,7 @@ function App() {
                     {step.command && <code className="command">{step.command}</code>}
                     {step.instruction && <p className="plan-instruction">{step.instruction}</p>}
                     {step.status === "MISSING" && (
-                      <p className="plan-missing">The repository does not document this step.</p>
+                      <p className="plan-missing">This step was not automatically recognized. Review the source instructions before proceeding.</p>
                     )}
                     {step.evidence?.file && (
                       <p className="evidence">
@@ -1103,7 +1135,7 @@ function App() {
                 </li>
               ))}
               {displayedPlan.steps.length === 0 && (
-                <li className="workflow-empty">No matching entry point was found in the README.{activeWorkflow?.id === "evaluation" && " You can explicitly supply and review an Evaluation entry below; it is not a discovered README command."}</li>
+                <li className="workflow-empty">{activeWorkflow?.id === "quick" && report.quickEntries?.length ? "Choose an entry in Start here above to review it in Quick." : "No matching entry point was automatically recognized. Check the README and source files."}{activeWorkflow?.id === "evaluation" && " You can explicitly supply and review an Evaluation entry below; it is not a discovered README command."}</li>
               )}
             </ol>
           </section>
@@ -1119,7 +1151,7 @@ function App() {
                 <h2 id="runner-title" tabIndex={-1}>Check before running unknown code</h2>
                 <p>Re-scan the pinned commit and inspect the local Docker runner.</p>
               </div>
-              <button type="button" onClick={checkPreflight} disabled={executionBusy || (acceptance.candidateReview && !acceptance.candidateReview.confirmed) || (activeWorkflow.id === "training" && !acceptance.benchmarkId && !acceptance.experiment)}>
+              <button type="button" onClick={checkPreflight} disabled={executionBusy || (activeWorkflow.id === "quick" && report.quickEntries?.length > 0 && !acceptance.quickEntryId) || (acceptance.candidateReview && !acceptance.candidateReview.confirmed) || (activeWorkflow.id === "training" && !acceptance.benchmarkId && !acceptance.experiment)}>
                 {preflightLoading ? "Checking…" : "Check local runner"}
               </button>
             </div>

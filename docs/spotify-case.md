@@ -10,6 +10,8 @@ The reviewed source is [spotify-research/sequential-capacity-probes at 705710f](
 
 ## What ReproCheck contributes
 
+The scan screenshot below records the earlier scanner. Current scans reconcile validated Make targets with installation/run findings: `make setup` / `make dependency` are recognized, and **Start here** recommends reviewing `make test` in Quick, with setup/data prerequisites shown. The original scan's three command-detection warnings are therefore removed (7 → 4); this is improved recognition, not a new successful execution. The reviewed 15-cell CPU matrix below remains a separate workflow.
+
 ![Actual Spotify scan: pinned commit, 104 files, seven warnings and source-linked findings](images/spotify-scan.png)
 
 The web scan reports 104 files, zero blockers and seven warnings at this pinned revision. In particular, its basic command checks say installation and runnable commands were not found. The repository uses Make workflows, so these messages expose a detection limit rather than proving that instructions are absent. Review the generated workflow adapters and source links before acting on a warning.

@@ -42,6 +42,12 @@ Discovered entry points are also grouped into quick verification, training, and 
 
 Open `http://127.0.0.1:5173`, submit a public GitHub repository URL, and download either the full report or the standalone reproduction plan.
 
+### Start with one source-validated entry
+
+After scanning, **Start here · check one entry** lists supported Python scripts and README Make targets whose source exists. A single validated test entry is recommended before experiment entries; otherwise a single available entry is suggested, or multiple alternatives require a choice. Choose **Review selected entry in Quick**, inspect its prerequisites, then **Check local runner**. Neither action executes repository code; the existing execution confirmation is still required. The server revalidates the selected ID against the scan, not commands supplied by the browser.
+
+Make setup/prepare commands are retained in the preview. Quick can still download large dependencies/data and does not promise a cheap run. Target existence does not validate internal Make dependencies, successful execution, metric acceptance or the complete paper protocol. Unrecognized commands are labelled **not automatically recognized**, with source pointers; this is not proof that the repository lacks instructions. Full Training and Evaluation remain separate workflows.
+
 ## Local isolated execution
 
 Start Docker Desktop, scan a repository, choose **Quick verification** or **Evaluation**, and select **Check local runner**. **Training** also accepts a confirmed custom end-to-end experiment configuration; the BTHOWeN training buttons retain separately reviewed fixed real-paper cases. ReproCheck re-scans the pinned commit before allowing execution and shows every command for review. Training without either configuration remains disabled.
