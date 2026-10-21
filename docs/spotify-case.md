@@ -1,5 +1,7 @@
 # Spotify: from repository inspection to a 15-cell CPU comparison
 
+[← Project home](../README.md) · [Advanced usage](advanced-usage.md) · [Verification](verification.md) · [Testing](testing.md)
+
 ## Question
 
 Can a researcher run the deterministic CPU subset of Spotify Research's Sequential Capacity Probes and check each result against its published reference table?
@@ -26,7 +28,21 @@ This compatibility judgment is specific to the reviewed case. A scan warning alo
 
 ## Repeat the web workflow
 
-Follow the [README installation and Docker instructions](../README.md#larger-example-the-spotify-cpu-case). Use **Load published Spotify CPU matrix benchmark**, then **Check local runner**, review and confirm execution, and select **Run paper matrix**.
+Start with the [README installation instructions](../README.md#first-run-scan-only), then follow the Docker workflow below.
+
+### Run the CPU matrix
+
+**Verified through the web interface on 2026-10-21:** Spotify's deterministic CPU subset completed in **5 min 37 sec**, with **15/15 reference cells matched** and all **26 source/data identities passed**. Evidence download and reopening the saved report after a page reload were checked. This is a reviewed subset, not full-paper reproduction. The [case study](#scope-and-interpretation) includes actual screenshots, the initial disk-full failure and the human compatibility decision.
+
+Start **Docker Desktop with Linux containers** and wait until its engine is running. Allow enough Docker memory for a **6 GB** container and disk space for public datasets and dependencies; MovieLens 20M is a substantial download. The reviewed profile uses **4 CPUs** and a **60-minute maximum**. Download and execution times depend on your machine and network.
+
+1. Load **published Spotify CPU matrix benchmark** on the page.
+2. Select **Check local runner**. Review the three steps, resource limits and disclosed CPU compatibility profile.
+3. Confirm temporary-container execution and select **Run paper matrix**.
+4. Wait for the run to finish. A successful acceptance shows **Execution SUCCEEDED**, **Output verification · Configured checks passed**, and **Paper matrix · 15/15 matched**. The saved record calls the output-check status `VERIFIED`. Starting a run or seeing a successful scan is not sufficient.
+5. Download the execution evidence. Open the same run under **Recent executions** to inspect it again after restarting the server.
+
+The case covers five datasets × MC, SeqRules and PCTM, with NDCG@10 compared at the paper's four printed decimal places. [Read the case study](#scope-and-interpretation) for the observed environment issue, manual decisions, results and remaining limits.
 
 The preset is [spotify-cpu-matrix.json](../examples/spotify-cpu-matrix.json); the readable container adapter is [evaluate-capacity-matrix.py](../examples/evaluate-capacity-matrix.py). Inputs are checked before and after the experiment. The runner hashes the resulting CSV and retains observed values, reference values, differences and per-cell statuses.
 
@@ -68,6 +84,18 @@ Before retrying, ensure the drive holding Docker's disk image has substantial fr
 - Matching rounded NDCG@10 values is evidence of agreement with those table cells; it is not independent validation of the paper's overall conclusions.
 - The preset was manually reviewed. Automatically discovered workflows still require review of inputs, commands, outputs and protocol gaps.
 - Container observations and hashes help identify what ran; they are not a security certification. Repository code runs with network access in a temporary container without host mounts or host credentials.
+
+## Second reviewed paper: Sequential Capacity Probes
+
+**Load published Beauty benchmark** selects the Beauty/MC cell from Spotify Research's accepted RecSys 2026 paper, [“Do Sequential Recommendation Benchmarks Really Require Higher-Order Sequence Modelling?”](https://github.com/spotify-research/sequential-capacity-probes). The case pins repository commit `705710f`, the paper's pinned eSASRec data builder, the public S3Rec Beauty source, generated train/holdout hashes, seven source/configuration files and the exact Table 1 row.
+
+The run uses the authors' original deterministic empirical Markov Chain builder, full-catalogue ranking, RecTools NDCG@10 calculation and independent NDCG implementation under exact Python 3.10.12. It installs only the CPU code's imported dependencies. The adapter deliberately does not invoke the repository's full-matrix environment verifier because that requires unused Torch 2.7.1/CUDA even for MC; this compatibility boundary is displayed before execution and retained in evidence. No model, ranking or metric code is replaced.
+
+The 2026-09-23 local acceptance run completed in **22.796 seconds**. Original official NDCG@10 was **0.049176744331261055** and the paper's exact-four-decimal protocol produced **0.0492**, matching the pinned Table 1 value with zero tolerance. All ten code/data/reference identities passed. This is one deterministic CPU cell, not reproduction of the other four datasets, factorized methods, GPU transformer runs or the full paper.
+
+**Load published Spotify CPU matrix benchmark** expands that acceptance to **5 datasets × 3 original CPU models = 15 Table 1 cells**: MC, SeqRules and PCTM on Beauty, Sports, Toys, ML-1M and ML-20M. It pins 16 source/configuration files and all ten generated train/holdout files, runs the authors' deterministic launcher, requires every original JSON result, checks the official and independent NDCG@10 values agree, and compares every value with the pinned README at four decimals. The fresh `results/table1-cpu.csv` is then checked cell by cell by the normal paper-matrix collector.
+
+The 2026-09-23 local acceptance finished the 15 original calculations in about **5 minutes 47 seconds**; all 15 matched Table 1 with zero four-decimal difference. The upstream launcher then raised `mc: torch None is not frozen` because its global verifier requires Torch 2.7.1 even for these three Torch-free CPU models. The reviewed adapter accepts only that exact post-computation compatibility boundary and performs the source, environment, data, metric and table checks itself. This reproduces the paper's deterministic CPU subset, not its four GPU/factorized model columns or the entire paper.
 
 ## Feedback we need
 
