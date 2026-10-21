@@ -1,8 +1,67 @@
 # ReproCheck
 
-ReproCheck checks public Python research repositories for reproducibility problems.
+Find reproducibility blockers in a public Python research repository, inspect the evidence, and run a reviewed experiment locally.
 
-It scans the complete repository file tree at a specific commit and reads the root README.
+Built for students and researchers working out how to run someone else's research code. ReproCheck links findings to a fixed Git commit, separates missing instructions from executable steps, and compares observed results with explicit references.
+
+**Start here:** [Install and scan](#first-run-scan-only) → [Run the small Iris example](#first-execution-the-iris-example). For a larger worked example, see the [Spotify case study](docs/spotify-case.md).
+
+## First run: scan only
+
+Install **Node.js 22.12+ (Node 24 recommended)** and **Git**. Docker is not needed for scanning. From a terminal:
+
+```sh
+git clone https://github.com/CHENYUAN0813/reprocheck.git
+cd reprocheck
+npm ci
+npm run dev
+```
+
+On Windows PowerShell, use `npm.cmd` instead of `npm` if script execution is blocked. Keep this terminal open, visit **http://127.0.0.1:5173/**, enter a public GitHub repository URL, and select **Scan repository**. Findings include file/line evidence and suggested next actions. Scanning reads repository files; it does not run their code.
+
+For your first example, choose **Load published Iris benchmark** instead of entering a URL. This loads a reviewed, pinned source revision without starting an experiment. An ordinary URL scan follows the repository's current default branch.
+
+GitHub's anonymous API quota may be exhausted. Optionally set a GitHub token in the **same terminal before starting the server**. In PowerShell:
+
+```powershell
+$reproToken = Read-Host "GitHub token" -AsSecureString
+$env:GITHUB_TOKEN = [System.Net.NetworkCredential]::new("", $reproToken).Password
+npm.cmd run dev
+```
+
+Do not put the token in source files, screenshots or Git. This project reads the environment variable; it does not automatically load a `.env` file. A `401` means the supplied credentials were rejected. A `403` may indicate rate limiting or access restrictions; inspect the response before retrying. If `5173` is occupied, stop the previous server with `Ctrl+C` before starting another.
+
+## First execution: the Iris example
+
+Use **Docker Desktop with Linux containers** for execution (not for scanning). Wait until its engine is running. This small CPU case needs the runner's **2 CPU / 2 GB** allocation, internet access for the image/dependencies, and free disk space. There is no GPU requirement. The execution limit is **10 minutes**, not an estimate; a first image download can take longer than a warm run.
+
+1. Open **http://127.0.0.1:5173/** and choose **Load published Iris benchmark** (not Iris training).
+2. Select **Check local runner**, then review the pinned source, commands and compatibility notes.
+3. Tick the temporary-container execution acknowledgement and select **Run Evaluation**.
+4. Expect **Execution SUCCEEDED**, **Output verification · Configured checks passed**, and **Evaluation report · MATCHED REFERENCE** with observed/reference accuracy **0.98 / 0.98** (49 correct out of 50 held-out samples).
+5. Select **Download execution evidence**. Refresh the page and use **Recent executions → View record** to reopen it.
+
+![Actual Iris evaluation result, with observed accuracy matching the pinned reference](docs/images/iris-result.png)
+
+**Execution succeeded** only means the commands exited normally. **Configured checks passed** additionally means the declared text/files/metrics and this case's input identities passed. This example evaluates a pretrained model; it does not retrain it or reproduce an entire paper. A failure is a result to inspect, not a reason to silently change the reference.
+
+Keep the server open while running. Do not run `npm test` during an experiment under `npm run dev`: some tests temporarily edit example fixtures and can trigger a watcher restart. For a run without file watching, use `node server.mjs` instead of `npm run dev` (in the same token-configured terminal).
+
+**First-time-user acceptance is still pending:** ask a classmate unfamiliar with this repository to follow only these instructions and reach/download the Iris report. Record the exact step and wording that blocked them. Automated checks and the maintainer's run do not substitute for that feedback.
+
+## Larger example: the Spotify CPU case
+
+**Verified through the web interface on 2026-10-21:** Spotify's deterministic CPU subset completed in **5 min 37 sec**, with **15/15 reference cells matched** and all **26 source/data identities passed**. Evidence download and reopening the saved report after a page reload were checked. This is a reviewed subset, not full-paper reproduction. The [case study](docs/spotify-case.md) includes actual screenshots, the initial disk-full failure and the human compatibility decision.
+
+Start **Docker Desktop with Linux containers** and wait until its engine is running. Allow enough Docker memory for a **6 GB** container and disk space for public datasets and dependencies; MovieLens 20M is a substantial download. The reviewed profile uses **4 CPUs** and a **60-minute maximum**. Download and execution times depend on your machine and network.
+
+1. Load **published Spotify CPU matrix benchmark** on the page.
+2. Select **Check local runner**. Review the three steps, resource limits and disclosed CPU compatibility profile.
+3. Confirm temporary-container execution and select **Run paper matrix**.
+4. Wait for the run to finish. A successful acceptance shows **Execution SUCCEEDED**, **Output verification · Configured checks passed**, and **Paper matrix · 15/15 matched**. The saved record calls the output-check status `VERIFIED`. Starting a run or seeing a successful scan is not sufficient.
+5. Download the execution evidence. Open the same run under **Recent executions** to inspect it again after restarting the server.
+
+The case covers five datasets × MC, SeqRules and PCTM, with NDCG@10 compared at the paper's four printed decimal places. [Read the case study](docs/spotify-case.md) for the observed environment issue, manual decisions, results and remaining limits.
 
 ## Usage
 
@@ -48,7 +107,7 @@ Before checking the runner, you can specify expected text in the final entry poi
 
 The downloadable JSON evidence includes the source commit, original/reviewed/effective commands, package-source override, Python and Docker environment, observed image ID when available, installed dependency versions, extracted parameter defaults, output file size/hash, logs, exit code and verification results. Parameter defaults are not a record of actual seed/argument values. Observations are produced inside an untrusted container and are not a security attestation. Confirmed custom experiments export one newly trained model file up to 512 KiB; fixed reviewed BTHOWeN checkpoints retain a 64 KiB limit. Model directories and large binaries are not exported.
 
-Snapshots are atomically saved under `.reprocheck/runs/` on this computer (ignored by Git). **Recent executions** lists the latest 30 records and lets you reopen/download them after a restart. If the server restarts during a run, the saved snapshot is marked **INTERRUPTED** with an unknown final outcome rather than falsely reporting success or failure. Log storage retains the last 900,000 characters, including bounded model evidence; a save failure is displayed so the evidence can still be downloaded from memory.
+Snapshots are atomically saved under `.reprocheck/runs/` on this computer (ignored by Git). **Recent executions** lists the latest 30 records and lets you reopen/download them after a restart. If the server restarts during a run, the saved snapshot is marked **INTERRUPTED** with an unknown final outcome rather than falsely reporting success or failure. Display logs retain the last 900,000 characters. Steps, entry-output text matches and validated structured evidence are tracked separately as output arrives and saved with the record, so log truncation does not erase verification. Split chunks are supported; a structured-evidence line over 1 MiB is rejected rather than buffered without limit. A save failure is displayed so the evidence can still be downloaded from memory.
 
 ### Frozen recipes and replay comparisons
 
