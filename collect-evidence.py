@@ -84,7 +84,21 @@ def observe_benchmark():
 
 
 artifact = observe_file()
-if sys.argv[2] == "checkpoint":
+if sys.argv[2].startswith("inputs:"):
+    stage = sys.argv[2].split(":", 1)[1]
+    for name in experiment["inputs"][stage]:
+        path = (root / name).resolve()
+        if not path.is_relative_to(root) or ".git" in path.relative_to(root).parts:
+            raise RuntimeError(f"Step {stage}: input resolves outside allowed repository files: {name}")
+        if not path.is_file():
+            raise RuntimeError(f"Step {stage}: required input file missing or not a regular file: {name}")
+        try:
+            with path.open("rb") as stream:
+                stream.read(1)
+        except OSError as error:
+            raise RuntimeError(f"Step {stage}: required input file is unreadable: {name}") from error
+        print(f"Input checked [{stage}]: {name}", flush=True)
+elif sys.argv[2] == "checkpoint":
     # Gate evaluation on a newly produced, bounded model. Never delete a preset model.
     initial = json.loads(checkpoint_baseline.read_text())
     observed = observe_file(experiment["checkpoint"])

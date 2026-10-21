@@ -22,7 +22,7 @@ export function relativeArtifactPath(value) {
 }
 
 export function validateExperiment(input) {
-  const keys = ["repository", "commit", "title", "installCommand", "prepareCommand", "trainCommand", "checkpoint", "parameters", "seed", "protocol", "capture", "confirmed"];
+  const keys = ["repository", "commit", "title", "installCommand", "prepareCommand", "trainCommand", "checkpoint", "parameters", "seed", "protocol", "capture", "confirmed", "inputs"];
   if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some((key) => !keys.includes(key))) throw new Error("Invalid experiment configuration");
   if (!/^[\w.-]+\/[\w.-]+$/.test(input.repository ?? "") || !/^[a-f\d]{40}$/i.test(input.commit ?? "")) throw new Error("Experiment requires a pinned repository and commit");
   for (const key of ["title", "parameters", "seed", "protocol"]) {
@@ -32,13 +32,21 @@ export function validateExperiment(input) {
     if (typeof input[key] !== "string" || input[key].length > 6000 || /[\r\n\0]/.test(input[key]) || (key === "trainCommand" && !input[key].trim())) throw new Error(`Experiment ${key} must be a reviewed single-line command`);
   }
   if (!relativeArtifactPath(input.checkpoint)) throw new Error("Checkpoint must be a relative repository file without traversal");
+  const inputs = input.inputs;
+  if (inputs !== undefined) {
+    if (!inputs || typeof inputs !== "object" || Array.isArray(inputs) || Object.keys(inputs).some((key) => !["prepare-data", "train", "evaluate"].includes(key))) throw new Error("Invalid experiment input stages");
+    for (const [stage, paths] of Object.entries(inputs)) {
+      if (!Array.isArray(paths) || paths.length > 20 || paths.some((path) => !relativeArtifactPath(path))) throw new Error(`Invalid input paths for ${stage}: use up to 20 relative file paths`);
+      if (stage === "prepare-data" && paths.length && !input.prepareCommand.trim()) throw new Error("Preparation inputs require a preparation command");
+    }
+  }
   const capture = input.capture;
   if (!capture || typeof capture !== "object" || Array.isArray(capture) || Object.keys(capture).some((key) => !["kind", "label", "unit"].includes(key))
     || !["file", "stdout", "stdout-json"].includes(capture.kind)
     || !["number", "percent"].includes(capture.unit) || typeof capture.label !== "string" || capture.label.length > 80 || /[\r\n\0]/.test(capture.label)
     || (capture.kind === "stdout" && !capture.label.trim())) throw new Error("Experiment needs a file/JSON-stdout/labelled-stdout metric capture choice");
   if (input.confirmed !== true) throw new Error("Review and confirm the complete experiment configuration before execution");
-  return { ...input, capture: { ...capture }, title: input.title.trim(), checkpoint: input.checkpoint.trim() };
+  return { ...input, ...(inputs ? { inputs: Object.fromEntries(Object.entries(inputs).map(([stage, paths]) => [stage, [...new Set(paths)]])) } : {}), capture: { ...capture }, title: input.title.trim(), checkpoint: input.checkpoint.trim() };
 }
 
 export function experimentDraft(report) {

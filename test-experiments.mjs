@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { buildEvaluationDraft } from "./evaluation-config.mjs";
@@ -48,6 +49,49 @@ const archived = { ...sample, id: "00000000-0000-4000-8000-000000000004", reposi
 const replay = buildReplayPreflight(archived, { available: true }, true);
 assert.ok(replay.automatedSteps.findIndex((step) => step.id === "verify-lock") < replay.automatedSteps.findIndex((step) => step.id === "train"));
 assert.deepEqual(replay.executionOptions.experiment, options.experiment);
+const inputs = { "prepare-data": ["data/raw.csv"], train: ["data/train.csv"], evaluate: ["data/test.csv", options.experiment.checkpoint] };
+const withInputs = { ...options, experiment: { ...options.experiment, prepareCommand: "python prepare.py", inputs } };
+assert.deepEqual(importedExperimentDraft({ ...source, executionOptions: withInputs }).inputs, inputs);
+for (const invalid of [null, [], { unknown: [] }, { train: "data.csv" }, { train: ["../secret"] }, { train: ["/tmp/data"] }, { train: [".git/config"] }, { train: Array(21).fill("a") }]) {
+  assert.throws(() => validateExperiment({ ...options.experiment, inputs: invalid }), /input/i);
+}
+assert.throws(() => validateExperiment({ ...options.experiment, inputs: { "prepare-data": ["raw.csv"] } }), /Preparation/);
+const inputPreview = buildPreflight(report, "training", { available: true }, "readme", withInputs);
+const inputScript = buildDockerInvocation(inputPreview, "input-unit").at(-1);
+for (const stage of Object.keys(inputs)) {
+  assert.ok(inputScript.indexOf(`echo ::reprocheck-step::${stage}\n`) < inputScript.indexOf(`collect inputs:${stage}\n`));
+  assert.ok(inputScript.indexOf(`collect inputs:${stage}\n`) < inputScript.lastIndexOf(inputPreview.automatedSteps.find((step) => step.id === stage).command));
+}
+const inputReplay = buildReplayPreflight({ ...archived, executionOptions: withInputs, steps: inputPreview.automatedSteps }, { available: true }, true);
+assert.deepEqual(inputReplay.executionOptions.experiment.inputs, inputs);
+assert.match(buildDockerInvocation(inputReplay, "input-replay").at(-1), /collect inputs:train\n/);
+assert.ok(!script.includes("collect inputs:train\n"), "Old configurations remain unchanged");
+
+// Synthetic local files only: no repository code, downloads or host mounts.
+if (process.argv.includes("--input-checks-docker")) {
+  const collector = readFileSync(new URL("./collect-evidence.py", import.meta.url), "utf8");
+  const probe = `import json, pathlib, sys
+root=pathlib.Path('/workspace'); root.mkdir()
+collector=${JSON.stringify(collector)}
+def check(name, fails=False):
+    sys.argv=['collector',json.dumps({'experiment':{'inputs':{'train':[name]}}}),'inputs:train']
+    try:
+        exec(collector,{})
+    except RuntimeError as error:
+        assert fails and 'train' in str(error) and name in str(error), str(error)
+    else:
+        assert not fails, name
+check('generated.csv',True)
+(root/'generated.csv').write_text('prepared data')
+check('generated.csv')
+(root/'folder').mkdir(); check('folder',True)
+(root/'escape').symlink_to('/etc/passwd'); check('escape',True)
+(root/'.git').mkdir(); (root/'.git/config').write_text('hidden')
+(root/'git-link').symlink_to(root/'.git/config'); check('git-link',True)
+(root/'local-link').symlink_to(root/'generated.csv'); check('local-link')
+print('PASS container input checks: missing, generated, directory, symlink boundaries')`;
+  console.log(execFileSync("docker", ["run", "--rm", "--pull", "never", "--network", "none", "--memory", "128m", "--cpus", "1", "python:3.11", "python", "-c", probe], { encoding: "utf8", timeout: 30000, windowsHide: true }));
+}
 const draftReport = { ...report, reproductionPlan: { steps: [] }, evaluationDraft: buildEvaluationDraft({ readme: "README.md", readmeText: "", entrypoints: [], files: [
   { path: "train.py", text: 'model.fit(X,y)\njoblib.dump(model, "model.joblib")' },
   { path: "evaluate.py", text: 'if __name__ == "__main__":\n model=joblib.load("model.joblib")\n print("Accuracy:", score)' },

@@ -393,6 +393,7 @@ export function buildDockerInvocation(preflight, containerName) {
       ...(preflight.benchmark?.training && step.id === "evaluation-benchmark" ? ["collect inputs"] : []),
       `echo ::reprocheck-step::${step.id.replace(/[^\w.-]/g, "-")}`,
       "cd /workspace",
+      ...(options.experiment?.inputs?.[step.id]?.length ? [`collect inputs:${step.id}`] : []),
       preflight.recipe && step.id === "verify-lock" ? "collect environment"
         : preflight.frozenCommands ? step.command : effectiveCommand(step, preflight.repository, preflight.packageIndex),
     ]),

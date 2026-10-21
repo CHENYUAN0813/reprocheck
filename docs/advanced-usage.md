@@ -50,6 +50,18 @@ Make setup/prepare commands are retained in the preview. Quick can still downloa
 
 ## Local isolated execution
 
+Custom Training configurations accept optional `experiment.inputs`, for example:
+
+```json
+"inputs": {
+  "prepare-data": ["data/raw.csv"],
+  "train": ["data/train.csv", "config.json"],
+  "evaluate": ["data/test.csv"]
+}
+```
+
+Declare up to 20 repository-relative **files** per stage, or use the optional input fields in the experiment form. Checks run inside the container immediately before each stage, including replay, not before the entire experiment. A preparation step may therefore generate a training input. Missing files, directories and symlinks resolving outside the repository (or into `.git`) stop the stage before its command runs; the log identifies the stage and path. Preparation inputs require a preparation command. Old configurations without `inputs` are unchanged. Existing checkpoint freshness/hash and score-output checks still apply separately; input existence/readability is not content, split or paper-protocol verification. No host file upload, dependency graph or cache is added.
+
 Start Docker Desktop, scan a repository, choose **Quick verification** or **Evaluation**, and select **Check local runner**. **Training** also accepts a confirmed custom end-to-end experiment configuration; the BTHOWeN training buttons retain separately reviewed fixed real-paper cases. ReproCheck re-scans the pinned commit before allowing execution and shows every command for review. Training without either configuration remains disabled.
 
 After explicit confirmation, commands run in a temporary container (default `python:3.11`; reviewed cases may pin another version) with 2 CPUs, 2 GB of memory, a 10-minute timeout, a 256-process limit, no host filesystem mounts, and no host credentials. The reviewed Spotify 15-cell matrix uses its fixed 4 CPU, 6 GB and 60-minute profile. Network access remains enabled because public source code, dependencies, and model files may need to be downloaded. Runs can be monitored and cancelled from the page, with per-step status and the exact failure stage.
