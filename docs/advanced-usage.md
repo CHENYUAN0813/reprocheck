@@ -74,6 +74,14 @@ The scan also produces a deterministic protocol-lock draft. Its SHA-256 lock ID 
 
 ## Configurable end-to-end CPU experiments
 
+### Reopen a saved configuration at its original commit
+
+On the home page, choose **Import saved experiment configuration**, select the exported Training JSON, and review its repository and full commit. Choose **Scan saved version** to fetch that exact revision, even if the default branch has advanced. Cancel leaves the current report unchanged. Invalid or unavailable revisions fail explicitly; they never fall back to the latest branch.
+
+The imported form is unconfirmed. Review every command and expectation, confirm and **Apply reviewed experiment**, then **Check local runner** before confirming execution. Scan, preflight and execution use the same configuration commit and retain repository/commit validation. Importing or scanning does not execute code. Hosted scanning accepts the fixed revision, but execution still requires the local server and Docker.
+
+This restores the source version and declared configuration, not frozen dependencies or external datasets. Use [frozen recipe replay](replay.md) for an existing run's recorded environment constraints.
+
 The web log replaces the large structured-evidence/Base64 line with a short notice; complete evidence and model bytes remain in the downloadable record.
 
 Scan a supported public Python repository, choose **Training**, review the scan-prefilled fields, and complete missing installation/preparation/training/evaluation commands, new checkpoint path, metric capture, dataset/split, parameters, seed policy, reference and protocol differences. Literal/inferred commands are candidates, not automatically established author protocols. All stages start at `/workspace`, the checked-out repository root; a command needing another working directory must explicitly use `cd directory && ...`. A blank installation or preparation command is deliberately confirmed, not inferred proof that dependencies or data exist. Data may already be in the repository, built into the original loader, or fetched by the reviewed preparation/training command; host file uploads are not supported.

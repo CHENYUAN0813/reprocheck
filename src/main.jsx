@@ -8,7 +8,7 @@ import capacityEvaluationSource from "../examples/evaluate-capacity-probes.py?ra
 import capacityMatrixSource from "../examples/evaluate-capacity-matrix.py?raw";
 import trainingSource from "../examples/train-bthowen.py?raw";
 import { candidateOptions, candidateWorkflow, suggestCandidate } from "../evaluation-config.mjs";
-import { experimentDraft, experimentExecutionOptions, MODEL_EXPORT_LIMIT } from "../experiment-config.mjs";
+import { experimentDraft, experimentExecutionOptions, importedExperimentDraft, MODEL_EXPORT_LIMIT } from "../experiment-config.mjs";
 
 const emptyAcceptance = { expectedText: "", outputFile: "", metricKey: "", metricOperator: "gte", metricTarget: "", metricTolerance: "0", dataset: "", model: "", reference: "", assetsInEntry: false };
 const cpuEvaluationCommand = `python -c 'exec(${JSON.stringify(cpuEvaluationSource).replaceAll("'", "'\"'\"'")})'`;
@@ -368,30 +368,38 @@ function CandidateConfig({ report, disabled, onApply }) {
   </section>;
 }
 
-function ExperimentConfig({ report, disabled, onApply, onInvalidate }) {
-  const [draft, setDraft] = useState(() => experimentDraft(report));
+function SavedExperimentImport({ disabled, onOpenVersion }) {
+  const [pendingImport, setPendingImport] = useState(null);
   const [error, setError] = useState("");
-  function update(key, value) {
-    setDraft((current) => ({ ...current, [key]: value, confirmed: key === "confirmed" ? value : false }));
-    setError(""); onInvalidate();
-  }
   async function importConfig(event) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    setDraft((current) => ({ ...current, confirmed: false })); onInvalidate();
+    setPendingImport(null);
     try {
       if (file.size > 32000) throw new Error("Experiment configuration is limited to 32 KB");
       const config = JSON.parse(await file.text());
-      const options = config.executionOptions;
-      if (config.schemaVersion !== 1 || config.workflowId !== "training" || config.repository !== report.repository || config.commit !== report.commit
-        || !options?.experiment || options.experiment.repository !== report.repository || options.experiment.commit !== report.commit || options.benchmarkId || options.candidateReview || options.evaluation?.assetsInEntry) throw new Error("Import requires a custom Training configuration matching this scanned repository/commit");
-      const next = { ...options.experiment, evaluationCommand: options.quickCommand, outputFile: options.outputFile, metricKey: options.metricKey,
-        metricOperator: options.metricOperator, metricTarget: options.metricTarget == null ? "" : String(options.metricTarget), metricTolerance: String(options.metricTolerance ?? 0),
-        expectedText: options.expectedText ?? "", dataset: options.evaluation?.dataset ?? "", model: options.evaluation?.model ?? "", reference: options.evaluation?.reference ?? "" };
-      experimentExecutionOptions({ ...next, confirmed: true });
-      setDraft({ ...next, confirmed: false }); setError(""); onInvalidate();
+      const next = importedExperimentDraft(config);
+      setPendingImport(next); setError("");
     } catch (failure) { setError(failure.message); }
+  }
+  return <fieldset className="run-options" disabled={disabled}>
+    <legend>Open a saved Training experiment</legend>
+    <label>Import saved experiment configuration<input type="file" accept=".json,application/json" onChange={importConfig} /></label>
+    {pendingImport && <div role="status"><p>Saved configuration: <strong>{pendingImport.repository}</strong> · commit <code>{pendingImport.commit}</code>. Scan this exact version before reviewing commands. No code will run.</p>
+      <button type="button" onClick={async () => { if (await onOpenVersion(pendingImport)) setPendingImport(null); }}>Scan saved version</button>
+      <button type="button" onClick={() => setPendingImport(null)}>Cancel import</button></div>}
+    {error && <p className="runner-error" role="alert">{error}</p>}
+  </fieldset>;
+}
+
+function ExperimentConfig({ report, disabled, onApply, onInvalidate, importedDraft }) {
+  const [draft, setDraft] = useState(() => importedDraft ?? experimentDraft(report));
+  const [error, setError] = useState("");
+  useEffect(() => { if (importedDraft) { setDraft(importedDraft); setError(""); } }, [importedDraft]);
+  function update(key, value) {
+    setDraft((current) => ({ ...current, [key]: value, confirmed: key === "confirmed" ? value : false }));
+    setError(""); onInvalidate();
   }
   function apply(download = false) {
     try {
@@ -414,7 +422,6 @@ function ExperimentConfig({ report, disabled, onApply, onInvalidate }) {
   return <fieldset className="run-options" disabled={disabled}>
     <legend>End-to-end experiment · prepare → train → new model → evaluate</legend>
     <p className="hint">Scan-prefilled candidates require review. All commands start at the repository root in the same temporary container; use cd … &amp;&amp; where needed. Import only loads fields, never runs code.</p>
-    <label>Import saved experiment configuration<input type="file" accept=".json,application/json" onChange={importConfig} /></label>
     {fields.map(([key, label, limit = 500]) => <label key={key}>{label}<input value={draft[key]} maxLength={limit} onChange={(event) => update(key, event.target.value)} /></label>)}
     <label>Evaluation metric capture<select value={draft.capture.kind} onChange={(event) => update("capture", { ...draft.capture, kind: event.target.value })}>
       <option value="file">Original JSON / single-row CSV output</option><option value="stdout">One labelled numeric stdout line</option><option value="stdout-json">One JSON-object stdout metric line</option>
@@ -517,11 +524,15 @@ function ExecutionEvidence({ job, onPrepareReplay, replayDisabled }) {
       </div>}
       {!job.recipe && job.status === "SUCCEEDED" && <p className="runner-note">Recipe unavailable: {job.recipeUnavailableReason ?? "This record predates recipe capture; run again."}</p>}
       {job.comparison && <div className="run-comparison">
-        <h3>Compared with baseline · {job.comparison.status}</h3>
-        <p className="hint">Baseline {job.comparison.baselineRunId}. Exact observed comparison, not proof of paper reproduction or full stdout equality.</p>
+        <h3>Compared with baseline</h3>
+        <p className="hint">Baseline {job.comparison.baselineRunId}. Differences do not mean acceptance failed; identical results do not prove acceptance passed. Changes alone do not explain their cause.</p>
+        <p>Current acceptance: <strong>{labels[job.verification?.status] ?? "Not available"}</strong> · execution: {job.status}.</p>
+        <p>Metric requirement: {job.executionOptions?.metricKey ? `${job.executionOptions.metricKey} ${job.executionOptions.metricOperator} ${job.executionOptions.metricTarget} (tolerance ${job.executionOptions.metricTolerance ?? 0})` : "No numeric requirement configured"}. See output checks above for individual failures.</p>
+        {job.comparison.groups ? Object.entries(job.comparison.groups).map(([name, group]) => <p key={name}>{name === "inputs" ? "Code, environment and conditions" : "Observed outputs"}: <strong>{group.status}</strong>{group.unknownCount > 0 && ` · ${group.unknownCount} unavailable field(s)`}</p>)
+          : <p className="hint">Older record: grouped difference summary was not saved. Inspect individual fields below.</p>}
         <ul className="verification-checks">
           {job.comparison.rows.map((row) => <li key={row.id}>
-            <strong>{row.status}</strong> · {row.id}{row.key && ` (${row.key})`}{row.delta !== undefined && ` · delta: ${row.delta ?? "unknown"}`}
+            <strong>{row.status}</strong> · {row.id}{row.key && ` (${row.key})`}{row.delta !== undefined && ` · delta: ${row.delta ?? "unknown"}`}{row.id === "metric" && ` · observed ${row.baseline ?? "unknown"} → ${row.current ?? "unknown"}`}
             <details><summary>Baseline / replay values</summary><pre>{JSON.stringify({ baseline: row.baseline, replay: row.current }, null, 2)}</pre></details>
           </li>)}
         </ul>
@@ -533,6 +544,7 @@ function ExecutionEvidence({ job, onPrepareReplay, replayDisabled }) {
 function App() {
   const [url, setUrl] = useState("");
   const [report, setReport] = useState(exampleReport);
+  const [importedDraft, setImportedDraft] = useState(null);
   const [isExample, setIsExample] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -664,7 +676,7 @@ function App() {
     setPreflight(null); setRunConfirmed(false);
   }
 
-  const runScan = useCallback(async (targetUrl, benchmarkId) => {
+  const runScan = useCallback(async (targetUrl, benchmarkId, pinnedCommit) => {
     setLoading(true);
     setError("");
 
@@ -672,13 +684,14 @@ function App() {
       const response = await fetch("/api/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: targetUrl, ...(benchmarkId ? { executionOptions: { benchmarkId } } : {}) }),
+        body: JSON.stringify({ url: targetUrl, ...(pinnedCommit ? { pinnedCommit } : {}), ...(benchmarkId ? { executionOptions: { benchmarkId } } : {}) }),
       });
       const result = await response.json();
 
       if (!response.ok) throw new Error(result.error || "Scan failed");
 
       setReport(result);
+      setImportedDraft(null);
       setIsExample(false);
       setSelectedWorkflow("quick");
       setPreflight(null);
@@ -694,6 +707,16 @@ function App() {
       setLoading(false);
     }
   }, []);
+
+  async function openExperimentVersion(draft) {
+    const targetUrl = `https://github.com/${draft.repository}`;
+    try {
+      const result = await runScan(targetUrl, undefined, draft.commit);
+      if (result.repository !== draft.repository || result.commit !== draft.commit) throw new Error("Saved source identity does not match the scan");
+      setUrl(targetUrl); setImportedDraft({ ...draft, confirmed: false }); setSelectedWorkflow("training");
+      return true;
+    } catch (failure) { setError(failure.message); return false; }
+  }
 
   function submit(event) {
     event.preventDefault();
@@ -923,6 +946,7 @@ function App() {
               <p className="hint">Train the original paper model once, save a new checkpoint, then evaluate against {benchmark.reference.value}. The reference is a comparison, not a promised result.</p>
             </div>)}
           </form>
+          <SavedExperimentImport disabled={executionBusy} onOpenVersion={openExperimentVersion} />
 
           {error && <p className="error" role="alert">{error}</p>}
         </section>
@@ -1102,7 +1126,7 @@ function App() {
 
             {preflightError && <p className="runner-error" role="alert">{preflightError}</p>}
             {activeWorkflow.id === "training" && !acceptance.benchmarkId && <>
-              <ExperimentConfig key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onApply={applyExperiment} onInvalidate={invalidateExperiment} />
+              <ExperimentConfig key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onApply={applyExperiment} onInvalidate={invalidateExperiment} importedDraft={importedDraft} />
               <p className="hint" role="status">{acceptance.experiment ? "Reviewed experiment applied. Check local runner to inspect every effective command before execution." : "Review and apply an experiment configuration to enable the runner check."}</p>
             </>}
             {acceptance.benchmarkId && <div className="run-comparison">

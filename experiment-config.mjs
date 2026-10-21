@@ -1,6 +1,20 @@
 // Shared browser/server validation: importing a configuration never executes it.
 export const MODEL_EXPORT_LIMIT = 512 * 1024;
 
+export function importedExperimentDraft(config) {
+  const options = config?.executionOptions;
+  if (config?.schemaVersion !== 1 || config.workflowId !== "training" || !options?.experiment
+    || config.repository !== options.experiment.repository || config.commit !== options.experiment.commit
+    || options.benchmarkId || options.candidateReview || options.paperMatrix || options.evaluation?.assetsInEntry) {
+    throw new Error("Import requires a consistent custom Training repository and pinned commit");
+  }
+  const draft = { ...options.experiment, evaluationCommand: options.quickCommand, outputFile: options.outputFile, metricKey: options.metricKey,
+    metricOperator: options.metricOperator, metricTarget: options.metricTarget == null ? "" : String(options.metricTarget), metricTolerance: String(options.metricTolerance ?? 0),
+    expectedText: options.expectedText ?? "", dataset: options.evaluation?.dataset ?? "", model: options.evaluation?.model ?? "", reference: options.evaluation?.reference ?? "" };
+  experimentExecutionOptions({ ...draft, confirmed: true });
+  return { ...draft, confirmed: false };
+}
+
 export function relativeArtifactPath(value) {
   return typeof value === "string" && value.length > 0 && value.length <= 240
     && !/[\\:\r\n\0]/.test(value) && !value.startsWith("/")

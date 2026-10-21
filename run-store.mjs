@@ -27,7 +27,9 @@ export function getSavedRun(id, directory = RUN_DIR) {
         steps: record.steps.map((step) => step.status === "RUNNING" ? { ...step, status: "INTERRUPTED" } : step),
         verification: { ...record.verification, status: "INCOMPLETE" },
         evaluation: record.evaluation ? { ...record.evaluation, status: "INCOMPLETE" } : null,
-        comparison: record.comparison ? { ...record.comparison, status: "INCOMPLETE" } : null,
+        comparison: record.comparison ? { ...record.comparison, status: "INCOMPLETE",
+          ...(record.comparison.groups ? { groups: Object.fromEntries(Object.entries(record.comparison.groups).map(([name, group]) =>
+            [name, { ...group, status: group.status === "PENDING" ? "UNKNOWN" : group.status }])) } : {}) } : null,
         diagnosis: "The local server restarted before observing completion. The last snapshot is saved, but the final outcome is unknown; the container timeout still applies.",
       };
     }

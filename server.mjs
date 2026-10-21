@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createViteServer } from "vite";
 import {
@@ -144,7 +145,9 @@ async function handleApi(request, response) {
 
     const executionOptions = validateExecutionOptions(input.executionOptions);
 
-    const report = await scan(input.url, process.env.GITHUB_TOKEN, executionOptions.benchmarkId ? reviewedCaseById.get(executionOptions.benchmarkId).commit : undefined);
+    const pinnedCommit = executionOptions.benchmarkId ? reviewedCaseById.get(executionOptions.benchmarkId).commit : executionOptions.experiment?.commit ?? input.pinnedCommit;
+    if (input.pinnedCommit !== undefined && input.pinnedCommit !== pinnedCommit) throw new Error("Conflicting pinned commits");
+    const report = await scan(input.url, process.env.GITHUB_TOKEN, pinnedCommit);
     if (url.pathname === "/api/scan") {
       sendJson(response, 200, report);
       return true;
@@ -242,6 +245,39 @@ async function selfTest() {
 
     const originalFetch = globalThis.fetch;
     try {
+      const config = JSON.parse(readFileSync(new URL("./examples/experiment-iris-random-forest.json", import.meta.url)));
+      const requested = [];
+      globalThis.fetch = async (url, init) => {
+        if (String(url).startsWith("http://127.0.0.1:")) return originalFetch(url, init);
+        requested.push(String(url));
+        if (String(url).includes("/commits/")) return Response.json({ sha: String(url).endsWith(config.commit) ? config.commit : "b".repeat(40), commit: { tree: { sha: "c".repeat(40) } } });
+        if (String(url).includes("/git/trees/")) return Response.json({ tree: [], truncated: false });
+        return Response.json({ default_branch: "main" });
+      };
+      for (const endpoint of ["scan", "preflight", "run"]) {
+        requested.length = 0;
+        const response = await originalFetch(`http://127.0.0.1:${port}/api/${endpoint}`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: `https://github.com/${config.repository}`, ...(endpoint === "scan" ? { pinnedCommit: config.commit } : {}), commit: config.commit,
+            workflowId: "training", ...(endpoint !== "scan" ? { executionOptions: config.executionOptions } : {}) }),
+        });
+        const result = await response.json();
+        assert.equal(response.status, endpoint === "run" ? 400 : 200, JSON.stringify(result));
+        if (endpoint === "run") assert.match(result.error, /Explicit confirmation/);
+        else assert.equal(result.commit, config.commit);
+        assert.ok(requested.some((url) => url.endsWith(`/commits/${config.commit}`)));
+        assert.ok(!requested.some((url) => url.endsWith("/commits/main")));
+      }
+      for (const pinnedCommit of ["main", "../main", ""]) {
+        const response = await originalFetch(`http://127.0.0.1:${port}/api/scan`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: `https://github.com/${config.repository}`, pinnedCommit }),
+        });
+        assert.equal(response.status, 400);
+      }
+      const hostedPinned = await worker.fetch(new Request("https://reprocheck.test/api/scan", {
+        method: "POST", body: JSON.stringify({ url: `https://github.com/${config.repository}`, pinnedCommit: config.commit }),
+      }), {});
+      assert.equal((await hostedPinned.json()).commit, config.commit);
       for (const preset of reviewedCaseById.values()) {
         const requested = [];
         globalThis.fetch = async (url) => {

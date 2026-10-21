@@ -38,7 +38,8 @@ async function handleScan(request, env) {
     const benchmarkId = input.executionOptions?.benchmarkId ?? null;
     const benchmark = reviewedCaseById.get(benchmarkId);
     if (benchmarkId !== null && !benchmark) throw new Error("Unknown reviewed benchmark");
-    return json(await scan(input.url, env.GITHUB_TOKEN, benchmark?.commit));
+    if (benchmark && input.pinnedCommit !== undefined && input.pinnedCommit !== benchmark.commit) throw new Error("Conflicting pinned commits");
+    return json(await scan(input.url, env.GITHUB_TOKEN, benchmark?.commit ?? input.pinnedCommit));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Scan failed";
     return json({ error: message }, message.startsWith("GitHub API") ? 502 : 400);

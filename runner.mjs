@@ -342,7 +342,14 @@ export function compareRuns(baseline, current) {
     compare("reference-source", baseline.referenceEvidence, current.referenceEvidence);
     if (baseline.benchmark.training) compare("trained-checkpoint", baseline.trainingCheckpoint?.sha256, current.trainingCheckpoint?.sha256);
   }
-  return { baselineRunId: baseline.id, status: current.status === "RUNNING" ? "PENDING"
+  const outputIds = new Set(["trained-checkpoint", "text-check", "output-hash", "metric", "matrix"]);
+  const groups = Object.fromEntries(["inputs", "outputs"].map((name) => {
+    const selected = rows.filter((row) => outputIds.has(row.id) === (name === "outputs"));
+    const unknownCount = selected.filter((row) => row.status === "UNKNOWN").length;
+    return [name, { status: current.status === "RUNNING" ? "PENDING" : selected.some((row) => row.status === "DIFFERENT") ? "DIFFERENT"
+      : !selected.length || unknownCount ? "UNKNOWN" : "SAME", unknownCount }];
+  }));
+  return { baselineRunId: baseline.id, groups, status: current.status === "RUNNING" ? "PENDING"
     : baseline.status !== "SUCCEEDED" || baseline.verification?.status !== "VERIFIED" || current.status !== "SUCCEEDED" || current.verification?.status !== "VERIFIED" || rows.some((row) => row.status === "UNKNOWN") ? "INCOMPLETE"
       : rows.some((row) => row.status === "DIFFERENT") ? "DIFFERENT" : "SAME", rows };
 }
