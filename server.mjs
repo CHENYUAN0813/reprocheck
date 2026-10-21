@@ -240,6 +240,32 @@ async function selfTest() {
 
     assert.equal(workerResponse.status, 400);
 
+    const originalFetch = globalThis.fetch;
+    try {
+      for (const preset of reviewedCaseById.values()) {
+        const requested = [];
+        globalThis.fetch = async (url) => {
+          requested.push(String(url));
+          if (String(url).includes("/commits/")) return Response.json({ sha: preset.commit, commit: { tree: { sha: "b".repeat(40) } } });
+          if (String(url).includes("/git/trees/")) return Response.json({ tree: [], truncated: false });
+          return Response.json({ default_branch: "main" });
+        };
+        const response = await worker.fetch(new Request("https://reprocheck.test/api/scan", {
+          method: "POST", body: JSON.stringify({ url: `https://github.com/${preset.repository}`, executionOptions: { benchmarkId: preset.id } }),
+        }), {});
+        assert.equal(response.status, 200, preset.id);
+        assert.equal((await response.json()).commit, preset.commit, preset.id);
+        assert.ok(requested.some((url) => url.endsWith(`/commits/${preset.commit}`)), preset.id);
+      }
+      globalThis.fetch = async () => { throw new Error("Unknown presets must not fetch"); };
+      const unknown = await worker.fetch(new Request("https://reprocheck.test/api/scan", {
+        method: "POST", body: JSON.stringify({ url: "https://github.com/owner/repo", executionOptions: { benchmarkId: "unknown" } }),
+      }), {});
+      assert.equal(unknown.status, 400);
+      assert.equal((await unknown.json()).error, "Unknown reviewed benchmark");
+    } finally { globalThis.fetch = originalFetch; }
+    console.log(`PASS  hosted scan routing for all ${reviewedCaseById.size} reviewed presets and unknown-ID rejection`);
+
     const preflight = buildPreflight(
       {
         repository: "owner/repo",
