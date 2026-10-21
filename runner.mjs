@@ -401,9 +401,9 @@ export function buildDockerInvocation(preflight, containerName) {
   ];
 }
 
-export function summarizeSteps(steps, log, runStatus) {
+export function summarizeSteps(steps, log, runStatus, observedStepId) {
   const markers = [...log.matchAll(/^::reprocheck-step::([^\r\n]+)/gm)].map((match) => match[1]);
-  const currentId = markers.at(-1) ?? null;
+  const currentId = observedStepId !== undefined ? observedStepId : markers.at(-1) ?? null;
   const currentIndex = steps.findIndex((step) => step.id === currentId);
   const summarized = steps.map((step, index) => ({
     ...step,
@@ -461,6 +461,61 @@ export function readEvidence(log) {
   } catch { return null; }
 }
 
+// Keep verification independent of the bounded display log, including split lines.
+export function appendRunOutput(job, chunk, stream = "stdout", final = false) {
+  const state = job.outputState ??= { currentStepId: null, entrySeen: false, textMatched: false, textClosed: false, evidence: null };
+  const pending = (job.outputStreams ??= {})[stream] ??= { line: "", overflow: false, textTail: "" };
+  const expected = job.executionOptions?.expectedText ?? "";
+  const stepPrefix = "::reprocheck-step::";
+  const evidencePrefix = "::reprocheck-evidence::";
+  const parts = chunk.split("\n");
+  for (let index = 0; index < parts.length; index++) {
+    pending.line += parts[index];
+    const complete = index < parts.length - 1 || final;
+    const line = pending.line.replace(/\r$/, "");
+    const control = !pending.overflow && [stepPrefix, evidencePrefix].some((prefix) => line.startsWith(prefix) || !complete && prefix.startsWith(line));
+    if (!pending.overflow && line.startsWith(evidencePrefix)) state.textClosed = true;
+    if (!control && state.entrySeen && !state.textClosed && expected) {
+      const text = pending.textTail + line;
+      if (text.includes(expected)) state.textMatched = true;
+      if (complete) pending.textTail = expected.length > 1 ? (text + (index < parts.length - 1 ? "\n" : "")).slice(-(expected.length - 1)) : "";
+    }
+    if (pending.line.length > 1_048_576) {
+      if (control) state.evidence = null;
+      pending.overflow = true;
+    }
+    if (complete) {
+      if (!pending.overflow && line.startsWith(stepPrefix)) {
+        const id = line.slice(stepPrefix.length);
+        if (job.steps.some((step) => step.id === id)) {
+          state.currentStepId = id;
+          if (id === job.steps.at(-1)?.id) {
+            state.entrySeen = true;
+            state.textMatched = false;
+            state.textClosed = false;
+            state.evidence = null;
+            pending.textTail = "";
+            for (const [name, buffer] of Object.entries(job.outputStreams)) {
+              if (name !== stream) { buffer.line = ""; buffer.overflow = false; buffer.textTail = ""; }
+            }
+          }
+        }
+      } else if (!pending.overflow && line.startsWith(evidencePrefix)) {
+        state.evidence = readEvidence(line);
+      }
+      pending.line = "";
+      pending.overflow = false;
+    } else if (pending.line.length > 1_048_576) {
+      // Oversized evidence fails closed; ordinary output keeps only a match overlap.
+      pending.line = pending.line.slice(-Math.max(expected.length - 1, 1));
+      pending.textTail = "";
+    }
+  }
+  const log = job.log + chunk;
+  job.logTruncated ||= log.length > LOG_LIMIT;
+  job.log = log.slice(-LOG_LIMIT);
+}
+
 function metricMatches(value, options) {
   if (!Number.isFinite(value)) return false;
   if (options.metricOperator === "gte") return value >= options.metricTarget;
@@ -473,14 +528,15 @@ function metricMatches(value, options) {
 export function verifyOutcome(job) {
   const options = validateExecutionOptions(job.executionOptions);
   const checks = [];
-  const evidence = readEvidence(job.log);
+  const evidence = job.outputState ? job.outputState.evidence : readEvidence(job.log);
   const lastStep = job.steps.at(-1)?.id;
   const marker = `::reprocheck-step::${lastStep}\n`;
   const boundary = job.log.lastIndexOf(marker);
   const output = boundary < 0 ? null : job.log.slice(boundary + marker.length).split("::reprocheck-evidence::")[0];
   if (options.expectedText) checks.push({
     id: "text", expected: options.expectedText,
-    status: output === null ? "UNKNOWN" : output.includes(options.expectedText) ? "PASSED" : "FAILED",
+    status: job.outputState ? !job.outputState.entrySeen ? "UNKNOWN" : job.outputState.textMatched ? "PASSED" : "FAILED"
+      : output === null ? "UNKNOWN" : output.includes(options.expectedText) ? "PASSED" : "FAILED",
   });
   if (options.outputFile) checks.push({
     id: "file", expected: options.outputFile,
@@ -526,8 +582,8 @@ export function verifyOutcome(job) {
 }
 
 function publicJob(job) {
-  const progress = summarizeSteps(job.steps, job.log, job.status);
-  const evidence = readEvidence(job.log);
+  const progress = summarizeSteps(job.steps, job.log, job.status, job.outputState?.currentStepId);
+  const evidence = job.outputState ? job.outputState.evidence : readEvidence(job.log);
   const record = {
     schemaVersion: 1,
     id: job.id,
@@ -557,6 +613,7 @@ function publicJob(job) {
     status: job.status,
     log: job.log,
     logTruncated: job.logTruncated ?? false,
+    outputState: job.outputState ? { ...job.outputState } : null,
     persistenceError: job.persistenceError ?? null,
     exitCode: job.exitCode,
     startedAt: job.startedAt,
@@ -644,11 +701,9 @@ export function startRun(preflight) {
   });
   child.stdin.on("error", () => {}); // Docker startup failure is reported by error/close below.
   child.stdin.end(script);
-  const append = (chunk) => {
-    const log = `${job.log}${chunk}`;
-    job.logTruncated ||= log.length > LOG_LIMIT;
-    job.log = log.slice(-LOG_LIMIT);
-    if (!job.inspectStarted && job.log.includes("::reprocheck-step::")) {
+  const append = (chunk, stream = "stdout") => {
+    appendRunOutput(job, chunk, stream);
+    if (!job.inspectStarted && job.outputState.currentStepId) {
       job.inspectStarted = true;
       job.imageInspection = execFileAsync("docker", ["inspect", "--format", "{{.Image}}", containerName], { timeout: 5000, windowsHide: true })
         .then(({ stdout }) => { job.imageId = stdout.trim(); }).catch(() => {});
@@ -658,7 +713,7 @@ export function startRun(preflight) {
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
   child.stdout.on("data", append);
-  child.stderr.on("data", append);
+  child.stderr.on("data", (chunk) => append(chunk, "stderr"));
   child.on("error", (error) => {
     if (job.status !== "RUNNING") return;
     append(`${error.message}\n`);
@@ -668,6 +723,8 @@ export function startRun(preflight) {
   });
   child.on("close", async (code) => {
     clearTimeout(job.timer);
+    appendRunOutput(job, "", "stdout", true);
+    appendRunOutput(job, "", "stderr", true);
     await job.imageInspection;
     if (job.status === "RUNNING") {
       job.status = code === 0 ? "SUCCEEDED" : code === 124 ? "TIMED_OUT" : "FAILED";
