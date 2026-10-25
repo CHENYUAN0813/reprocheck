@@ -4,7 +4,7 @@ Check public Python research repositories, then run and verify explicitly review
 
 For students and researchers trying to run someone else's research code: get source-linked findings, a preparation plan, and a report comparing an experiment's observed result with its declared reference. Findings are tied to a fixed Git commit.
 
-![Actual Iris evaluation: observed accuracy 0.98 matches the pinned reference](docs/images/iris-result.png)
+![ReproCheck workbench: scan a repository, import a saved configuration, or explore reviewed examples](docs/ui-preview/stitch-home.png)
 
 ## First run: scan only
 
@@ -19,7 +19,7 @@ npm run dev
 
 On Windows PowerShell, use `npm.cmd` instead of `npm` if script execution is blocked. Keep the terminal open and visit **http://127.0.0.1:5173/**.
 
-Enter a public GitHub repository URL and select **Scan repository**. You will get findings with file/line evidence, suggested fixes, and a reproduction plan with missing steps called out. An ordinary scan follows the current default branch; reviewed examples pin their source revision.
+On **Start scan**, enter a public GitHub repository URL and select **Scan repository**. The **Scan report** view shows findings with file/line evidence, suggested fixes and a recommended entry when one is recognized. Choose **Configure experiment →** to review the workflow and its missing steps. An ordinary scan follows the current default branch; reviewed examples pin their source revision.
 
 If GitHub returns `401`/`403`, or port `5173` is occupied, see [token setup and troubleshooting](docs/advanced-usage.md#token-setup-and-troubleshooting).
 
@@ -27,13 +27,17 @@ If GitHub returns `401`/`403`, or port `5173` is occupied, see [token setup and 
 
 Use **Docker Desktop with Linux containers** for execution (not for scanning). Wait until its engine is running. This small CPU case needs the runner's **2 CPU / 2 GB** allocation, internet access for the image/dependencies, and free disk space. There is no GPU requirement. The execution limit is **10 minutes**, not an estimate; a first image download can take longer than a warm run.
 
-1. Open **http://127.0.0.1:5173/** and choose **Load published Iris benchmark** (not Iris training).
-2. Select **Check local runner**, then review the pinned source, commands and compatibility notes.
-3. Tick the temporary-container execution acknowledgement and select **Run Evaluation**.
-4. Expect **Execution SUCCEEDED**, **Output verification · Configured checks passed**, and **Evaluation report · MATCHED REFERENCE** with observed/reference accuracy **0.98 / 0.98** (49 correct out of 50 held-out samples).
-5. Select **Download execution evidence**. Refresh the page and use **Recent executions → View record** to reopen it.
+1. On **Start scan**, expand **Explore reviewed examples** and choose **Load published Iris benchmark** (not Iris training).
+2. The **Experiment** view opens with the reviewed plan. Select **Check local runner**, then review the pinned source, effective commands and compatibility notes. Docker must be available before execution is enabled.
+3. Tick the temporary-container execution acknowledgement and select **Run Evaluation**. The **Execution** view opens with stage progress and logs.
+4. Expect **Process: SUCCEEDED**, **Output checks: Configured checks passed**, and **Reference acceptance: MATCHED REFERENCE**, with observed/reference accuracy **0.98 / 0.98** (49 correct out of 50 held-out samples). Expand **Inspect output and input checks** to examine the evidence.
+5. Select **Download execution evidence**. Use **History & comparison → View record** to reopen a saved result, including after refreshing the page.
 
-**Execution succeeded** only means the commands exited normally. **Configured checks passed** additionally means the declared text/files/metrics and this case's input identities passed. This example evaluates a pretrained model; it does not retrain it or reproduce an entire paper. A failure is a result to inspect, not a reason to silently change the reference.
+![Existing Iris run in the new UI: process succeeded, configured checks passed, and accuracy 0.98 matched the pinned reference](docs/ui-preview/stitch-result.png)
+
+**Process: SUCCEEDED** only means the commands exited normally. **Configured checks passed** means the declared output checks and this case's input identities passed. **MATCHED REFERENCE** means the observed metric met the configured reference condition. The scope remains the **selected experiment only**: Iris evaluates a pretrained model; it does not retrain it or reproduce an entire paper. A failure is a result to inspect, not a reason to silently change the reference.
+
+Switching views preserves the current form. Refreshing the browser clears unsaved configuration; download a configuration before leaving if you need it later. Saved execution records remain in the local history.
 
 Keep the server open while running. Do not run `npm test` during an experiment under `npm run dev`: some tests temporarily edit example fixtures and can trigger a watcher restart. For a run without file watching, use `node server.mjs` instead of `npm run dev` (in the same token-configured terminal).
 
