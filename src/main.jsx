@@ -477,17 +477,23 @@ function ExecutionEvidence({ job, onPrepareReplay, replayDisabled }) {
     NOT_CONFIGURED: "No output checks configured", PENDING: "Waiting for execution" };
   return (
     <div className="execution-evidence">
+      <dl className="result-dimensions">
+        <div><dt>Process</dt><dd>{job.status.replaceAll("_", " ")}</dd></div>
+        <div><dt>Output checks</dt><dd>{labels[job.verification?.status] ?? "Not available"}</dd></div>
+        <div><dt>Reference acceptance</dt><dd>{job.evaluation?.status?.replaceAll("_", " ") ?? (job.matrix ? `${job.matrix.summary.matched}/${job.matrix.summary.total} cells matched` : "No evaluation result")}</dd></div>
+        <div><dt>Scope</dt><dd>Selected experiment only</dd></div>
+      </dl>
       <h3>Output verification · {labels[job.verification?.status] ?? "Not available"}</h3>
       <p className="hint">Execution success alone does not prove paper reproducibility. These checks validate only the expectations you supplied.</p>
       {job.persistenceError && <p className="runner-error" role="alert">{job.persistenceError} — download the evidence now.</p>}
       {job.logTruncated && <p className="runner-note">Only the last 900,000 log characters are retained.</p>}
-      <ul className="verification-checks">
+      <details className="verification-details"><summary>Inspect output and input checks ({job.verification?.checks?.length ?? 0})</summary><ul className="verification-checks">
         {job.verification?.checks?.map((check) => (
           <li key={check.id}><strong>{check.status}</strong> · {check.id}: <code>{check.expected}</code>
-            {check.observed && <pre>{JSON.stringify(check.observed, null, 2)}</pre>}
+            {check.observed && <details><summary>Inspect captured evidence</summary><pre>{JSON.stringify(check.observed, null, 2)}</pre></details>}
           </li>
         ))}
-      </ul>
+      </ul></details>
       {job.paperMatrix && <div className="run-comparison">
         <h3>Paper matrix · {job.matrix ? `${job.matrix.summary.matched}/${job.matrix.summary.total} matched` : "incomplete"}</h3>
         <p className="hint">Observed values come from the fresh CSV produced by the reviewed source workflow. References come from the commit-pinned README table.</p>
@@ -569,6 +575,7 @@ function ExecutionEvidence({ job, onPrepareReplay, replayDisabled }) {
 }
 
 function App() {
+  const [page, setPage] = useState("scan");
   const [url, setUrl] = useState("");
   const [report, setReport] = useState(exampleReport);
   const [importedDraft, setImportedDraft] = useState(null);
@@ -594,8 +601,11 @@ function App() {
   const [replayError, setReplayError] = useState("");
   const executionBusy = loading || preflightLoading || runLoading || replayLoading || runJob?.status === "RUNNING";
   useEffect(() => { if (replayPreview) document.getElementById("recipe-title")?.focus(); }, [replayPreview]);
-  useEffect(() => { if (runJob?.id) document.getElementById("current-execution")?.focus(); }, [runJob?.id]);
+  useEffect(() => { if (runJob?.id) setPage("run"); }, [runJob?.id]);
+  useEffect(() => { document.getElementById("workspace-title")?.focus(); }, [page]);
+  useEffect(() => { if (archivedJob) document.getElementById("archived-execution")?.focus(); }, [archivedJob]);
   async function prepareReplay(id) {
+    setPage("history");
     setReplayLoading(true);
     setReplayError("");
     setReplayConfirmed(false);
@@ -675,6 +685,10 @@ function App() {
     { id: "prepare-assets", title: `Prepare hash-locked real UCI ${selectedReviewedCase.datasetName} data`, status: "DOCUMENTED", instruction: "Reviewed adapter downloads UCI data and applies the explicit MNIST-only import compatibility patch. Check the local runner for exact commands." },
     { id: "training-benchmark", title: "Train from scratch and save a new model", status: "DOCUMENTED", command: `cd software_model && python train_swept_models.py ${selectedReviewedCase.training.arguments.join(" ")}`, instruction: `Reviewed launcher sets NumPy seed ${selectedReviewedCase.training.seed} before calling the original trainer. This is the original invocation, not the complete seeded adapter.` },
     { id: "evaluation-benchmark", title: `Evaluate the newly trained model and compare with ${selectedReviewedCase.reference.value}`, status: "DOCUMENTED", instruction: "Original evaluate.py reads the newly trained checkpoint; the adapter records actual held-out accuracy as JSON." },
+  ] } : selectedReviewedCase ? { title: selectedReviewedCase.title, status: "REVIEWED_BENCHMARK", steps: [
+    { id: "install", title: "Install reviewed dependencies", status: "DOCUMENTED", command: selectedReviewedCase.installCommand },
+    { id: "prepare-assets", title: "Prepare reviewed inputs", status: "DOCUMENTED", instruction: selectedReviewedCase.dataset },
+    { id: "evaluation-benchmark", title: "Evaluate against the pinned reference", status: "DOCUMENTED", instruction: "The reviewed adapter evaluates the selected model and records fresh metrics. Check the local runner to inspect the effective commands." },
   ] } : selectedCandidate ? candidateWorkflow(report, selectedCandidate) : activeWorkflow ?? report.reproductionPlan);
 
   function applyCandidate(options) {
@@ -688,6 +702,7 @@ function App() {
   }
 
   function chooseQuickEntry(entry) {
+    setPage("configure");
     setSelectedWorkflow("quick"); setQuickCommand(""); setAcceptance({ ...emptyAcceptance, quickEntryId: entry.id });
     setPreflight(null); setRunConfirmed(false); setRunJob(null); setPreflightError("");
     document.getElementById("runner-title")?.focus();
@@ -725,6 +740,7 @@ function App() {
       if (!response.ok) throw new Error(result.error || "Scan failed");
 
       setReport(result);
+      setPage("report");
       setImportedDraft(null);
       setIsExample(false);
       setSelectedWorkflow("quick");
@@ -748,6 +764,7 @@ function App() {
       const result = await runScan(targetUrl, undefined, draft.commit);
       if (result.repository !== draft.repository || result.commit !== draft.commit) throw new Error("Saved source identity does not match the scan");
       setUrl(targetUrl); setImportedDraft({ ...draft, confirmed: false }); setSelectedWorkflow("training");
+      setPage("configure");
       return true;
     } catch (failure) { setError(failure.message); return false; }
   }
@@ -762,6 +779,7 @@ function App() {
     setUrl(targetUrl);
     try {
       await runScan(targetUrl);
+      setPage("configure");
       setSelectedWorkflow("evaluation");
       setQuickCommand(cpuEvaluationCommand);
       setAcceptance({ ...emptyAcceptance, expectedText: "evaluation-ok", outputFile: "evaluation-result.json", metricKey: "accuracy", metricOperator: "eq", metricTarget: "1", metricTolerance: "0.05",
@@ -777,6 +795,7 @@ function App() {
     setUrl(targetUrl);
     try {
       await runScan(targetUrl, benchmark.id);
+      setPage("configure");
       setSelectedWorkflow(benchmark.matrix ? "paper-matrix" : benchmark.training ? "training" : "evaluation");
       setQuickCommand(benchmark.matrix ? "" : benchmarkEvaluationCommand(benchmark));
       setAcceptance(benchmark.matrix ? { ...emptyAcceptance, benchmarkId: benchmark.id } : { ...emptyAcceptance, benchmarkId: benchmark.id,
@@ -940,18 +959,31 @@ function App() {
   return (
     <div className="shell">
       <header className="topbar">
-        <a className="brand" href="/" aria-label="ReproCheck home">
+        <a className="brand" href="#scan" onClick={(event) => { event.preventDefault(); setPage("scan"); }} aria-label="ReproCheck home">
           <span className="brand-mark">R</span>
           <span>ReproCheck</span>
         </a>
-        <span className="mode">Static audit</span>
+        <nav className="workspace-nav" aria-label="Workspace">
+          {[["scan", "Start scan"], ["report", "Scan report"], ["configure", "Experiment"], ["run", "Execution"], ["history", "History & comparison"]].map(([id, label]) =>
+            <button type="button" key={id} aria-current={page === id ? "page" : undefined} disabled={(id === "configure" && isExample) || (id === "run" && !runJob)} onClick={() => setPage(id)}>{label}{id === "run" && runJob?.status === "RUNNING" && <span className="live-dot" />}</button>)}
+        </nav>
+        <span className="mode">Research workbench</span>
       </header>
 
       <main>
+        <div className="workspace-heading">
+          <div><p className="eyebrow">REPROCHECK / {page}</p><h1 id="workspace-title" tabIndex={-1}>{{ scan: "From repository to evidence.", report: "Inspect the evidence", configure: "Review your experiment", run: "Execution workspace", history: "Run history & comparison" }[page]}</h1></div>
+          {page !== "scan" && <button type="button" className="download-button" onClick={() => setPage("scan")}>New scan</button>}
+        </div>
+        {loading && <p className="source-strip" role="status">Scanning repository and collecting source evidence…</p>}
+        {error && page !== "scan" && <p className="error" role="alert">{error}</p>}
+        {page !== "scan" && page !== "history" && <div className="source-strip"><span>{page !== "run" && isExample ? "DEMO · not a live scan" : "PINNED SOURCE"}</span><strong>{page === "run" ? runJob?.repository : report.repository}</strong><code>{(page === "run" ? runJob?.commit : report.commit)?.slice(0, 12)}</code></div>}
+        <div className="view-panel home-layout" hidden={page !== "scan"}>
         <section className="scan-panel" aria-labelledby="scan-title">
           <div>
             <p className="eyebrow">Research repository readiness</p>
-            <h1 id="scan-title">Find blockers before you run the code.</h1>
+            <h2 id="scan-title">Check a research repository</h2>
+            <p className="hint">Find a supported entry, review its inputs, and verify the result against a declared reference.</p>
           </div>
 
           <form onSubmit={submit}>
@@ -970,6 +1002,7 @@ function App() {
               </button>
             </div>
             <p className="hint">Public repositories only · Results pinned to a commit</p>
+            <details className="case-picker"><summary>Explore reviewed examples</summary><div className="case-grid">
             <button className="download-button" type="button" onClick={loadCpuEvaluation} disabled={executionBusy}>Load CPU evaluation example</button>
             <p className="hint">Small synthetic held-out dataset + trained checkpoint. Loads a reviewed command; does not start execution.</p>
             {reviewedBenchmarks.map((benchmark) => <div key={benchmark.id}>
@@ -980,11 +1013,26 @@ function App() {
               <button className="download-button" type="button" onClick={() => loadPublishedBenchmark(benchmark.id)} disabled={executionBusy}>Load {benchmark.datasetName} training reproduction</button>
               <p className="hint">Train the original paper model once, save a new checkpoint, then evaluate against {benchmark.reference.value}. The reference is a comparison, not a promised result.</p>
             </div>)}
+            </div></details>
           </form>
           <SavedExperimentImport disabled={executionBusy} onOpenVersion={openExperimentVersion} />
 
           {error && <p className="error" role="alert">{error}</p>}
         </section>
+        <aside className="journey-card">
+          <p className="eyebrow">How it works</p><h2>A clear path to your first result</h2>
+          <ol className="journey-steps">
+            <li><strong>Scan the source</strong><p>Inspect README instructions, files and supported Python / Make entries. No Docker required.</p></li>
+            <li><strong>Review the plan</strong><p>Confirm commands, input files, dataset and output expectations before execution.</p></li>
+            <li><strong>Run in Docker</strong><p>Execute the selected workflow locally with explicit resource limits and live logs.</p></li>
+            <li><strong>Compare the evidence</strong><p>Separate process completion, output checks and reference matching. Keep the record for replay.</p></li>
+          </ol>
+          <p className="runner-note">A passing check is not full-paper reproduction. Only the reviewed experiment and declared conditions are verified.</p>
+          <button type="button" className="download-button" onClick={() => setPage("report")}>{isExample ? "Preview a clearly labelled demo report" : "Return to latest report"}</button>
+        </aside>
+        </div>
+
+        <div className="view-panel" hidden={page !== "report"}>
 
         {!isExample && !acceptance.benchmarkId && <SuggestedEntry key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onChoose={chooseQuickEntry} />}
         <section className="report" aria-labelledby="report-title">
@@ -1046,9 +1094,11 @@ function App() {
           </div>
         </section>
 
-        {!isExample && <PaperProvenance report={report} />}
-        {!isExample && <ProtocolLock report={report} />}
-        {!isExample && !acceptance.benchmarkId && <PaperMatrix key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onApply={applyMatrix} />}
+        {!isExample && <details className="advanced-evidence"><summary>Paper provenance and protocol lock</summary><PaperProvenance report={report} /><ProtocolLock report={report} /></details>}
+        {!isExample && <div className="next-action"><p>Review the source evidence, then configure the workflow and its acceptance conditions.</p><button type="button" onClick={() => setPage("configure")}>Configure experiment →</button></div>}
+        </div>
+        <div className="view-panel configure-layout" hidden={page !== "configure"}>
+        {!isExample && !acceptance.benchmarkId && <details className="matrix-options"><summary>Advanced · multi-experiment paper matrix</summary><PaperMatrix key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onApply={applyMatrix} /></details>}
 
         {displayedPlan && (
           <section className="plan" aria-labelledby="plan-title">
@@ -1148,7 +1198,7 @@ function App() {
         {!isExample && report.evaluationDraft && !acceptance.benchmarkId && selectedWorkflow !== "paper-matrix" && <CandidateConfig key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onApply={applyCandidate} />}
 
         {!isExample && activeWorkflow && (
-          <section className="runner" aria-labelledby="runner-title">
+          <section className="runner execution-config" aria-labelledby="runner-title">
             <div className="runner-heading">
               <div>
                 <p className="eyebrow">Isolated execution preview</p>
@@ -1270,6 +1320,8 @@ function App() {
             )}
           </section>
         )}
+        </div>
+        <div className="view-panel" hidden={page !== "run"}>
             {runJob && (
               <section className="runner" id="current-execution" tabIndex={-1} aria-label="Current execution">
               <div className="run-log" aria-live="polite">
@@ -1307,6 +1359,8 @@ function App() {
               </div>
               </section>
             )}
+        </div>
+        <div className="view-panel" hidden={page !== "history"}>
         <section className="runner run-history" aria-labelledby="history-title">
           <div className="runner-heading">
             <div><p className="eyebrow">Local evidence archive</p><h2 id="history-title">Recent executions</h2>
@@ -1314,14 +1368,15 @@ function App() {
             <button className="download-button" type="button" onClick={refreshHistory}>Refresh history</button>
           </div>
           {historyError && <p className="runner-note" role="status">{historyError}</p>}
-          {history.length === 0 && !historyError && <p className="hint">No saved executions yet.</p>}
+          <p className="hint">Open a saved record to inspect its evidence or review a frozen replay. Replay comparisons separate changed inputs from metric acceptance.</p>
+          {history.length === 0 && !historyError && <div className="empty-state"><h3>No saved executions yet</h3><p>Scan a repository and complete a reviewed run to build your local evidence archive.</p><button type="button" className="download-button" onClick={() => setPage("scan")}>Start with a repository</button></div>}
           <ul className="history-list">
             {history.map((entry) => <li key={entry.id}>
               <div><strong>{entry.repository}</strong><p className="hint">{entry.workflowId ?? "quick"} · Execution: {entry.status} · Output checks: {entry.verificationStatus}{entry.evaluationStatus && ` · Evaluation: ${entry.evaluationStatus}`} · commit {entry.commit.slice(0, 7)} · {new Date(entry.startedAt).toLocaleString()}</p></div>
               <button className="download-button" type="button" onClick={() => openHistory(entry.id)}>View record</button>
             </li>)}
           </ul>
-          {archivedJob && <div className="run-log">
+          {archivedJob && <div className="run-log" id="archived-execution" tabIndex={-1} aria-label="Saved execution details">
             <div><strong>{archivedJob.repository} · {archivedJob.status}</strong><button className="download-button" type="button" onClick={() => setArchivedJob(null)}>Close record</button></div>
             <p className="commit">{archivedJob.id} · Commit {archivedJob.commit}</p>
             {archivedJob.diagnosis && <p className="run-diagnosis">{archivedJob.diagnosis}</p>}
@@ -1353,7 +1408,9 @@ function App() {
             <button type="button" disabled={!replayPreview.runnable || !replayConfirmed || executionBusy} onClick={startReplay}>{runLoading ? "Starting…" : "Replay frozen recipe"}</button>
           </>}
         </section>}
+        </div>
       </main>
+      <footer className="workspace-footer"><span>ReproCheck · Evidence before conclusions</span><span>Public Python repositories · Local Docker execution</span></footer>
     </div>
   );
 }
