@@ -31,6 +31,22 @@ Base: `4a4e72b` (cinematic workbench UI)
 - [Recorded execution](ui-preview/evidence-run.png)
 - [Comparison](ui-preview/evidence-comparison.png)
 
-## Limits
+## Live Docker acceptance — 2026-10-26
 
-No new Docker execution or live streaming/cancel/retry cycle was launched for this presentation-only change. The shared console was checked with real archived output. Existing execution tests passed; a fresh live-run UI check remains advisable before release. Delivery is on the feature branch only; main is not merged.
+All actions used the real local web interface and Docker Linux engine. The fixture is a synthetic scalar-regression smoke test, not a paper reproduction: Micrograd learns weight 2 from (1, 2), writes a new JSON checkpoint, reloads it, and evaluates squared error on (3, 6). The training command waits 30 seconds and prints 80 progress lines to exercise logs and cancellation. Source commit: `karpathy/micrograd@7bc720e951fe422b8f8814aa5aa1b64121d26b4c`.
+
+| Scenario | Saved run ID | Observed result |
+| --- | --- | --- |
+| Controlled install failure | `5e6442fd-a581-4faf-abfe-ad1934180147` | FAILED at install; verification incomplete; official PyPI retry available |
+| Click official PyPI retry | `74311ad8-da16-463a-826d-111b971dfa77` | SUCCEEDED, VERIFIED, MATCHED_REFERENCE; loss 0; all three stages passed |
+| Cancel during training | `fbbc4295-886f-4c4e-893d-b586c7f96b02` | CANCELLED; training cancelled, evaluation pending; verification INCOMPLETE |
+
+Failure injection used `pip install micrograd==0.1.0 --index-url http://127.0.0.1:9/simple --retries 0 --timeout 3` inside the temporary container. Retry changed the effective package source to official PyPI. Assertions against persisted records confirmed the source commit and execution options were unchanged between failure and retry. Cancellation used the same fixture with an explicitly valid PyPI source.
+
+Live log following reached the bottom; manually returning to the top disabled following; checking Follow output restored it. The successful run transitioned all stage cards to PASSED. Cancellation removed the Cancel button. A fresh Node process read all three saved records and asserted their final states. Docker inspection confirmed all three test containers were removed; unrelated containers were left untouched. Browser error log was empty after the final run. Full automated tests and production builds passed again.
+
+![Cancelled live Docker training](ui-preview/docker-cancelled.jpg)
+
+## Remaining scope
+
+No fresh large-model or complete Spotify matrix run was performed. This verifies the UI execution, package-source retry and cancellation paths with a small real container workload; it is not exhaustive coverage of Docker daemon failures, timeouts or every supported experiment.
