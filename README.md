@@ -41,6 +41,20 @@ Switching views preserves the current form. Refreshing the browser clears unsave
 
 Keep the server open while running. Do not run `npm test` during an experiment under `npm run dev`: some tests temporarily edit example fixtures and can trigger a watcher restart. For a run without file watching, use `node server.mjs` instead of `npm run dev` (in the same token-configured terminal).
 
+## Web application acceptance
+
+The **Web verification** view supports a pinned **React + FastAPI + SQLite task planner**
+from a private Sydney GitHub repository, plus the bundled JS/TypeScript notes fixture.
+It installs dependencies, builds and starts the frontend/backend, then uses Chromium to
+check task creation, editing, completion, deletion and persistence after reload. Reports
+include screenshots, assertions, logs and local history. Live Gemini generation is an
+optional, separately reported check.
+
+Run `npm run setup:planner` for the real case (requires school repository access), or
+`npm run setup:web` for the self-contained notes fixture. Docker is required. This is
+support for **two reviewed cases**, not arbitrary JavaScript repositories.
+See [setup, credentials, evidence and boundaries](docs/web-verification.md).
+
 ## What the results do—and do not—mean
 
 - Scanning covers the README, the primary dependency file and up to five likely source/configuration files; other files are checked by path. It is not a complete code audit.

@@ -20,7 +20,7 @@ export function RunConsole({ text, job, active = true }) {
     <aside className="execution-context" aria-label="Recorded run context">
       <p className="eyebrow">Run context</p><h3>Recorded configuration</h3>
       <dl><dt>Workflow</dt><dd>{job.workflowId ?? "Not captured"}</dd>
-        <dt>Source commit</dt><dd><code>{job.commit}</code></dd>
+        <dt>{job.commit?.startsWith('sha256:') ? 'Source snapshot SHA-256' : 'Source commit'}</dt><dd><code>{job.commit}</code></dd>
         <dt>CPU limit</dt><dd>{job.limits?.cpus ?? "Not captured"}</dd>
         <dt>Memory limit</dt><dd>{job.limits?.memory ?? "Not captured"}</dd>
         <dt>Time limit</dt><dd>{job.limits?.timeoutMinutes == null ? "Not captured" : `${job.limits.timeoutMinutes} minutes`}</dd>

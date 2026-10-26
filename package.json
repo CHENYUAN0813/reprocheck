@@ -3,16 +3,20 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
-    "dev": "node --watch-preserve-output --watch-path=server.mjs --watch-path=scan.mjs --watch-path=evaluation-config.mjs --watch-path=experiment-config.mjs --watch-path=runner.mjs --watch-path=run-store.mjs --watch-path=collect-evidence.py --watch-path=examples --watch-path=worker.mjs server.mjs",
+    "dev": "node --watch-preserve-output --watch-path=server.mjs --watch-path=scan.mjs --watch-path=evaluation-config.mjs --watch-path=experiment-config.mjs --watch-path=web-runner.mjs --watch-path=runner.mjs --watch-path=run-store.mjs --watch-path=collect-evidence.py --watch-path=examples --watch-path=worker.mjs server.mjs",
     "prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "vite build --outDir dist/client && vite build --ssr worker.mjs --outDir dist/server",
     "preview": "vite preview",
-    "test": "node scan.mjs --self-test && node server.mjs --self-test && node test-runner.mjs && node test-benchmark.mjs && node test-candidates.mjs && node test-paper-workflow.mjs && node test-protocol-lock.mjs && node test-paper-matrix.mjs && node test-training.mjs && node test-experiments.mjs && node test-workbench.mjs",
+    "test": "node scan.mjs --self-test && node server.mjs --self-test && node test-runner.mjs && node test-benchmark.mjs && node test-candidates.mjs && node test-paper-workflow.mjs && node test-protocol-lock.mjs && node test-paper-matrix.mjs && node test-training.mjs && node test-experiments.mjs && node test-workbench.mjs && node test-web.mjs && node test-planner.mjs",
     "test:docker": "node test-runner.mjs --docker",
     "test:benchmark": "node test-benchmark.mjs --docker",
     "test:candidates": "node test-candidates.mjs --docker",
     "test:training": "node test-training.mjs --docker",
-    "test:experiments": "node test-experiments.mjs --docker"
+    "test:experiments": "node test-experiments.mjs --docker",
+    "setup:web": "docker build -t reprocheck-web-browser:1 -f web-verification/Dockerfile web-verification",
+    "test:web": "node test-web.mjs --docker",
+    "setup:planner": "npm run setup:web && docker build -t reprocheck-sydney-planner:1 -f web-verification/planner.Dockerfile web-verification",
+    "test:planner": "node test-planner.mjs --docker"
   },
   "keywords": [],
   "author": "",
