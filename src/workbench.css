@@ -45,3 +45,10 @@ button.audit-check:hover, button.audit-check[aria-pressed="true"] { background: 
 .run-log .comparison-table pre { margin: 0; padding: 0; background: transparent; border: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; font-size: .8rem; }
 @media (max-width: 900px) { .audit-workspace, .run-log > .execution-console-grid { grid-template-columns: minmax(0, 1fr); } .audit-index { border-right: 0; border-bottom: 1px solid #303535; } .audit-evidence { position: static; } }
 @media (max-width: 600px) { .audit-index, .audit-evidence { padding: 18px; } .config-group { padding: 12px; } .terminal-toolbar { align-items: flex-start; } }
+.language-switcher { display: flex; gap: 3px; flex-shrink: 0; }
+.language-switcher button { padding: 7px 10px; min-height: 36px; border: 1px solid var(--border, #394254); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
+.language-switcher button[aria-pressed="true"] { background: #314b83; color: white; }
+.language-switcher button:focus-visible { outline: 2px solid #91b2ff; outline-offset: 2px; }
+html[lang="zh-CN"] .cinema-copy h1 { line-height: 1.25; letter-spacing: -.03em; }
+html[lang="zh-CN"] .workspace-nav button { white-space: nowrap; }
+@media (max-width: 760px) { .topbar { flex-wrap: wrap; } .language-switcher { margin-left: auto; } }
