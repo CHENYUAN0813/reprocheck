@@ -1,6 +1,7 @@
 import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
+import "./cinematic.css";
 import cpuEvaluationSource from "../examples/evaluate-micrograd.py?raw";
 import { reviewedBenchmarks, reviewedTrainings, reviewedCaseById } from "../examples/reviewed-cases.mjs";
 import publishedEvaluationSource from "../examples/evaluate-bthowen.py?raw";
@@ -574,6 +575,37 @@ function ExecutionEvidence({ job, onPrepareReplay, replayDisabled }) {
   );
 }
 
+function LandingHero() {
+  const [motion, setMotion] = useState(() => !window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const [videoFailed, setVideoFailed] = useState(false);
+  useEffect(() => {
+    const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const change = () => setMotion(!preference.matches);
+    preference.addEventListener("change", change);
+    return () => preference.removeEventListener("change", change);
+  }, []);
+  return <section className="cinema-hero" aria-labelledby="workspace-title">
+    <div className="cinema-background" aria-hidden="true">
+      {motion && !videoFailed && <video autoPlay muted loop playsInline preload="metadata" onError={() => setVideoFailed(true)}
+        src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260809_012548_ef22562c-c0ae-4816-ad9d-f8922af4e6a7.mp4" />}
+    </div>
+    <div className="cinema-copy">
+      <p className="capability-pill"><span aria-hidden="true">✳</span> Public source. Explicit evidence.</p>
+      <h1 id="workspace-title" tabIndex={-1}><span>Research code.</span><span>Verifiable results.</span></h1>
+      <p className="cinema-description">Inspect a research repository, review its experiment,<br className="desktop-break" /> and check the result against a declared reference.</p>
+      <button className="cinema-cta" type="button" onClick={() => { document.getElementById("repository")?.focus({ preventScroll: true }); document.getElementById("scan-form")?.scrollIntoView({ block: "start" }); }}>Start a scan <span aria-hidden="true">↗</span></button>
+      <p className="cinema-caption">Scanning needs no Docker. Execution stays local.</p>
+    </div>
+    <ol className="cinema-stages" aria-label="Reproduction workflow">
+      <li><span aria-hidden="true">01</span><strong>Scan</strong><small>Source-linked findings</small></li>
+      <li><span aria-hidden="true">02</span><strong>Review</strong><small>Commands and inputs</small></li>
+      <li><span aria-hidden="true">03</span><strong>Execute</strong><small>Local Docker workflow</small></li>
+      <li><span aria-hidden="true">04</span><strong>Verify</strong><small>Declared reference checks</small></li>
+    </ol>
+    <button className="motion-toggle" type="button" disabled={videoFailed} aria-pressed={motion && !videoFailed} onClick={() => setMotion(!motion)}>{videoFailed ? "Static background · video unavailable" : motion ? "Pause background" : "Play background"}</button>
+  </section>;
+}
+
 function App() {
   const [page, setPage] = useState("scan");
   const [url, setUrl] = useState("");
@@ -957,10 +989,10 @@ function App() {
   }, [runScan]);
 
   return (
-    <div className="shell">
+    <div className={`shell${page === "scan" ? " home-shell" : ""}`}>
       <header className="topbar">
         <a className="brand" href="#scan" onClick={(event) => { event.preventDefault(); setPage("scan"); }} aria-label="ReproCheck home">
-          <span className="brand-mark">R</span>
+          <span className="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" width="28" height="28" fill="none"><circle cx="16" cy="16" r="11" stroke="currentColor" strokeWidth="1.5" strokeDasharray="2 3" /><path d="m10 16 4 4 8-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
           <span>ReproCheck</span>
         </a>
         <nav className="workspace-nav" aria-label="Workspace">
@@ -971,15 +1003,16 @@ function App() {
       </header>
 
       <main>
-        <div className="workspace-heading">
-          <div><p className="eyebrow">REPROCHECK / {page}</p><h1 id="workspace-title" tabIndex={-1}>{{ scan: "From repository to evidence.", report: "Inspect the evidence", configure: "Review your experiment", run: "Execution workspace", history: "Run history & comparison" }[page]}</h1></div>
+        {page === "scan" && <LandingHero />}
+        <div className="workspace-heading" hidden={page === "scan"}>
+          <div><p className="eyebrow">REPROCHECK / {page}</p><h1 id={page === "scan" ? "scan-workspace-title" : "workspace-title"} tabIndex={-1}>{{ scan: "From repository to evidence.", report: "Inspect the evidence", configure: "Review your experiment", run: "Execution workspace", history: "Run history & comparison" }[page]}</h1></div>
           {page !== "scan" && <button type="button" className="download-button" onClick={() => setPage("scan")}>New scan</button>}
         </div>
         {loading && <p className="source-strip" role="status">Scanning repository and collecting source evidence…</p>}
         {error && page !== "scan" && <p className="error" role="alert">{error}</p>}
         {page !== "scan" && page !== "history" && <div className="source-strip"><span>{page !== "run" && isExample ? "DEMO · not a live scan" : "PINNED SOURCE"}</span><strong>{page === "run" ? runJob?.repository : report.repository}</strong><code>{(page === "run" ? runJob?.commit : report.commit)?.slice(0, 12)}</code></div>}
         <div className="view-panel home-layout" hidden={page !== "scan"}>
-        <section className="scan-panel" aria-labelledby="scan-title">
+        <section className="scan-panel" id="scan-form" aria-labelledby="scan-title">
           <div>
             <p className="eyebrow">Research repository readiness</p>
             <h2 id="scan-title">Check a research repository</h2>
