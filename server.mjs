@@ -20,6 +20,7 @@ import {
 } from "./runner.mjs";
 import { scan } from "./scan.mjs";
 import worker from "./worker.mjs";
+import { webCase, webCases, webRuntime, validateWebRequest, startWebRun, getWebRun, listWebRuns, cancelWebRun, webScreenshot } from "./web-runner.mjs";
 
 const MAX_BODY_BYTES = 32_000;
 
@@ -55,6 +56,30 @@ async function handleApi(request, response) {
       sendJson(response, 403, { error: "Local API requests must come from this ReproCheck origin" });
       return true;
     }
+  }
+  if (url.pathname === '/api/web' || url.pathname === '/api/web/run') {
+    try {
+      if (url.pathname === '/api/web' && request.method === 'GET') {
+        sendJson(response, 200, { case: webCase, cases: webCases, runtime: await webRuntime() });
+      } else if (url.pathname === '/api/web/run' && request.method === 'POST') {
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers['content-type'] ?? '')) throw new Error('JSON required');
+        const input = await readJson(request);
+        validateWebRequest(input);
+        const runtime = await webRuntime();
+        if (!runtime.available) { sendJson(response, 409, { error: runtime.reason }); return true; }
+        if (input.caseId === 'sydney-planner' && !runtime.plannerAvailable) { sendJson(response, 409, { error: 'Run npm run setup:planner before this case' }); return true; }
+        sendJson(response, 202, startWebRun(input));
+      } else { sendJson(response, 405, { error: 'Method not allowed' }); }
+    } catch (error) { sendJson(response, 400, { error: error.message }); }
+    return true;
+  }
+  const screenshotId = url.pathname.match(/^\/api\/web\/runs\/([\w-]+)\/screenshot$/)?.[1];
+  if (screenshotId) {
+    if (request.method !== 'GET') { sendJson(response, 405, { error: 'Method not allowed' }); return true; }
+    const screenshot = webScreenshot(screenshotId, url.searchParams.get('stage'));
+    if (!screenshot) sendJson(response, 404, { error: 'Screenshot not available' });
+    else { response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); response.end(screenshot); }
+    return true;
   }
   const recipeRoute = url.pathname.match(/^\/api\/runs\/([\w-]+)\/(recipe|replay-preflight|replay)$/);
   if (recipeRoute) {
@@ -97,7 +122,11 @@ async function handleApi(request, response) {
       response.setHeader("Allow", "GET");
       sendJson(response, 405, { error: "Method not allowed" });
     } else {
-      try { sendJson(response, 200, { runs: listRuns() }); }
+      try {
+        const runs = new Map(listRuns().map(run => [run.id, run]));
+        for (const run of listWebRuns()) runs.set(run.id, { id: run.id, commit: run.commit, repository: run.repository, status: run.status, startedAt: run.startedAt, finishedAt: run.finishedAt, workflowId: run.workflowId, verificationStatus: run.verification.status });
+        sendJson(response, 200, { runs: [...runs.values()].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, 30) });
+      }
       catch { sendJson(response, 500, { error: "Unable to read local run history" }); }
     }
     return true;
@@ -107,7 +136,7 @@ async function handleApi(request, response) {
   if (runId) {
     if (request.method === "GET") {
       try {
-        const job = getRun(runId);
+        const job = getWebRun(runId) ?? getRun(runId);
         if (job && url.searchParams.get("download") === "1") {
           response.setHeader("Content-Disposition", `attachment; filename="reprocheck-run-${runId}.json"`);
         }
@@ -116,7 +145,7 @@ async function handleApi(request, response) {
       return true;
     }
     if (request.method === "DELETE") {
-      const job = cancelRun(runId);
+      const job = cancelWebRun(runId) ?? cancelRun(runId);
       sendJson(response, job ? 200 : 404, job ?? { error: "Running job not found" });
       return true;
     }
@@ -355,6 +384,11 @@ async function selfTest() {
 
     const missingRun = await fetch(`http://127.0.0.1:${port}/api/runs/missing`);
     assert.equal(missingRun.status, 404);
+    const invalidWeb = await fetch(`http://127.0.0.1:${port}/api/web/run`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ caseId: 'unknown', confirmUnknownCode: true }) });
+    assert.equal(invalidWeb.status, 400);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/api/web`, { method: 'POST' })).status, 405);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/api/web`, { headers: { Origin: 'https://untrusted.test' } })).status, 403);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/api/web/runs/missing/screenshot`)).status, 404);
     const hostedRun = await worker.fetch(new Request("https://reprocheck.test/api/run"), {});
     assert.equal(hostedRun.status, 501);
     const history = await fetch(`http://127.0.0.1:${port}/api/runs`);

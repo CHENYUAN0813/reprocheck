@@ -5,6 +5,7 @@ import "./cinematic.css";
 import "./workbench.css";
 import { groupChecks, comparisonValue } from "./workbench-model.mjs";
 import { RunConsole } from "./RunConsole.jsx";
+import { WebVerification, WebEvidence } from "./WebVerification.jsx";
 import cpuEvaluationSource from "../examples/evaluate-micrograd.py?raw";
 import { reviewedBenchmarks, reviewedTrainings, reviewedCaseById } from "../examples/reviewed-cases.mjs";
 import publishedEvaluationSource from "../examples/evaluate-bthowen.py?raw";
@@ -1033,7 +1034,7 @@ function App() {
           <span>ReproCheck</span>
         </a>
         <nav className="workspace-nav" aria-label="Workspace">
-          {[["scan", "Start scan"], ["report", "Scan report"], ["configure", "Experiment"], ["run", "Execution"], ["history", "History & comparison"]].map(([id, label]) =>
+          {[["scan", "Start scan"], ["report", "Scan report"], ["configure", "Experiment"], ["run", "Execution"], ["web", "Web verification"], ["history", "History & comparison"]].map(([id, label]) =>
             <button type="button" key={id} aria-current={page === id ? "page" : undefined} disabled={(id === "configure" && isExample) || (id === "run" && !runJob)} onClick={() => setPage(id)}>{label}{id === "run" && runJob?.status === "RUNNING" && <span className="live-dot" />}</button>)}
         </nav>
         <span className="mode">Research workbench</span>
@@ -1042,12 +1043,13 @@ function App() {
       <main>
         {page === "scan" && <LandingHero />}
         <div className="workspace-heading" hidden={page === "scan"}>
-          <div><p className="eyebrow">REPROCHECK / {page}</p><h1 id={page === "scan" ? "scan-workspace-title" : "workspace-title"} tabIndex={-1}>{{ scan: "From repository to evidence.", report: "Inspect the evidence", configure: "Review your experiment", run: "Execution workspace", history: "Run history & comparison" }[page]}</h1></div>
+          <div><p className="eyebrow">REPROCHECK / {page}</p><h1 id={page === "scan" ? "scan-workspace-title" : "workspace-title"} tabIndex={-1}>{{ scan: "From repository to evidence.", report: "Inspect the evidence", configure: "Review your experiment", run: "Execution workspace", web: "Web application verification", history: "Run history & comparison" }[page]}</h1></div>
           {page !== "scan" && <button type="button" className="download-button" onClick={() => setPage("scan")}>New scan</button>}
         </div>
         {loading && <p className="source-strip" role="status">Scanning repository and collecting source evidence…</p>}
         {error && page !== "scan" && <p className="error" role="alert">{error}</p>}
-        {page !== "scan" && page !== "history" && <div className="source-strip"><span>{page !== "run" && isExample ? "DEMO · not a live scan" : "PINNED SOURCE"}</span><strong>{page === "run" ? runJob?.repository : report.repository}</strong><code>{(page === "run" ? runJob?.commit : report.commit)?.slice(0, 12)}</code></div>}
+        {page !== "scan" && page !== "history" && page !== "web" && <div className="source-strip"><span>{page !== "run" && isExample ? "DEMO · not a live scan" : "PINNED SOURCE"}</span><strong>{page === "run" ? runJob?.repository : report.repository}</strong><code>{(page === "run" ? runJob?.commit : report.commit)?.slice(0, 12)}</code></div>}
+        <div hidden={page !== 'web'}><WebVerification active={page === 'web'} /></div>
         <div className="view-panel home-layout" hidden={page !== "scan"}>
         <section className="scan-panel" id="scan-form" aria-labelledby="scan-title">
           <div>
@@ -1423,16 +1425,16 @@ function App() {
           {history.length === 0 && !historyError && <div className="empty-state"><h3>No saved executions yet</h3><p>Scan a repository and complete a reviewed run to build your local evidence archive.</p><button type="button" className="download-button" onClick={() => setPage("scan")}>Start with a repository</button></div>}
           <ul className="history-list">
             {history.map((entry) => <li key={entry.id}>
-              <div><strong>{entry.repository}</strong><p className="hint">{entry.workflowId ?? "quick"} · Execution: {entry.status} · Output checks: {entry.verificationStatus}{entry.evaluationStatus && ` · Evaluation: ${entry.evaluationStatus}`} · commit {entry.commit.slice(0, 7)} · {new Date(entry.startedAt).toLocaleString()}</p></div>
+              <div><strong>{entry.repository}</strong><p className="hint">{entry.workflowId ?? "quick"} · Execution: {entry.status} · Output checks: {entry.verificationStatus}{entry.evaluationStatus && ` · Evaluation: ${entry.evaluationStatus}`} · {entry.commit.startsWith('sha256:') ? 'snapshot' : 'commit'} {entry.commit.replace(/^sha256:/, '').slice(0, 7)} · {new Date(entry.startedAt).toLocaleString()}</p></div>
               <button className="download-button" type="button" onClick={() => openHistory(entry.id)}>View record</button>
             </li>)}
           </ul>
           {archivedJob && <div className="run-log" id="archived-execution" tabIndex={-1} aria-label="Saved execution details">
             <div><strong>{archivedJob.repository} · {archivedJob.status}</strong><button className="download-button" type="button" onClick={() => setArchivedJob(null)}>Close record</button></div>
-            <p className="commit">{archivedJob.id} · Commit {archivedJob.commit}</p>
+            <p className="commit">{archivedJob.id} · {archivedJob.kind === 'web' ? 'Source snapshot' : 'Commit'} {archivedJob.commit}</p>
             {archivedJob.diagnosis && <p className="run-diagnosis">{archivedJob.diagnosis}</p>}
             <RunConsole key={archivedJob.id} text={visibleRunLog(archivedJob.log)} job={archivedJob} active={page === "history"} />
-            <ExecutionEvidence job={archivedJob} onPrepareReplay={prepareReplay} replayDisabled={executionBusy} />
+            {archivedJob.kind === 'web' ? <WebEvidence job={archivedJob} /> : <ExecutionEvidence job={archivedJob} onPrepareReplay={prepareReplay} replayDisabled={executionBusy} />}
 
           </div>}
         </section>
