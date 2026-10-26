@@ -6,6 +6,17 @@ For students and researchers trying to run someone else's research code: get sou
 
 ![ReproCheck: research code and verifiable results](docs/ui-preview/desktop-home.jpg)
 
+## Access and versions
+
+**Start locally using the instructions below. No verified public demo URL is currently available.** The Sites project ID stored in this repository is deployment metadata, not a visitor link; it does not confirm that a live site is accessible.
+
+| Entry | What it provides |
+| --- | --- |
+| Local app (`http://127.0.0.1:5173/`) | Repository scanning and reports; supported experiment execution, verification and comparison with local Docker. Anyone can install and run their own copy. |
+| Sites deployment, when available | Repository scanning and reports only. It cannot use Docker on your computer or a visitor's computer. |
+
+`main` uses the JavaScript scanner and Node.js local server. The Python/FastAPI scanning refactor is preserved separately on `feat/fastapi-scan`; it is not required for this quick start. The project still uses Python inside supported experiments and evidence collection.
+
 ## First run: scan only
 
 Install **Node.js 22.12+ (Node 24 recommended)** and **Git**. **Scanning does not need Docker** and does not execute repository code.
