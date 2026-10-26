@@ -2,12 +2,12 @@ import zh from './zh.json' with { type: 'json' };
 
 export const LANGUAGE_KEY = 'reprocheck.language';
 
-const checkIds = new Set(['readme', 'install_command', 'run_command', 'command_references',
+const checkIds = new Set(['node_manifest', 'node_lock', 'node_version', 'node_scripts', 'node_install_instructions', 'node_run_instructions', 'node_coverage', 'project_type', 'readme', 'install_command', 'run_command', 'command_references',
   'dependencies', 'dependency_versions', 'python_version', 'data_instructions',
   'model_instructions', 'random_seed', 'experiment_config', 'tests', 'continuous_integration', 'license']);
 
 export function translateCheck(check, language) {
-  return checkIds.has(check.id) ? translate(check.message, language) : check.message;
+  return checkIds.has(check.id.split(':')[0]) ? translate(check.message, language) : check.message;
 }
 
 const englishErrors = {
@@ -18,6 +18,14 @@ const englishErrors = {
 
 // Only recognized product messages are translated; captured source and logs bypass this function.
 const messages = [
+  [/^Invalid\ package\.json:\ (.+)$/, (_, value) => `package.json 无效：${value}`],
+  [/^Node\ dependency\ manifest\ found:\ (.+)$/, (_, value) => `已找到 Node 依赖清单：${value}`],
+  [/^npm\ lock\ file\ parsed:\ (.+)$/, (_, value) => `已解析 npm 锁文件：${value}`],
+  [/^npm\ lock\ file\ missing\ or\ invalid:\ (.+)$/, (_, value) => `npm 锁文件缺失或无效：${value}`],
+  [/^Node\.js\ requirement\ declared:\ (.+)$/, (_, value) => `已声明 Node.js 版本要求：${value}`],
+  [/^Node\.js\ requirement\ not\ declared:\ (.+)$/, (_, value) => `未声明 Node.js 版本要求：${value}`],
+  [/^npm\ scripts\ declared\ \(not\ executed\):\ (.+)$/, (_, value) => `已声明 npm 脚本（未执行）：${value}`],
+  [/^No\ npm\ scripts\ declared:\ (.+)$/, (_, value) => `未声明 npm 脚本：${value}`],
   [/^Required arguments need values: (.+)$/, (_, names) => `必填参数缺少值：${names}`],
   [/^Tree matches: (.+)$/, (_, paths) => `文件树匹配：${paths}`],
   [/^Reviewed (.+) software case: input hashes and the pinned README row must pass checks before entry and at completion\. This is not full-paper reproduction or a security attestation\.$/, (_, name) => `已审查的 ${name} 软件案例：输入哈希和固定 README 参考行必须在入口执行前及完成时通过检查。这不代表整篇论文复现或安全认证。`],

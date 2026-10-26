@@ -280,7 +280,7 @@ async function selfTest() {
         if (String(url).startsWith("http://127.0.0.1:")) return originalFetch(url, init);
         requested.push(String(url));
         if (String(url).includes("/commits/")) return Response.json({ sha: String(url).endsWith(config.commit) ? config.commit : "b".repeat(40), commit: { tree: { sha: "c".repeat(40) } } });
-        if (String(url).includes("/git/trees/")) return Response.json({ tree: [], truncated: false });
+        if (String(url).includes("/git/trees/")) return Response.json({ tree: [{ path: "train.py", type: "blob" }], truncated: false });
         return Response.json({ default_branch: "main" });
       };
       for (const endpoint of ["scan", "preflight", "run"]) {
@@ -312,7 +312,7 @@ async function selfTest() {
         globalThis.fetch = async (url) => {
           requested.push(String(url));
           if (String(url).includes("/commits/")) return Response.json({ sha: preset.commit, commit: { tree: { sha: "b".repeat(40) } } });
-          if (String(url).includes("/git/trees/")) return Response.json({ tree: [], truncated: false });
+          if (String(url).includes("/git/trees/")) return Response.json({ tree: [{ path: "train.py", type: "blob" }], truncated: false });
           return Response.json({ default_branch: "main" });
         };
         const response = await worker.fetch(new Request("https://reprocheck.test/api/scan", {

@@ -71,7 +71,7 @@ try {
   assert.equal(pythonPreview.automatedSteps.at(-1).command, "python other.py");
   const unknown = await scanFixture({ "README.md": "# Usage\n./custom-runner\n" });
   assert.equal(unknown.quickEntries.length, 0);
-  assert.match(unknown.checks.find((check) => check.id === "run_command").message, /not automatically recognized/);
+  assert.match(unknown.checks.find((check) => check.id === "project_type").message, /not automatically recognized/);
   const noReadme = await scanFixture({});
   assert.equal(noReadme.quickEntries.length, 0);
   assert.equal(report.summary.warnings, report.checks.filter((check) => check.status === "WARN").length);

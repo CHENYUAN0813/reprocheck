@@ -6,6 +6,7 @@ import "./cinematic.css";
 import "./workbench.css";
 import { groupChecks, comparisonValue } from "./workbench-model.mjs";
 import { RunConsole } from "./RunConsole.jsx";
+import { NodeProject } from "./NodeProject.jsx";
 import { WebVerification, WebEvidence } from "./WebVerification.jsx";
 import cpuEvaluationSource from "../examples/evaluate-micrograd.py?raw";
 import { reviewedBenchmarks, reviewedTrainings, reviewedCaseById } from "../examples/reviewed-cases.mjs";
@@ -410,6 +411,8 @@ function SuggestedEntry({ report, disabled, onChoose }) {
   const [id, setId] = useState(report.recommendedQuickEntryId ?? "");
   const selected = entries.find((entry) => entry.id === id);
   const readme = report.checks.find((check) => check.id === "readme")?.evidence;
+  if (report.projectType === 'node') return <NodeProject report={report} />;
+  if (report.projectType === 'unknown') return <section className="runner"><h2>{t('Project type not recognized')}</h2><p>{t('Review the repository documentation. No Python experiment requirements or executable workflow were inferred.')}</p></section>;
   return <section className="runner candidate-config" aria-labelledby="suggested-entry-title">
     <h2 id="suggested-entry-title">{t("Start here · check one entry")}</h2>
     <p>{t("Quick checks whether the selected entry executes. It is not full training or metric acceptance. Commands remain untrusted and will not run until you review and confirm. Prerequisites can download large dependencies or datasets; Quick does not mean a small download.")}</p>
@@ -1046,7 +1049,7 @@ function App() {
         </a>
         <nav className="workspace-nav" aria-label={t("Workspace")}>
           {[["scan", "Start scan"], ["report", "Scan report"], ["configure", "Experiment"], ["run", "Execution"], ["web", "Web verification"], ["history", "History & comparison"]].map(([id, label]) =>
-            <button type="button" key={id} aria-current={page === id ? "page" : undefined} disabled={(id === "configure" && isExample) || (id === "run" && !runJob)} onClick={() => setPage(id)}>{t(label)}{id === "run" && runJob?.status === "RUNNING" && <span className="live-dot" />}</button>)}
+            <button type="button" key={id} aria-current={page === id ? "page" : undefined} disabled={(id === "configure" && (isExample || report.projectType === "unknown")) || (id === "run" && !runJob)} onClick={() => setPage(id)}>{t(label)}{id === "run" && runJob?.status === "RUNNING" && <span className="live-dot" />}</button>)}
         </nav>
         <LanguageSwitcher />
         <span className="mode">{t("Research workbench")}</span>
@@ -1055,7 +1058,7 @@ function App() {
       <main>
         {page === "scan" && <LandingHero />}
         <div className="workspace-heading" hidden={page === "scan"}>
-          <div><p className="eyebrow">{t("REPROCHECK / ")}{t(page)}</p><h1 id={page === "scan" ? "scan-workspace-title" : "workspace-title"} tabIndex={-1}>{t({ scan: "From repository to evidence.", report: "Inspect the evidence", configure: "Review your experiment", run: "Execution workspace", web: "Web application verification", history: "Run history & comparison" }[page])}</h1></div>
+          <div><p className="eyebrow">{t("REPROCHECK / ")}{t(page)}</p><h1 id={page === "scan" ? "scan-workspace-title" : "workspace-title"} tabIndex={-1}>{t({ scan: "From repository to evidence.", report: "Inspect the evidence", configure: report.projectType === "node" ? "Review installation, tasks and services" : "Review your experiment", run: "Execution workspace", web: "Web application verification", history: "Run history & comparison" }[page])}</h1></div>
           {page !== "scan" && <button type="button" className="download-button" onClick={() => setPage("scan")}>{t("New scan")}</button>}
         </div>
         {loading && <p className="source-strip" role="status">{t("Scanning repository and collecting source evidence…")}</p>}
@@ -1106,7 +1109,7 @@ function App() {
         <aside className="journey-card">
           <p className="eyebrow">{t("How it works")}</p><h2>{t("A clear path to your first result")}</h2>
           <ol className="journey-steps">
-            <li><strong>{t("Scan the source")}</strong><p>{t("Inspect README instructions, files and supported Python / Make entries. No Docker required.")}</p></li>
+            <li><strong>{t("Scan the source")}</strong><p>{t("Inspect README, Python / Make entries and JavaScript/TypeScript declarations. No Docker required.")}</p></li>
             <li><strong>{t("Review the plan")}</strong><p>{t("Confirm commands, input files, dataset and output expectations before execution.")}</p></li>
             <li><strong>{t("Run in Docker")}</strong><p>{t("Execute the selected workflow locally with explicit resource limits and live logs.")}</p></li>
             <li><strong>{t("Compare the evidence")}</strong><p>{t("Separate process completion, output checks and reference matching. Keep the record for replay.")}</p></li>
@@ -1129,6 +1132,7 @@ function App() {
                 </span>
               </div>
               <h2 id="report-title">{report.repository}</h2>
+              {report.projectType && <p className="hint">{t("Project type")}: {t(({node: "JavaScript / TypeScript", python: "Python", mixed: "Mixed Python + JavaScript/TypeScript", unknown: "Project type not recognized"})[report.projectType])}</p>}
               <p className="commit">{t("Commit ")}{report.commit}</p>
             </div>
 
@@ -1156,11 +1160,13 @@ function App() {
           <ReportChecks key={`${report.repository}@${report.commit}`} report={report} />
         </section>
 
-        {!isExample && <details className="advanced-evidence"><summary>{t("Paper provenance and protocol lock")}</summary><PaperProvenance report={report} /><ProtocolLock report={report} /></details>}
-        {!isExample && <div className="next-action"><p>{t("Review the source evidence, then configure the workflow and its acceptance conditions.")}</p><button type="button" onClick={() => setPage("configure")}>{t("Configure experiment →")}</button></div>}
+        {!isExample && report.paperProvenance && <details className="advanced-evidence"><summary>{t("Paper provenance and protocol lock")}</summary><PaperProvenance report={report} /><ProtocolLock report={report} /></details>}
+        {!isExample && report.projectType === 'mixed' && <NodeProject report={report} />}
+        {!isExample && report.projectType !== 'unknown' && <div className="next-action"><p>{t(report.projectType === 'node' ? 'Review declared commands; automated npm execution is not available.' : "Review the source evidence, then configure the workflow and its acceptance conditions.")}</p><button type="button" onClick={() => setPage("configure")}>{t(report.projectType === 'node' ? 'Review application commands →' : "Configure experiment →")}</button></div>}
         </div>
         <div className="view-panel configure-layout" hidden={page !== "configure"}>
-        {!isExample && !acceptance.benchmarkId && <details className="matrix-options"><summary>{t("Advanced · multi-experiment paper matrix")}</summary><PaperMatrix key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onApply={applyMatrix} /></details>}
+        {report.nodeProject && <NodeProject report={report} />}
+        {!isExample && report.paperMatrixDraft && !acceptance.benchmarkId && <details className="matrix-options"><summary>{t("Advanced · multi-experiment paper matrix")}</summary><PaperMatrix key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onApply={applyMatrix} /></details>}
 
         {displayedPlan && (
           <section className="plan" aria-labelledby="plan-title">
@@ -1469,7 +1475,7 @@ function App() {
         </section>}
         </div>
       </main>
-      <footer className="workspace-footer"><span>{t("ReproCheck · Evidence before conclusions")}</span><span>{t("Public Python repositories · Local Docker execution")}</span></footer>
+      <footer className="workspace-footer"><span>{t("ReproCheck · Evidence before conclusions")}</span><span>{t("Python + JavaScript/TypeScript scans · Reviewed local execution")}</span></footer>
     </div>
   );
 }
