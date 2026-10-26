@@ -1,5 +1,6 @@
+import { buildProtocolLock } from './test-python-rules.mjs';
 import assert from "node:assert/strict";
-import { buildProtocolLock, verifyProtocolLock } from "./protocol-lock.mjs";
+import { verifyProtocolLock } from "./protocol-lock.mjs";
 
 const blob = (path, sha) => ({ path, sha: sha.repeat(40).slice(0, 40), size: path.length, type: "blob" });
 const report = { repository: "owner/paper", commit: "a".repeat(40),

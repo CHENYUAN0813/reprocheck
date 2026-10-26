@@ -12,7 +12,7 @@ import publishedEvaluationSource from "../examples/evaluate-bthowen.py?raw";
 import capacityEvaluationSource from "../examples/evaluate-capacity-probes.py?raw";
 import capacityMatrixSource from "../examples/evaluate-capacity-matrix.py?raw";
 import trainingSource from "../examples/train-bthowen.py?raw";
-import { candidateOptions, candidateWorkflow, suggestCandidate } from "../evaluation-config.mjs";
+import { candidateOptions, candidateWorkflow } from "../evaluation-config.mjs";
 import { experimentDraft, experimentExecutionOptions, importedExperimentDraft, MODEL_EXPORT_LIMIT } from "../experiment-config.mjs";
 
 const emptyAcceptance = { expectedText: "", outputFile: "", metricKey: "", metricOperator: "gte", metricTarget: "", metricTolerance: "0", dataset: "", model: "", reference: "", assetsInEntry: false };
@@ -307,7 +307,7 @@ function PaperMatrix({ report, disabled, onApply }) {
 
 function CandidateConfig({ report, disabled, onApply }) {
   const draft = report.evaluationDraft;
-  const suggested = draft.suggestion ?? suggestCandidate(report);
+  const suggested = draft.suggestion;
   function selections(entryId) {
     const related = draft.references.filter((reference) => reference.entryId === entryId);
     const outputs = draft.outputs.filter((output) => output.entryIds.includes(entryId));

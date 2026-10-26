@@ -1,7 +1,8 @@
+import { buildEvaluationDraft, discoverPaperProvenance, suggestCandidate } from './test-python-rules.mjs';
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { buildEvaluationDraft, candidateCommand, candidateOptions, discoverPaperProvenance, reviewedCandidate, suggestCandidate } from "./evaluation-config.mjs";
+import { candidateCommand, candidateOptions, reviewedCandidate } from "./evaluation-config.mjs";
 import { buildDockerInvocation, buildPreflight, buildReplayPreflight, createRecipe, validateExecutionOptions } from "./runner.mjs";
 
 const files = [{ path: "eval.py", text: "iris = load_iris()\ntrain_test_split(X, y, test_size=0.3, random_state=1)\nmodel = LogisticRegression()\nprint('Accuracy: %.4f' % score)" }];

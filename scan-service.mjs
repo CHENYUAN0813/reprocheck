@@ -6,10 +6,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 const root = fileURLToPath(new URL('.', import.meta.url));
 const venvPython = fileURLToPath(new URL(process.platform === 'win32' ? './.venv/Scripts/python.exe' : './.venv/bin/python', import.meta.url));
 
-export async function startScanService() {
+export async function startScanService({ token = process.env.GITHUB_TOKEN } = {}) {
   const child = spawn(process.env.REPROCHECK_PYTHON || (existsSync(venvPython) ? venvPython : 'python'), ['-m', 'backend'], {
     cwd: root, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, REPROCHECK_NODE: process.execPath, PYTHONUTF8: '1', PYTHONDONTWRITEBYTECODE: '1' },
+    env: { ...process.env, SCAN_SERVICE_TOKEN: '', GITHUB_TOKEN: token ?? '', REPROCHECK_NODE: process.execPath, PYTHONUTF8: '1', PYTHONDONTWRITEBYTECODE: '1' },
   });
   let port, failed = false, exited = false;
   child.on('error', () => { failed = true; });

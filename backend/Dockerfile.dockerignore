@@ -1,0 +1,8 @@
+**
+!backend/
+!backend/**
+backend/__pycache__/
+!examples/
+!examples/**
+!*.mjs
+!collect-evidence.py

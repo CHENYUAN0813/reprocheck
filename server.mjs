@@ -20,7 +20,6 @@ import {
   summarizeSteps,
   validateExecutionOptions,
 } from "./runner.mjs";
-import { scan } from "./scan.mjs";
 import worker from "./worker.mjs";
 import { webCase, webCases, webRuntime, validateWebRequest, startWebRun, getWebRun, listWebRuns, cancelWebRun, webScreenshot } from "./web-runner.mjs";
 
@@ -170,15 +169,16 @@ export async function handleApi(request, response, scanService) {
     }
     const input = await readJson(request);
 
-    let report;
-    if (scanService) {
-      const result = await scanService.request(input);
-      if (result.status !== 200 || url.pathname === "/api/scan") {
-        sendJson(response, result.status, result.body);
-        return true;
-      }
-      report = result.body;
+    if (!scanService) {
+      sendJson(response, 502, { error: "Python scan service is required" });
+      return true;
     }
+    const result = await scanService.request(input);
+    if (result.status !== 200 || url.pathname === "/api/scan") {
+      sendJson(response, result.status, result.body);
+      return true;
+    }
+    const report = result.body;
 
     if (!input || typeof input.url !== "string") {
       throw new Error("A GitHub repository URL is required");
@@ -188,12 +188,6 @@ export async function handleApi(request, response, scanService) {
 
     const pinnedCommit = executionOptions.benchmarkId ? reviewedCaseById.get(executionOptions.benchmarkId).commit : executionOptions.experiment?.commit ?? input.pinnedCommit;
     if (input.pinnedCommit !== undefined && input.pinnedCommit !== pinnedCommit) throw new Error("Conflicting pinned commits");
-    // Only the offline legacy API self-test omits the managed FastAPI service.
-    if (!scanService) report = await scan(input.url, process.env.GITHUB_TOKEN, pinnedCommit);
-    if (url.pathname === "/api/scan") {
-      sendJson(response, 200, report);
-      return true;
-    }
     if (!/^[a-f\d]{40}$/i.test(input.commit ?? "")) {
       throw new Error("The scanned commit is required before execution");
     }
@@ -266,7 +260,8 @@ async function start() {
 }
 
 async function selfTest() {
-  const server = createHttpServer(handleApi);
+  const scanService = await startScanService();
+  const server = createHttpServer((req, res) => handleApi(req, res, scanService));
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 
   try {
@@ -304,65 +299,6 @@ async function selfTest() {
     );
 
     assert.equal(workerResponse.status, 400);
-
-    const originalFetch = globalThis.fetch;
-    try {
-      const config = JSON.parse(readFileSync(new URL("./examples/experiment-iris-random-forest.json", import.meta.url)));
-      const requested = [];
-      globalThis.fetch = async (url, init) => {
-        if (String(url).startsWith("http://127.0.0.1:")) return originalFetch(url, init);
-        requested.push(String(url));
-        if (String(url).includes("/commits/")) return Response.json({ sha: String(url).endsWith(config.commit) ? config.commit : "b".repeat(40), commit: { tree: { sha: "c".repeat(40) } } });
-        if (String(url).includes("/git/trees/")) return Response.json({ tree: [], truncated: false });
-        return Response.json({ default_branch: "main" });
-      };
-      for (const endpoint of ["scan", "preflight", "run"]) {
-        requested.length = 0;
-        const response = await originalFetch(`http://127.0.0.1:${port}/api/${endpoint}`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: `https://github.com/${config.repository}`, ...(endpoint === "scan" ? { pinnedCommit: config.commit } : {}), commit: config.commit,
-            workflowId: "training", ...(endpoint !== "scan" ? { executionOptions: config.executionOptions } : {}) }),
-        });
-        const result = await response.json();
-        assert.equal(response.status, endpoint === "run" ? 400 : 200, JSON.stringify(result));
-        if (endpoint === "run") assert.match(result.error, /Explicit confirmation/);
-        else assert.equal(result.commit, config.commit);
-        assert.ok(requested.some((url) => url.endsWith(`/commits/${config.commit}`)));
-        assert.ok(!requested.some((url) => url.endsWith("/commits/main")));
-      }
-      for (const pinnedCommit of ["main", "../main", ""]) {
-        const response = await originalFetch(`http://127.0.0.1:${port}/api/scan`, {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: `https://github.com/${config.repository}`, pinnedCommit }),
-        });
-        assert.equal(response.status, 400);
-      }
-      const hostedPinned = await worker.fetch(new Request("https://reprocheck.test/api/scan", {
-        method: "POST", body: JSON.stringify({ url: `https://github.com/${config.repository}`, pinnedCommit: config.commit }),
-      }), {});
-      assert.equal((await hostedPinned.json()).commit, config.commit);
-      for (const preset of reviewedCaseById.values()) {
-        const requested = [];
-        globalThis.fetch = async (url) => {
-          requested.push(String(url));
-          if (String(url).includes("/commits/")) return Response.json({ sha: preset.commit, commit: { tree: { sha: "b".repeat(40) } } });
-          if (String(url).includes("/git/trees/")) return Response.json({ tree: [], truncated: false });
-          return Response.json({ default_branch: "main" });
-        };
-        const response = await worker.fetch(new Request("https://reprocheck.test/api/scan", {
-          method: "POST", body: JSON.stringify({ url: `https://github.com/${preset.repository}`, executionOptions: { benchmarkId: preset.id } }),
-        }), {});
-        assert.equal(response.status, 200, preset.id);
-        assert.equal((await response.json()).commit, preset.commit, preset.id);
-        assert.ok(requested.some((url) => url.endsWith(`/commits/${preset.commit}`)), preset.id);
-      }
-      globalThis.fetch = async () => { throw new Error("Unknown presets must not fetch"); };
-      const unknown = await worker.fetch(new Request("https://reprocheck.test/api/scan", {
-        method: "POST", body: JSON.stringify({ url: "https://github.com/owner/repo", executionOptions: { benchmarkId: "unknown" } }),
-      }), {});
-      assert.equal(unknown.status, 400);
-      assert.equal((await unknown.json()).error, "Unknown reviewed benchmark");
-    } finally { globalThis.fetch = originalFetch; }
-    console.log(`PASS  hosted scan routing for all ${reviewedCaseById.size} reviewed presets and unknown-ID rejection`);
 
     const preflight = buildPreflight(
       {
@@ -433,6 +369,7 @@ async function selfTest() {
     assert.equal((await worker.fetch(new Request("https://reprocheck.test/api/runs/missing/replay"), {})).status, 501);
     console.log("PASS  API self-test");
   } finally {
+    await scanService.close();
     await new Promise((resolve) => server.close(resolve));
   }
 }

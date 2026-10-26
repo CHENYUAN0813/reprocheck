@@ -1,8 +1,9 @@
+import { buildPaperMatrixDraft } from './test-python-rules.mjs';
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { promisify } from "node:util";
-import { buildPaperMatrixDraft, buildPaperMatrixExecution } from "./paper-matrix.mjs";
+import { buildPaperMatrixExecution } from "./paper-matrix.mjs";
 
 const adapter = { id: "paper-adapter-1", status: "NEEDS_REVIEW", steps: [{ id: "experiment-1", role: "experiment", command: "make run", supported: true }] };
 const report = { paperWorkflowDraft: { adapters: [adapter] }, protocolLock: { lockId: "a".repeat(64), status: "INCOMPLETE", gaps: ["exact Python version"] },
@@ -11,7 +12,7 @@ const report = { paperWorkflowDraft: { adapters: [adapter] }, protocolLock: { lo
     { id: "reference-2", label: "Beauty · ESASRec · NDCG@10", metricKey: "ndcg_10", value: 0.34, precision: 2, unit: "as printed", evidence: { file: "README.md", line: 21 } },
     { id: "reference-3", label: "Games · SASRec · NDCG@10", metricKey: "ndcg_10", value: 0.29, precision: 2, unit: "as printed", evidence: { file: "README.md", line: 22 } },
   ] } };
-const draft = buildPaperMatrixDraft(report);
+const draft = report.paperMatrixDraft = buildPaperMatrixDraft(report);
 assert.equal(draft.status, "NEEDS_REVIEW");
 assert.deepEqual(draft.axes, { datasets: ["Beauty", "Games"], models: ["SASRec", "ESASRec"], seeds: [], metrics: ["ndcg_10"] });
 const input = { adapterId: adapter.id, protocolLockId: report.protocolLock.lockId, outputFile: "results/table1.csv", rowKey: "dataset",

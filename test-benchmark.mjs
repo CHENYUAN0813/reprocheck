@@ -59,19 +59,6 @@ const stored = { ...sample, id: "00000000-0000-4000-8000-000000000001", reposito
 assert.equal(buildReplayPreflight(stored, { available: true }, true).automatedSteps.at(-1).command, "python previous-reviewed-adapter.py", "Replay must retain the archived adapter, not inject the current preset");
 assert.equal(createRecipe(stored).benchmark.assets[0].sha256, assets[0].sha256);
 assert.throws(() => createRecipe({ ...stored, benchmark: null }), /asset\/source locks/);
-const originalFetch = globalThis.fetch;
-let pinnedCommitRequested = false;
-try {
-  // Unit check only: a moved default branch must not replace the reviewed commit.
-  globalThis.fetch = async (url) => {
-    if (url.endsWith(`/repos/${report.repository}`)) return Response.json({ default_branch: "newer-branch" });
-    assert.ok(url.endsWith(`/commits/${report.commit}`));
-    pinnedCommitRequested = true;
-    throw new Error("Unit check stops before external requests");
-  };
-  await worker.fetch(new Request("https://reprocheck.test/api/scan", { method: "POST", body: JSON.stringify({ url: `https://github.com/${report.repository}`, executionOptions: { benchmarkId: reviewedBenchmark.id } }) }), {});
-  assert.equal(pinnedCommitRequested, true);
-} finally { globalThis.fetch = originalFetch; }
 console.log("PASS  reviewed benchmark identity, immutable conditions and evidence gates");
 
 // Opt-in: public network downloads and unknown repository/pickle execution ONLY in bounded Docker.

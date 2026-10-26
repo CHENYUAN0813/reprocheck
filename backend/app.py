@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import re
+import secrets
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
@@ -23,6 +24,16 @@ def reject_non_finite(_):
 
 @app.middleware('http')
 async def local_only(request, call_next):
+    service_token = os.environ.get('SCAN_SERVICE_TOKEN')
+    if service_token:
+        # Hosted mode is explicitly opt-in and authenticates every scan request.
+        if request.url.path == '/health' and request.method == 'GET':
+            return await call_next(request)
+        expected = f'Bearer {service_token}'.encode()
+        supplied = request.headers.get('authorization', '').encode()
+        if len(service_token) < 32 or not secrets.compare_digest(supplied, expected):
+            return response(401, {'error': 'Scan service authentication required'})
+        return await call_next(request)
     host = request.headers.get('host', '')
     origin = f'http://{host}'
     try:

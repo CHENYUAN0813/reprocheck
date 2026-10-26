@@ -45,18 +45,6 @@ const stored = { ...sample, id: "00000000-0000-4000-8000-000000000003", reposito
   steps: preflight.automatedSteps, verification: verifyOutcome(sample), limits: preflight.limits };
 const replaySteps = buildReplayPreflight(stored, { available: true }, true).automatedSteps.map((step) => step.id);
 assert.ok(replaySteps.indexOf("verify-lock") < replaySteps.indexOf("training-benchmark"));
-const originalFetch = globalThis.fetch;
-let requestedPinnedSource = false;
-try {
-  globalThis.fetch = async (url) => {
-    if (url.endsWith(`/repos/${report.repository}`)) return Response.json({ default_branch: "moved-branch" });
-    assert.ok(url.endsWith(`/commits/${report.commit}`));
-    requestedPinnedSource = true;
-    throw new Error("Offline check stops before external data requests");
-  };
-  await worker.fetch(new Request("https://reprocheck.test/api/scan", { method: "POST", body: JSON.stringify({ url: `https://github.com/${report.repository}`, executionOptions: { benchmarkId: reviewedTraining.id } }) }), {});
-  assert.equal(requestedPinnedSource, true);
-} finally { globalThis.fetch = originalFetch; }
 assert.equal((await worker.fetch(new Request("https://reprocheck.test/api/run", { method: "POST" }), {})).status, 501, "Hosted site must not execute Training");
 console.log("PASS  reviewed Training route, paper parameters, no pretrained input, checkpoint freshness and before-training gates");
 

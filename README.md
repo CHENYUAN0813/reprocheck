@@ -72,14 +72,14 @@ See [setup, credentials, evidence and boundaries](docs/web-verification.md).
 ## What the results do—and do not—mean
 
 - Scanning covers the README, the primary dependency file and up to five likely source/configuration files; other files are checked by path. It is not a complete code audit.
-- Reviewed examples and explicitly configured CPU experiments can run through the **local Docker-backed server**. Hosted deployments offer scanning, not Docker execution.
+- Reviewed examples and explicitly configured CPU experiments can run through the **local Docker-backed server**. Hosted deployments forward scanning to an authenticated Python service; they do not execute Docker. [Hosting setup](docs/hosted-scanning.md).
 - Repository code runs with network access in a temporary container without host mounts or host credentials. Review commands before executing; container evidence is not a security certification.
 - **Passing checks does not mean an entire paper was reproduced.** Iris verifies a pretrained-model case. The [Spotify case](docs/spotify-case.md) verifies a 15-cell deterministic CPU subset, not all paper experiments.
 
 ## Detailed documentation
 
 - [Advanced usage](docs/advanced-usage.md): token setup, CLI, candidate selection, training configuration, paper matrices and full limitations.
-- [Python scan backend](docs/python-scan.md): setup, compatibility tests and the remaining JavaScript boundaries.
+- [Python scan backend](docs/python-scan.md): setup, shared CLI scanning, contract tests and the JavaScript execution boundary.
 - [Result verification](docs/verification.md): metric formats, checks, evidence, saved records and result meanings.
 - [Frozen recipes and replay](docs/replay.md): repeat a saved configuration and interpret comparisons.
 - [Reviewed examples](docs/reviewed-cases.md): BTHOWeN evaluation/training protocols, compatibility choices and measured results.

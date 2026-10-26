@@ -1,4 +1,3 @@
-import { scan } from "./scan.mjs";
 import { reviewedCaseById } from "./examples/reviewed-cases.mjs";
 
 const MAX_BODY_BYTES = 4096;
@@ -31,15 +30,35 @@ async function handleScan(request, env) {
 
     const input = JSON.parse(body);
 
-    if (typeof input.url !== "string") {
+    if (typeof input?.url !== "string") {
       throw new Error("A GitHub repository URL is required");
+    }
+    const repository = new URL(input.url);
+    if (!['http:', 'https:'].includes(repository.protocol) || repository.hostname !== 'github.com' || repository.pathname.split('/').filter(Boolean).length !== 2) {
+      throw new Error('A GitHub repository URL is required');
     }
 
     const benchmarkId = input.executionOptions?.benchmarkId ?? null;
     const benchmark = reviewedCaseById.get(benchmarkId);
     if (benchmarkId !== null && !benchmark) throw new Error("Unknown reviewed benchmark");
     if (benchmark && input.pinnedCommit !== undefined && input.pinnedCommit !== benchmark.commit) throw new Error("Conflicting pinned commits");
-    return json(await scan(input.url, env.GITHUB_TOKEN, benchmark?.commit ?? input.pinnedCommit));
+    if (!env.SCAN_SERVICE_URL || !env.SCAN_SERVICE_TOKEN) return json({ error: 'Python scan service is not configured' }, 503);
+    let upstream;
+    try { upstream = new URL(env.SCAN_SERVICE_URL); }
+    catch { return json({ error: 'Invalid Python scan service configuration' }, 503); }
+    if (upstream.protocol !== 'https:' || upstream.username || upstream.password || upstream.search || upstream.hash) {
+      return json({ error: 'Invalid Python scan service configuration' }, 503);
+    }
+    upstream.pathname = '/api/scan';
+    try {
+      const result = await fetch(upstream, {
+        method: 'POST', redirect: 'error', signal: AbortSignal.timeout(185_000),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.SCAN_SERVICE_TOKEN}` },
+        body: JSON.stringify({ ...input, ...(benchmark ? { pinnedCommit: benchmark.commit } : {}) }),
+      });
+      if (![200, 400, 502].includes(result.status)) return json({ error: 'Python scan service unavailable' }, 502);
+      return json(await result.json(), result.status);
+    } catch { return json({ error: 'Python scan service unavailable' }, 502); }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Scan failed";
     return json({ error: message }, message.startsWith("GitHub API") ? 502 : 400);

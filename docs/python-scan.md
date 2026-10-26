@@ -63,10 +63,15 @@ reuses the Docker runner's checked-in JavaScript rules, once before each scan.
 fixed commit, with no shell, GitHub token or execution of downloaded code.
 Keeping this boundary avoids two competing definitions of valid execution options.
 
-Docker execution, histories, cancellation/retry, the CLI,
-and hosted `worker.mjs` scanning remain JavaScript. No hosting runtime migration
-is included. Native Python scan output is compared against the original scanner
-so the existing execution paths can continue consuming the same report format.
+Docker execution, histories and cancellation/retry remain JavaScript. The CLI
+(`node scan.mjs`) is only a launcher for the same managed Python scanner.
+Hosted `worker.mjs` forwards to an authenticated Python service; it contains no
+repository acquisition or report-generation rules. See [hosted setup](hosted-scanning.md).
+
+The frontend and runner still validate user-selected candidates and build execution
+commands in JavaScript. These are execution checks, not a second repository parser.
+Paper-matrix execution consumes the fresh Python report rather than parsing its
+README claims again.
 
 ## Verify
 
@@ -76,8 +81,9 @@ npm test
 npm run build
 ```
 
-`test:scan` generates deterministic mock GitHub responses and compares **every
-report field**, including protocol lock IDs, with the original scanner. Cases
+`test:scan` feeds deterministic GitHub responses to Python and compares **every
+report field**, including protocol lock IDs, against frozen contracts captured
+from the original scanner at commit `25425e6`. Cases
 cover empty repositories, Python commands, Make workflows, missing/nested paths,
 Chinese instructions, pinned versions, dependency locks and all eight reviewed
 presets. It also tests validation, origin checks, upstream errors, incomplete
@@ -86,9 +92,11 @@ Tests need Python dependencies, but no Docker, token or live GitHub connection.
 
 The differential suite also checks Make alternatives, required arguments, metric
 reference tables and source ambiguity. It rejects any subprocess launch during
-Python report generation. The JavaScript scanner remains the compatibility
-reference for CLI and hosted scans; changes to either implementation must keep
-these full-report comparisons passing.
+Python report generation. The old JavaScript scanner has been deleted. `test-fixtures/scan-contracts.json`
+contains fixed input/output data, not an alternate implementation. Existing JS
+execution tests call Python rules through a test-only bridge. Changes to report
+semantics require intentional contract updates; do not regenerate expectations
+from the implementation under test.
 
 ### Real Docker acceptance
 
@@ -110,8 +118,7 @@ cancelled on failure. Records remain in `.reprocheck/` for inspection.
 
 This requires network downloads and executes the reviewed third-party case in
 Docker. It is separate from `npm test`, and does not retrain Iris or validate all
-supported experiments. CLI/cloud scanning and the Docker executor remain JS;
-their continued presence is intentional, not an unfinished full-Python migration.
+supported experiments. The Docker executor remains JS. CLI and hosted scans share the Python rule set.
 
 Acceptance on 2026-10-26: the pinned BTHOWeN Iris case passed through the real
 FastAPI gateway and Docker runner. Cancellation was recorded as `CANCELLED`;

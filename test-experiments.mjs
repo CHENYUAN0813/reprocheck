@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { buildEvaluationDraft } from "./evaluation-config.mjs";
+import { buildEvaluationDraft } from "./test-python-rules.mjs";
 import { experimentDraft, experimentExecutionOptions, importedExperimentDraft, MODEL_EXPORT_LIMIT, validateExperiment } from "./experiment-config.mjs";
 import { buildDockerInvocation, buildPreflight, buildReplayPreflight, cancelRun, getRun, inspectRuntime, readEvidence, startRun, validateExecutionOptions, verifyOutcome } from "./runner.mjs";
 import { getSavedRun } from "./run-store.mjs";

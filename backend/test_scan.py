@@ -1,6 +1,7 @@
 """Differential contracts against the existing JS scanner, with mocked GitHub only."""
 import asyncio
 import json
+import os
 from pathlib import Path
 import sys
 from unittest.mock import patch
@@ -54,7 +55,7 @@ async def main():
                 assert not diff, f"{fixture['name']}: {diff}"
                 assert set(requested) == set(fixture['responses']), fixture['name']
                 assert result.headers['cache-control'] == 'no-store'
-            print(f"PASS Python/JS full report parity: {fixture['name']}")
+            print(f"PASS Frozen report contract: {fixture['name']}")
 
         async def must_not_scan(*args):
             raise AssertionError('Invalid input must not reach GitHub')
@@ -114,7 +115,18 @@ async def main():
                     pass
                 else:
                     raise AssertionError('Invalid tree accepted')
-    print('PASS FastAPI body, origin, method, options, fixed-commit, GitHub error and incomplete-tree contracts')
+        with patch.dict(os.environ, {'SCAN_SERVICE_TOKEN': 'test-only-' * 4}):
+            assert (await api.post('/api/scan', json={'url': 'https://github.com/a/b'})).status_code == 401
+            assert (await api.post('/api/scan', headers={'Authorization': 'Bearer wrong'}, json={})).status_code == 401
+            assert (await api.get('/health')).status_code == 200
+            async def hosted_scan(*args):
+                return {'repository': 'a/b', 'commit': 'a' * 40}
+            with patch('backend.app.scan', hosted_scan):
+                result = await api.post('/api/scan', headers={'host': 'scanner.example', 'Authorization': 'Bearer ' + 'test-only-' * 4}, json={'url': 'https://github.com/a/b'})
+                assert result.status_code == 200, result.text
+        with patch.dict(os.environ, {'SCAN_SERVICE_TOKEN': 'short'}):
+            assert (await api.post('/api/scan', headers={'Authorization': 'Bearer short'}, json={})).status_code == 401
+    print('PASS FastAPI local gates, hosted authentication, validation, fixed commits and upstream failures')
 
 
 if __name__ == '__main__':

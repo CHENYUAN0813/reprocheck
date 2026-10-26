@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { buildPaperWorkflowDraft } from "./paper-workflow.mjs";
-import { scan } from "./scan.mjs";
+import { buildPaperWorkflowDraft, scanSources } from "./test-python-rules.mjs";
 import { buildPreflight, validateExecutionOptions } from "./runner.mjs";
 
 const hint = (line, command) => ({ id: `paper-workflow-${line}`, command, evidence: { file: "README.md", line } });
@@ -26,21 +25,7 @@ const unsafe = buildPaperWorkflowDraft({ provenance: { workflowHints: [hint(4, "
 assert.equal(unsafe.adapters[0].steps[0].supported, false);
 console.log("PASS  source-validated paper workflow adapters, alternatives and review gates");
 
-const originalFetch = globalThis.fetch;
-async function scanFixture(files) {
-  globalThis.fetch = async (url) => {
-    const path = new URL(url).pathname;
-    if (path.includes("/contents/")) {
-      const file = decodeURIComponent(path.split("/contents/")[1]);
-      assert.ok(Object.hasOwn(files, file), file);
-      return Response.json({ content: Buffer.from(files[file]).toString("base64") });
-    }
-    if (path.includes("/commits/")) return Response.json({ sha: "a".repeat(40), commit: { tree: { sha: "b".repeat(40) } } });
-    if (path.includes("/git/trees/")) return Response.json({ tree: Object.keys(files).map((path) => ({ path, type: "blob", sha: "c".repeat(40) })), truncated: false });
-    return Response.json({ default_branch: "main" });
-  };
-  return scan("https://github.com/example/research");
-}
+const scanFixture = scanSources;
 try {
   const files = { "README.md": "# Installation\nmake setup\nmake dependency\n# Prepare data\nmake data-public\n# Reproduce results\nmake test\nmake run\nmake run-cpu\nmake verify\n", "Makefile": makefileText };
   const report = await scanFixture(files);
@@ -75,5 +60,5 @@ try {
   const noReadme = await scanFixture({});
   assert.equal(noReadme.quickEntries.length, 0);
   assert.equal(report.summary.warnings, report.checks.filter((check) => check.status === "WARN").length);
-} finally { globalThis.fetch = originalFetch; }
+} finally { /* No network or global fetch replacement. */ }
 console.log("PASS  consistent Python/Make findings, explicit Quick choice, source revalidation and unsupported-entry fallback");

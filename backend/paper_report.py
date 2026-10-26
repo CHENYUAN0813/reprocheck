@@ -123,7 +123,9 @@ def provenance(readme, text, draft):
 
 def paper_workflow(provenance, makefile, text, file_paths):
     hints = []
-    for hint in provenance['workflowHints']:
+    for original in provenance.get('workflowHints', []):
+        hint = dict(original)
+        hint.setdefault('role', 'preflight' if hint['command'] == 'make test' else 'verify' if hint['command'] == 'make verify' else 'experiment')
         target = group(r'^make\s+([\w.-]+)$', hint['command'])
         script = group(r'^(?:\./?venv/bin/)?python3?\s+([\w./-]+\.py)(?:\s+--[\w-]+(?:=[\w./:+-]+)?)*$', hint['command'])
         if target:
@@ -153,7 +155,7 @@ def paper_workflow(provenance, makefile, text, file_paths):
 
 def protocol_lock(report, readme, makefile, lock):
     blobs = {entry['path']: entry for entry in lock['treeEntries'] if entry['type'] == 'blob'}
-    paths = [readme, makefile, lock['dependencyFile'], lock['pythonVersionFile']]
+    paths = [readme, makefile, lock['dependencyFile'], lock.get('pythonVersionFile')]
     paths += [ref['path'] for entry in report['entrypoints'] for ref in entry['references'] if ref['exists']]
     paths += [path for item in report['evaluationDraft']['paths'] for path in item['matches']]
 
@@ -181,12 +183,12 @@ def protocol_lock(report, readme, makefile, lock):
         gaps.append('missing/external config or checkpoint assets')
     if any(item['status'] == 'ROLE_UNRESOLVED' for item in assets):
         gaps.append('data/output path role review')
-    if adapters and not lock['seedConfiguration']:
+    if adapters and not lock.get('seedConfiguration'):
         gaps.append('random seed evidence or an explicit deterministic-protocol review')
     manifest = dict(schemaVersion=1, repository=report['repository'], commit=report['commit'], paperSources=report['paperProvenance']['sources'],
         claims=[{key: item.get(key) for key in ('id', 'metricKey', 'label', 'value', 'precision', 'unit', 'evidence')} for item in report['evaluationDraft']['references']],
-        adapters=adapters, environment=dict(python=python, pythonFile=lock['pythonVersionFile'], dependencies=dependencies, dependencyFile=lock['dependencyFile'], dependencyLocked=locked),
-        sourceFiles=source_files, declaredAssets=assets, seedEvidence=lock['seedConfiguration'], parameters=report['experimentParameters'])
+        adapters=adapters, environment=dict(python=python, pythonFile=lock.get('pythonVersionFile'), dependencies=dependencies, dependencyFile=lock['dependencyFile'], dependencyLocked=locked),
+        sourceFiles=source_files, declaredAssets=assets, seedEvidence=lock.get('seedConfiguration'), parameters=report['experimentParameters'])
     return dict(manifest, lockId=hashlib.sha256(canonical(manifest).encode('utf-8')).hexdigest(), status='INCOMPLETE' if gaps else 'READY_FOR_REVIEW', gaps=gaps,
         warnings=['Git blob hashes pin repository files to the scanned commit; runtime downloads still need independent SHA-256 identities.',
                   'A protocol lock records declared evidence and does not prove that the paper protocol is scientifically equivalent.'])

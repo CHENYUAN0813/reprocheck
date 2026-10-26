@@ -1,3 +1,4 @@
+import { buildPaperMatrixDraft } from './test-python-rules.mjs';
 import assert from "node:assert/strict";
 import { appendRunOutput, summarizeSteps, buildDockerInvocation, buildPreflight, buildReplayPreflight, compareRuns, createRecipe, rewritePackageIndex, validateExecutionOptions, verifyOutcome } from "./runner.mjs";
 import { getSavedRun, listSavedRuns, saveRun } from "./run-store.mjs";
@@ -97,6 +98,7 @@ const matrixReport = { repository: "owner/repo", commit: "a".repeat(40), workflo
     { id: "reference-1", label: "Beauty · SASRec · NDCG@10", metricKey: "ndcg_10", value: 0.31, unit: "as printed", evidence: { file: "README.md", line: 20 } },
     { id: "reference-2", label: "Games · SASRec · NDCG@10", metricKey: "ndcg_10", value: 0.29, unit: "as printed", evidence: { file: "README.md", line: 21 } },
   ] } };
+matrixReport.paperMatrixDraft = buildPaperMatrixDraft(matrixReport);
 const matrixOptions = { paperMatrix: { adapterId: matrixAdapter.id, protocolLockId: matrixReport.protocolLock.lockId,
   outputFile: "results/table1.csv", rowKey: "dataset", metricTolerance: 0.001, confirmed: true, acknowledgedGaps: [] } };
 const matrixPreview = buildPreflight(matrixReport, "paper-matrix", { available: true }, "readme", matrixOptions);
