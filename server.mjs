@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createViteServer } from "vite";
+import { pathToFileURL } from "node:url";
+import { startScanService } from "./scan-service.mjs";
 import {
   buildDockerInvocation,
   buildPreflight,
@@ -46,7 +48,7 @@ async function readJson(request) {
   return JSON.parse(body);
 }
 
-async function handleApi(request, response) {
+export async function handleApi(request, response, scanService) {
   const url = new URL(request.url || "/", "http://localhost");
   if (url.pathname.startsWith("/api/")) {
     const localOrigin = `http://${request.headers.host}`;
@@ -168,6 +170,12 @@ async function handleApi(request, response) {
     }
     const input = await readJson(request);
 
+    if (url.pathname === "/api/scan" && scanService) {
+      const result = await scanService.request(input);
+      sendJson(response, result.status, result.body);
+      return true;
+    }
+
     if (typeof input.url !== "string") {
       throw new Error("A GitHub repository URL is required");
     }
@@ -216,20 +224,40 @@ async function handleApi(request, response) {
 }
 
 async function start() {
-  const vite = await createViteServer({
-    appType: "spa",
-    server: { middlewareMode: true },
-  });
-  const server = createHttpServer(async (request, response) => {
-    if (!(await handleApi(request, response))) {
-      vite.middlewares(request, response);
-    }
-  });
-  const port = Number(process.env.PORT) || 5173;
-
-  server.listen(port, "127.0.0.1", () => {
-    console.log(`ReproCheck: http://127.0.0.1:${port}/`);
-  });
+  const scanService = await startScanService();
+  console.log("Scan backend: FastAPI (Python)");
+  let vite;
+  try {
+    vite = await createViteServer({
+      appType: "spa",
+      server: { middlewareMode: true },
+    });
+    const server = createHttpServer(async (request, response) => {
+      if (!(await handleApi(request, response, scanService))) {
+        vite.middlewares(request, response);
+      }
+    });
+    const port = Number(process.env.PORT) || 5173;
+    server.once("error", async (error) => {
+      console.error(`Unable to start local server: ${error.code ?? error.message}`);
+      await vite.close();
+      await scanService.close();
+      process.exitCode = 1;
+    });
+    for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, async () => {
+      server.close();
+      await vite.close();
+      await scanService.close();
+      process.exit(0);
+    });
+    server.listen(port, "127.0.0.1", () => {
+      console.log(`ReproCheck: http://127.0.0.1:${port}/`);
+    });
+  } catch (error) {
+    await vite?.close();
+    await scanService.close();
+    throw error;
+  }
 }
 
 async function selfTest() {
@@ -404,8 +432,10 @@ async function selfTest() {
   }
 }
 
-if (process.argv.includes("--self-test")) {
-  await selfTest();
-} else {
-  await start();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  if (process.argv.includes("--self-test")) {
+    await selfTest();
+  } else {
+    await start();
+  }
 }

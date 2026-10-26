@@ -497,7 +497,7 @@ function statusFor(failures, warnings) {
   return "READY_FOR_REVIEW";
 }
 
-function reconcileWorkflowFindings(report) {
+export function reconcileWorkflowFindings(report) {
   const commands = report.paperWorkflowDraft.commands;
   const setup = commands.filter((command) => command.role === "setup");
   const runs = commands.filter((command) => ["preflight", "experiment"].includes(command.role) && command.supported);
