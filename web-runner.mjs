@@ -1,3 +1,5 @@
+import { validateServiceConfig, serviceScope } from './service-config.mjs';
+import { executeServicePlan, serviceImage } from './service-runner.mjs';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -24,6 +26,10 @@ export const webCase = {
 export const webCases = [webCase, plannerCase, rumorCase];
 
 export function validateWebRequest(input) {
+  if (input?.caseId === 'multi-service') {
+    if (Object.keys(input).some(key => !['caseId', 'config', 'confirmUnknownCode'].includes(key)) || input.confirmUnknownCode !== true) throw new Error('Explicit execution confirmation is required');
+    validateServiceConfig(input.config); return;
+  }
   if (input?.caseId === 'npm-project') {
     if (Object.keys(input).some(key => !['caseId', 'config', 'confirmUnknownCode'].includes(key)) || input.confirmUnknownCode !== true) throw new Error('Explicit npm execution confirmation is required');
     validateNpmConfig(input.config);
@@ -75,7 +81,8 @@ function record(job) {
 }
 export function redactWebEvidence(value, key) {
   // Replace string values only; a key such as "null" must not corrupt JSON syntax.
-  return key ? JSON.parse(JSON.stringify(value, (_name, field) => typeof field === 'string' ? field.replaceAll(key, '[REDACTED]') : field)) : value;
+  const keys = (Array.isArray(key) ? key : [key]).filter(Boolean);
+  return keys.length ? JSON.parse(JSON.stringify(value, (_name, field) => typeof field === 'string' ? keys.reduce((text, secret) => text.replaceAll(secret, '[REDACTED]'), field) : field)) : value;
 }
 function persist(job) {
   try { saveRun(record(job)); } catch (error) { job.persistenceError = error.message; }
@@ -98,7 +105,8 @@ export async function webRuntime() {
     const inspection = await docker(['image', 'inspect', image]);
     const rumorAvailable = JSON.parse(inspection.output)[0]?.Config?.Labels?.['org.reprocheck.rumor-acceptance'] === '1';
     const planner = await docker(['image', 'inspect', plannerCase.image], null, { tolerate: true });
-    return { available: true, image, plannerAvailable: planner.code === 0, rumorAvailable, npmAvailable: JSON.parse(inspection.output)[0]?.Config?.Labels?.['org.reprocheck.npm-acceptance'] === '1' };
+    const services = await docker(['image', 'inspect', serviceImage], null, { tolerate: true });
+    return { servicesAvailable: services.code === 0 && JSON.parse(inspection.output)[0]?.Config?.Labels?.['org.reprocheck.services'] === '1', available: true, image, plannerAvailable: planner.code === 0, rumorAvailable, npmAvailable: JSON.parse(inspection.output)[0]?.Config?.Labels?.['org.reprocheck.npm-acceptance'] === '1' };
   } catch {
     return { available: false, image, reason: 'Start Docker Desktop, then run npm run setup:web once to install the browser image.' };
   }
@@ -126,6 +134,10 @@ async function execute(job, snapshot) {
   const deadline = setTimeout(() => { job.status = 'TIMED_OUT'; job.child?.kill(); }, 600_000);
   try {
     mkdirSync(source, { recursive: true });
+    if (job.serviceConfig) {
+      await executeServicePlan(job, { directory, app, tester, stage, registerSecrets: values => credentials.set(job.id, values), docker: (args, options) => docker(args, job, options), command: (program, args, options) => command(program, args, job, options) });
+      job.status = 'SUCCEEDED'; return;
+    }
     let archive;
     if (remote) await stage(planner ? 'Fetch pinned private source on host' : 'Fetch pinned public source on host', async () => {
       const runCommand = (program, args, options) => command(program, args, job, options);
@@ -200,10 +212,12 @@ async function execute(job, snapshot) {
     job.verification = { status: 'VERIFIED', scope: npm ? npmScope : rumor ? rumorCase.scope : planner ? 'Recorded task operations and optional live generation/persistence; not Google login or AI quality.' : 'Only the four recorded browser assertions on the bundled notes application.' };
   } catch (error) {
     if (job.status === 'RUNNING') job.status = 'FAILED';
+    if (job.serviceConfig) job.verification = { status: job.status === 'FAILED' ? 'FAILED' : 'INCOMPLETE', scope: serviceScope };
     if (step?.status === 'RUNNING') step.status = job.status;
     job.diagnosis = error.message;
   } finally {
     clearTimeout(deadline); clearInterval(heartbeat);
+    if (job.serviceConfig) for (const service of job.serviceConfig.services) try { const result = await docker(['exec', app, 'cat', `/tmp/${service.id}.log`], null, { tolerate: true }); log(job, `\n${service.id} log:\n` + result.output); } catch {}
     try { const result = await docker(['exec', app, 'cat', '/tmp/app.log'], null, { tolerate: true }); log(job, '\nApplication log:\n' + result.output); } catch {}
     if (planner) try { const result = await docker(['exec', app, 'cat', '/tmp/frontend.log'], null, { tolerate: true }); log(job, '\nFrontend log:\n' + result.output); } catch {}
     try {
@@ -225,17 +239,19 @@ export function startWebRun(input) {
   const planner = input.caseId === plannerCase.id;
   const rumor = input.caseId === rumorCase.id;
   const npm = input.caseId === 'npm-project';
+  const multi = input.caseId === 'multi-service';
+  const serviceConfig = multi ? validateServiceConfig(input.config) : null;
   const config = npm ? validateNpmConfig(input.config) : null;
-  const selected = npm ? { repository: config.repository, commit: config.commit, commands: npmCommands(config) } : webCases.find(item => item.id === input.caseId);
-  const snapshot = planner || rumor || npm ? [] : files.map(name => [name, readFileSync(join(root, 'examples', 'web-notes', name))]);
+  const selected = multi ? { repository: serviceConfig.repository, commit: serviceConfig.commit, commands: serviceConfig.services.flatMap(s => [s.install,s.test,s.build,s.start].filter(a=>a.length).map(a=>`${s.id}: ${JSON.stringify(a)}`)) } : npm ? { repository: config.repository, commit: config.commit, commands: npmCommands(config) } : webCases.find(item => item.id === input.caseId);
+  const snapshot = multi || planner || rumor || npm ? [] : files.map(name => [name, readFileSync(join(root, 'examples', 'web-notes', name))]);
   const hash = createHash('sha256');
   for (const [name, bytes] of snapshot) hash.update(name).update('\0').update(bytes);
   const job = { schemaVersion: 1, kind: 'web', id: randomUUID(), repository: selected.repository ?? 'Built-in / web-notes',
     commit: selected.commit ?? `sha256:${hash.digest('hex')}`, workflowId: input.caseId, status: 'RUNNING', liveAi: planner && input.liveAi === true,
     startedAt: new Date().toISOString(), finishedAt: null, steps: [], log: '', logTruncated: false,
-    limits: { cpus: '2 per container', memory: planner || rumor || npm ? '2g app / 1g browser' : '1g per container', timeoutMinutes: 10 },
+    limits: { cpus: '2 per container', memory: multi || planner || rumor || npm ? '2g app / 1g browser' : '1g per container', timeoutMinutes: 10 },
     verification: { status: 'INCOMPLETE' }, recipeUnavailableReason: 'Web fixture runs use a source snapshot and browser assertions, not a Python experiment recipe.',
-    ...(npm ? { npmConfig: config } : {}),
+    ...(npm ? { npmConfig: config } : {}), ...(multi ? { serviceConfig } : {}),
     commands: selected.commands, cleanup: 'PENDING', browser: null };
   if (job.liveAi) credentials.set(job.id, input.geminiApiKey?.trim() || process.env.GEMINI_API_KEY);
   active.set(job.id, job); persist(job);

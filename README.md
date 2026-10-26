@@ -50,7 +50,7 @@ Use **Docker Desktop with Linux containers** for execution (not for scanning). W
 
 **Process: SUCCEEDED** only means the commands exited normally. **Configured checks passed** means the declared output checks and this case's input identities passed. **MATCHED REFERENCE** means the observed metric met the configured reference condition. The scope remains the **selected experiment only**: Iris evaluates a pretrained model; it does not retrain it or reproduce an entire paper. A failure is a result to inspect, not a reason to silently change the reference.
 
-Refreshing or reopening the same local address in the same browser restores the last scan report, view and execution record. Restoring a record never starts a new run. Keep the local server running for an active task to continue; restarting the server may interrupt it. The npm configuration form is saved locally; other unsaved experiment drafts, API keys and execution consent are not restored. Download configurations you need to keep. Configuration review reopens at the saved report. Saved execution records also remain in History & comparison. Browser storage must be enabled; clearing it removes this workspace shortcut, not server-side run records.
+Refreshing or reopening the same local address in the same browser restores the last scan report, view and execution record. Restoring a record never starts a new run. Keep the local server running for an active task to continue; restarting the server may interrupt it. Applied npm and multi-service configurations are saved locally; other unsaved experiment drafts, API keys and execution consent are not restored. Download configurations you need to keep. Configuration review reopens at the saved report. Saved execution records also remain in History & comparison. Browser storage must be enabled; clearing it removes this workspace shortcut, not server-side run records.
 
 Keep the server open while running. Do not run `npm test` during an experiment under `npm run dev`: some tests temporarily edit example fixtures and can trigger a watcher restart. For a run without file watching, use `node server.mjs` instead of `npm run dev` (in the same token-configured terminal).
 
@@ -63,8 +63,8 @@ For `CHENYUAN0813/rumor-control`, review installation, test/build tasks, the Vit
 ## Run a single npm application
 
 1. Start Docker Desktop and run `npm run setup:web` once (repeat after browser-script updates).
-2. Scan a public npm repository. Select **Review and run web acceptance →** to open **Configured npm application**. The form uses the scanned repository and fixed commit, and suggests script names from `package.json`.
-3. Review installation (`npm ci` requires a committed lock), working directory, test/build/start script names, start arguments, port and page path. Use finite test/build scripts, not watch mode. Missing tests are **SKIPPED / not verified**, never counted as passed. Optionally require specific page text.
+2. Scan a public npm repository. Select **Review and run web acceptance →** to open **Configured npm application**. The generated plan uses the scanned repository and fixed commit. For a single root npm package, supported standalone README commands take priority and show their source lines; missing steps are suggested from `package.json`. Ambiguous service entries require selection. Other commands and external services are flagged for review, not silently executed.
+3. Review the installation → tests → build → service → browser plan. Open **Advanced configuration and import / export** only to edit commands, port or conditions (`npm ci` requires a committed lock). Use finite test/build scripts, not watch mode. Missing tests are **SKIPPED / not verified**, never counted as passed. Optionally require specific page text.
 4. Check the environment, acknowledge execution, then select **Run web verification**. The runner fetches the fixed commit, checks the selected scripts exist, installs dependencies, runs the configured tasks, starts the service and opens Chromium. No repository-specific ReproCheck code is required.
 5. Download the npm configuration to share or reuse it. Importing selects its pinned source; inspect that source before confirming. The current npm form is also saved in this browser, without execution consent. Results, stage status, configuration and screenshots remain in local history. Retry uses fresh temporary containers.
 
@@ -110,3 +110,9 @@ See [setup, credentials, evidence and boundaries](docs/web-verification.md).
 - [Reviewed examples](docs/reviewed-cases.md): BTHOWeN evaluation/training protocols, compatibility choices and measured results.
 - [Testing and first-time-user feedback](docs/testing.md): commands, coverage and the still-pending classmate trial.
 - [Spotify case study](docs/spotify-case.md): workflow, actual screenshots, 15/15 matched results and the disk-full failure.
+
+## Configurable Node.js / Python services
+
+The web acceptance page can run a pinned public repository using a multi-service plan. Run `npm run setup:services` once, scan the repository, review the generated draft, and confirm execution. Services share a disposable application container; the browser has a separate filesystem. Installation has network access; tests and services run offline.
+
+See [multi-service plans](docs/multi-service-plans.md) for configuration, limits, and an importable full-stack example. A successful run verifies only the declared checks, not all business features or model inference.

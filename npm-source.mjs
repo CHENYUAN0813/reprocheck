@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 
-export async function prepareNpmSource(directory, config, command) {
+export async function fetchPinnedSource(directory, config, command) {
   const checkout = join(directory, 'checkout');
   const url = `https://github.com/${config.repository}.git`;
   await command('git', ['init', checkout]);
@@ -16,6 +16,17 @@ export async function prepareNpmSource(directory, config, command) {
       || path.startsWith('/') || path.split('/').some(part => ['..', '.git'].includes(part))) throw new Error('Unsupported source path, symlink or submodule');
     return path;
   });
+  return { checkout, paths };
+}
+
+export async function archivePinnedSource(directory, config, command, checkout) {
+  const archive = join(directory, 'source.tar');
+  await command('git', ['-C', checkout, 'archive', '--format=tar', '--output', archive, config.commit]);
+  return { archive, sha256: createHash('sha256').update(readFileSync(archive)).digest('hex') };
+}
+
+export async function prepareNpmSource(directory, config, command) {
+  const { checkout, paths } = await fetchPinnedSource(directory, config, command);
   const prefix = config.directory === '.' ? '' : config.directory + '/';
   const manifestPath = prefix + 'package.json';
   if (!paths.includes(manifestPath)) throw new Error('Configured package.json is absent at the pinned commit');
@@ -34,7 +45,5 @@ export async function prepareNpmSource(directory, config, command) {
     if (typeof manifest.scripts?.[name] !== 'string' || !manifest.scripts[name].trim()) throw new Error(`Configured script not found: ${name}`);
   }
   if (config.install === 'ci' && !['package-lock.json', 'npm-shrinkwrap.json'].some(name => paths.includes(prefix + name))) throw new Error('npm ci requires a committed lock file');
-  const archive = join(directory, 'source.tar');
-  await command('git', ['-C', checkout, 'archive', '--format=tar', '--output', archive, config.commit]);
-  return { archive, sha256: createHash('sha256').update(readFileSync(archive)).digest('hex') };
+  return archivePinnedSource(directory, config, command, checkout);
 }
