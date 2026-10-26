@@ -19,6 +19,8 @@ For students and researchers trying to run someone else's research code: get sou
 
 ## First run: scan only
 
+The web interface supports **English and 简体中文**. Use **中文 / EN** in the header to switch; your choice is saved in this browser. The initial language follows your browser. Switching preserves the current form and run. Commands, source evidence, raw logs and downloaded JSON remain in their original form. Unrecognized upstream messages are shown unchanged.
+
 Install **Node.js 22.12+ (Node 24 recommended)** and **Git**. **Scanning does not need Docker** and does not execute repository code.
 
 ```sh

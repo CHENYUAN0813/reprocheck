@@ -1,3 +1,4 @@
+import { useLanguage, LanguageProvider, LanguageSwitcher } from "./language.jsx";
 import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
@@ -218,6 +219,7 @@ function downloadJson(data, filename) {
 const visibleRunLog = (log) => log?.replace(/^::reprocheck-evidence::.*$/gm, "[Structured evidence captured; download execution evidence for complete data.]");
 
 function PaperProvenance({ report }) {
+  const { t } = useLanguage();
   const provenance = report.paperProvenance;
   const workflow = report.paperWorkflowDraft;
   if (!provenance) return null;
@@ -226,56 +228,58 @@ function PaperProvenance({ report }) {
   const reference = provenance.candidate && draft.references.find((item) => item.id === provenance.candidate.referenceId);
   const output = provenance.candidate && draft.outputs.find((item) => item.id === provenance.candidate.outputId);
   return <section className="runner" aria-labelledby="paper-provenance-title">
-    <div className="runner-heading"><div><p className="eyebrow">Paper provenance</p><h2 id="paper-provenance-title">Paper source and experiment claim</h2>
-      <p>Source discovery only. A repository link does not prove that its code reproduces the paper.</p></div>
-      <span className={`status status-${provenance.status.toLowerCase()}`}>{provenance.status.replaceAll("_", " ")}</span></div>
-    {provenance.sources.length ? <div className="runner-result"><h3>Paper declarations and scholarly links</h3><ul>
+    <div className="runner-heading"><div><p className="eyebrow">{t("Paper provenance")}</p><h2 id="paper-provenance-title">{t("Paper source and experiment claim")}</h2>
+      <p>{t("Source discovery only. A repository link does not prove that its code reproduces the paper.")}</p></div>
+      <span className={`status status-${provenance.status.toLowerCase()}`}>{t(provenance.status.replaceAll("_", " "))}</span></div>
+    {provenance.sources.length ? <div className="runner-result"><h3>{t("Paper declarations and scholarly links")}</h3><ul>
       {provenance.sources.map((item) => <li key={item.id}>{item.url ? <a href={item.url} target="_blank" rel="noreferrer">{item.label}</a> : item.label} · {item.provider} · <EvidenceLink report={report} evidence={item.evidence} /></li>)}
-    </ul></div> : <p className="runner-note">No supported scholarly source was found in the README.</p>}
-    {provenance.workflowHints?.length > 0 && <div className="runner-result"><h3>Documented paper workflow hints</h3><ul>
+    </ul></div> : <p className="runner-note">{t("No supported scholarly source was found in the README.")}</p>}
+    {provenance.workflowHints?.length > 0 && <div className="runner-result"><h3>{t("Documented paper workflow hints")}</h3><ul>
       {provenance.workflowHints.map((item) => <li key={item.id}><code>{item.command}</code> · <EvidenceLink report={report} evidence={item.evidence} /></li>)}
-    </ul><p className="runner-note">These commands are evidence only until ReproCheck can safely associate their inputs and metric outputs.</p></div>}
-    {workflow?.adapters.length > 0 && <div className="runner-result"><h3>Generated workflow adapters</h3>
-      {workflow.adapters.map((adapter) => <details key={adapter.id}><summary>{adapter.title} · {adapter.status.replaceAll("_", " ")}</summary>
-        <ol>{adapter.steps.map((step) => <li key={step.id}><strong>{step.role}</strong> · <code>{step.command}</code> · {step.supported ? "source target validated" : "blocked"}</li>)}</ol>
-        {adapter.gaps.length > 0 && <p className="runner-note">Missing: {adapter.gaps.join("; ")}.</p>}
+    </ul><p className="runner-note">{t("These commands are evidence only until ReproCheck can safely associate their inputs and metric outputs.")}</p></div>}
+    {workflow?.adapters.length > 0 && <div className="runner-result"><h3>{t("Generated workflow adapters")}</h3>
+      {workflow.adapters.map((adapter) => <details key={adapter.id}><summary>{t(adapter.title)} · {t(adapter.status.replaceAll("_", " "))}</summary>
+        <ol>{adapter.steps.map((step) => <li key={step.id}><strong>{t(step.role)}</strong> · <code>{step.command}</code> · {t(step.supported ? "source target validated" : "blocked")}</li>)}</ol>
+        {adapter.gaps.length > 0 && <p className="runner-note">{t("Missing: ")}{t(adapter.gaps.join("; "))}.</p>}
         <button className="download-button" type="button" onClick={() => downloadJson({ schemaVersion: 1, repository: report.repository, commit: report.commit,
-          paperSourceId: provenance.candidate?.sourceId ?? (provenance.sources.length === 1 ? provenance.sources[0]?.id : null), adapter }, `reprocheck-paper-adapter-${adapter.id}.json`)}>Download adapter draft</button>
+          paperSourceId: provenance.candidate?.sourceId ?? (provenance.sources.length === 1 ? provenance.sources[0]?.id : null), adapter }, `reprocheck-paper-adapter-${adapter.id}.json`)}>{t("Download adapter draft")}</button>
       </details>)}
-      {workflow.warnings.map((warning) => <p className="runner-note" key={warning}>{warning}</p>)}
+      {workflow.warnings.map((warning) => <p className="runner-note" key={warning}>{t(warning)}</p>)}
     </div>}
-    {provenance.candidate && <div className="runner-result"><h3>Unconfirmed reproduction candidate</h3>
+    {provenance.candidate && <div className="runner-result"><h3>{t("Unconfirmed reproduction candidate")}</h3>
       <p><code>{entry.command}</code></p>
-      <p className="hint">Metric: {output.metricKey} · README target: {reference.value} {reference.unit}.</p>
-      <p className="runner-note">This pairing is source-backed and unique, but still requires protocol review and explicit confirmation below.</p>
+      <p className="hint">{t("Metric: ")}{output.metricKey}{t(" · README target: ")}{reference.value} {t(reference.unit)}.</p>
+      <p className="runner-note">{t("This pairing is source-backed and unique, but still requires protocol review and explicit confirmation below.")}</p>
     </div>}
-    {provenance.gaps.length > 0 && <div className="runner-result"><h3>Still needed</h3><ul>{provenance.gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul></div>}
+    {provenance.gaps.length > 0 && <div className="runner-result"><h3>{t("Still needed")}</h3><ul>{provenance.gaps.map((gap) => <li key={gap}>{t(gap)}</li>)}</ul></div>}
   </section>;
 }
 
 function ProtocolLock({ report }) {
+  const { t } = useLanguage();
   const lock = report.protocolLock;
   if (!lock) return null;
   return <section className="runner" aria-labelledby="protocol-lock-title">
-    <div className="runner-heading"><div><p className="eyebrow">Experiment identity</p><h2 id="protocol-lock-title">Protocol lock</h2>
-      <p>Commit-pinned source, environment declarations, paper claims and asset identities.</p></div>
-      <span className={`status status-${lock.status.toLowerCase()}`}>{lock.status.replaceAll("_", " ")}</span></div>
+    <div className="runner-heading"><div><p className="eyebrow">{t("Experiment identity")}</p><h2 id="protocol-lock-title">{t("Protocol lock")}</h2>
+      <p>{t("Commit-pinned source, environment declarations, paper claims and asset identities.")}</p></div>
+      <span className={`status status-${lock.status.toLowerCase()}`}>{t(lock.status.replaceAll("_", " "))}</span></div>
     <div className="runner-result"><dl className="evaluation-summary">
-      <dt>Lock ID</dt><dd><code>{lock.lockId}</code></dd>
-      <dt>Source files pinned</dt><dd>{lock.sourceFiles.length}</dd>
-      <dt>Declared paths</dt><dd>{lock.declaredAssets.length}</dd>
-      <dt>Python</dt><dd>{lock.environment.python?.value ?? "not exactly pinned"}</dd>
-      <dt>Dependencies</dt><dd>{lock.environment.dependencies?.lockFile ? "lock file" : lock.environment.dependencyLocked ? "exact direct pins" : "not locked"}</dd>
+      <dt>{t("Lock ID")}</dt><dd><code>{lock.lockId}</code></dd>
+      <dt>{t("Source files pinned")}</dt><dd>{t(lock.sourceFiles.length)}</dd>
+      <dt>{t("Declared paths")}</dt><dd>{t(lock.declaredAssets.length)}</dd>
+      <dt>{t("Python")}</dt><dd>{t(lock.environment.python?.value ?? "not exactly pinned")}</dd>
+      <dt>{t("Dependencies")}</dt><dd>{t(lock.environment.dependencies?.lockFile ? "lock file" : lock.environment.dependencyLocked ? "exact direct pins" : "not locked")}</dd>
     </dl></div>
-    {lock.gaps.length > 0 && <div className="runner-result"><h3>Unresolved lock requirements</h3><ul>{lock.gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul></div>}
-    <details><summary>Source and asset identities</summary><pre className="evaluation-source">{JSON.stringify({ sourceFiles: lock.sourceFiles, declaredAssets: lock.declaredAssets,
+    {lock.gaps.length > 0 && <div className="runner-result"><h3>{t("Unresolved lock requirements")}</h3><ul>{lock.gaps.map((gap) => <li key={gap}>{t(gap)}</li>)}</ul></div>}
+    <details><summary>{t("Source and asset identities")}</summary><pre className="evaluation-source">{JSON.stringify({ sourceFiles: lock.sourceFiles, declaredAssets: lock.declaredAssets,
       seedEvidence: lock.seedEvidence, parameters: lock.parameters }, null, 2)}</pre></details>
-    {lock.warnings.map((warning) => <p className="runner-note" key={warning}>{warning}</p>)}
-    <button className="download-button" type="button" onClick={() => downloadJson(lock, `reprocheck-protocol-lock-${report.commit.slice(0, 7)}.json`)}>Download protocol lock</button>
+    {lock.warnings.map((warning) => <p className="runner-note" key={warning}>{t(warning)}</p>)}
+    <button className="download-button" type="button" onClick={() => downloadJson(lock, `reprocheck-protocol-lock-${report.commit.slice(0, 7)}.json`)}>{t("Download protocol lock")}</button>
   </section>;
 }
 
 function PaperMatrix({ report, disabled, onApply }) {
+  const { t } = useLanguage();
   const draft = report.paperMatrixDraft;
   const ready = draft?.adapters?.[0];
   const [config, setConfig] = useState({ adapterId: ready?.id ?? "", outputFile: "", rowKey: "dataset", metricTolerance: "0", confirmed: false,
@@ -285,27 +289,28 @@ function PaperMatrix({ report, disabled, onApply }) {
   const apply = () => onApply({ adapterId: config.adapterId, protocolLockId: report.protocolLock.lockId, outputFile: config.outputFile.trim(), rowKey: config.rowKey.trim(),
     metricTolerance: Number(config.metricTolerance), confirmed: true, acknowledgedGaps: config.acknowledgeGaps ? report.protocolLock.gaps : [] });
   return <section className="runner" aria-labelledby="paper-matrix-title">
-    <div className="runner-heading"><div><p className="eyebrow">Multi-experiment reproduction</p><h2 id="paper-matrix-title">Paper result matrix</h2>
-      <p>Run one reviewed source workflow, then compare every dataset × model × seed cell with the pinned README table.</p></div>
-      <span className={`status status-${draft.status.toLowerCase()}`}>{draft.status.replaceAll("_", " ")}</span></div>
-    {draft.cells.length > 0 && <div className="matrix-scroll"><table className="matrix-table"><thead><tr><th>Dataset</th><th>Model</th><th>Seed</th><th>Metric</th><th>Paper reference</th></tr></thead>
-      <tbody>{draft.cells.map((cell) => <tr key={cell.id}><td>{cell.dataset}</td><td>{cell.model}</td><td>{cell.seed ?? "—"}</td><td>{cell.metricLabel}</td><td>{cell.target} · {cell.unit}</td></tr>)}</tbody></table></div>}
-    {draft.gaps.length > 0 && <p className="runner-note">Blocked by: {draft.gaps.join("; ")}.</p>}
+    <div className="runner-heading"><div><p className="eyebrow">{t("Multi-experiment reproduction")}</p><h2 id="paper-matrix-title">{t("Paper result matrix")}</h2>
+      <p>{t("Run one reviewed source workflow, then compare every dataset × model × seed cell with the pinned README table.")}</p></div>
+      <span className={`status status-${draft.status.toLowerCase()}`}>{t(draft.status.replaceAll("_", " "))}</span></div>
+    {draft.cells.length > 0 && <div className="matrix-scroll"><table className="matrix-table"><thead><tr><th>{t("Dataset")}</th><th>{t("Model")}</th><th>{t("Seed")}</th><th>{t("Metric")}</th><th>{t("Paper reference")}</th></tr></thead>
+      <tbody>{draft.cells.map((cell) => <tr key={cell.id}><td>{cell.dataset}</td><td>{cell.model}</td><td>{t(cell.seed ?? "—")}</td><td>{cell.metricLabel}</td><td>{cell.target} · {t(cell.unit)}</td></tr>)}</tbody></table></div>}
+    {draft.gaps.length > 0 && <p className="runner-note">{t("Blocked by: ")}{t(draft.gaps.join("; "))}.</p>}
     {ready && report.protocolLock && <fieldset className="run-options" disabled={disabled}>
-      <legend>Reviewed matrix output contract</legend>
-      <label>Source workflow adapter<select value={config.adapterId} onChange={(event) => update("adapterId", event.target.value)}>{draft.adapters.map((adapter) => <option key={adapter.id} value={adapter.id}>{adapter.title}</option>)}</select></label>
-      <label>Produced CSV path<input maxLength={240} value={config.outputFile} placeholder="results/table1.csv" onChange={(event) => update("outputFile", event.target.value)} /></label>
-      <label>Dataset row-key column<input maxLength={100} value={config.rowKey} onChange={(event) => update("rowKey", event.target.value)} /></label>
-      <label>Absolute tolerance for every cell<input type="number" min="0" step="any" value={config.metricTolerance} onChange={(event) => update("metricTolerance", event.target.value)} /></label>
-      {report.protocolLock.gaps.length > 0 && <label className="runner-confirm"><input type="checkbox" checked={config.acknowledgeGaps} onChange={(event) => update("acknowledgeGaps", event.target.checked)} />I reviewed and accept these unresolved lock gaps for this run: {report.protocolLock.gaps.join("; ")}.</label>}
-      <label className="runner-confirm"><input type="checkbox" checked={config.confirmed} onChange={(event) => update("confirmed", event.target.checked)} />I reviewed the adapter, CSV row/column labels, paper references and protocol lock. The workflow is untrusted code.</label>
-      <button type="button" disabled={!config.confirmed || !config.outputFile.trim() || !config.acknowledgeGaps || !Number.isFinite(Number(config.metricTolerance)) || Number(config.metricTolerance) < 0} onClick={apply}>Use matrix in local runner</button>
+      <legend>{t("Reviewed matrix output contract")}</legend>
+      <label>{t("Source workflow adapter")}<select value={config.adapterId} onChange={(event) => update("adapterId", event.target.value)}>{draft.adapters.map((adapter) => <option key={adapter.id} value={adapter.id}>{t(adapter.title)}</option>)}</select></label>
+      <label>{t("Produced CSV path")}<input maxLength={240} value={config.outputFile} placeholder={t("results/table1.csv")} onChange={(event) => update("outputFile", event.target.value)} /></label>
+      <label>{t("Dataset row-key column")}<input maxLength={100} value={config.rowKey} onChange={(event) => update("rowKey", event.target.value)} /></label>
+      <label>{t("Absolute tolerance for every cell")}<input type="number" min="0" step="any" value={config.metricTolerance} onChange={(event) => update("metricTolerance", event.target.value)} /></label>
+      {report.protocolLock.gaps.length > 0 && <label className="runner-confirm"><input type="checkbox" checked={config.acknowledgeGaps} onChange={(event) => update("acknowledgeGaps", event.target.checked)} />{t("I reviewed and accept these unresolved lock gaps for this run: ")}{report.protocolLock.gaps.join("; ")}.</label>}
+      <label className="runner-confirm"><input type="checkbox" checked={config.confirmed} onChange={(event) => update("confirmed", event.target.checked)} />{t("I reviewed the adapter, CSV row/column labels, paper references and protocol lock. The workflow is untrusted code.")}</label>
+      <button type="button" disabled={!config.confirmed || !config.outputFile.trim() || !config.acknowledgeGaps || !Number.isFinite(Number(config.metricTolerance)) || Number(config.metricTolerance) < 0} onClick={apply}>{t("Use matrix in local runner")}</button>
     </fieldset>}
-    {draft.warnings.map((warning) => <p className="runner-note" key={warning}>{warning}</p>)}
+    {draft.warnings.map((warning) => <p className="runner-note" key={warning}>{t(warning)}</p>)}
   </section>;
 }
 
 function CandidateConfig({ report, disabled, onApply }) {
+  const { t } = useLanguage();
   const draft = report.evaluationDraft;
   const suggested = draft.suggestion ?? suggestCandidate(report);
   function selections(entryId) {
@@ -327,53 +332,54 @@ function CandidateConfig({ report, disabled, onApply }) {
     options.metricTarget === null && "Reference value", !options.evaluation.dataset && "Dataset / split", !options.evaluation.model && "Model / checkpoint",
     !options.evaluation.reference && "Reference source"].filter(Boolean) : [];
   return <section className="runner candidate-config" aria-labelledby="candidate-title">
-    <div className="runner-heading"><div><p className="eyebrow">Generated configuration · Needs review</p><h2 id="candidate-title">Build an Evaluation from this scan</h2>
-      <p>Choose source-backed candidates, then review or complete the editable form. This does not execute code.</p></div></div>
-    {suggested && <p className="runner-note">One unambiguous candidate was preselected from a matching README command, source metric and printed output. It is still unconfirmed.</p>}
-    {draft.entries.length === 0 ? <p className="runner-note">No supported metric-evaluation candidate was found in the sampled Python files. A Quick/Make entry may still be available above. Supply a custom Evaluation below; no command or benchmark is invented.</p> : <fieldset className="run-options" disabled={disabled}>
-      <legend>Source-backed candidate choices</legend>
-      <label>Candidate entry<select value={review.entryId} onChange={(event) => setReview(selections(event.target.value))}>
-        {draft.entries.map((entry) => <option value={entry.id} key={entry.id}>{entry.command}{entry.origin ? " · inferred, review arguments" : ""}</option>)}
+    <div className="runner-heading"><div><p className="eyebrow">{t("Generated configuration · Needs review")}</p><h2 id="candidate-title">{t("Build an Evaluation from this scan")}</h2>
+      <p>{t("Choose source-backed candidates, then review or complete the editable form. This does not execute code.")}</p></div></div>
+    {suggested && <p className="runner-note">{t("One unambiguous candidate was preselected from a matching README command, source metric and printed output. It is still unconfirmed.")}</p>}
+    {draft.entries.length === 0 ? <p className="runner-note">{t("No supported metric-evaluation candidate was found in the sampled Python files. A Quick/Make entry may still be available above. Supply a custom Evaluation below; no command or benchmark is invented.")}</p> : <fieldset className="run-options" disabled={disabled}>
+      <legend>{t("Source-backed candidate choices")}</legend>
+      <label>{t("Candidate entry")}<select value={review.entryId} onChange={(event) => setReview(selections(event.target.value))}>
+        {draft.entries.map((entry) => <option value={entry.id} key={entry.id}>{entry.command}{t(entry.origin ? " · inferred, review arguments" : "")}</option>)}
       </select></label>
-      {entry && <p className="evidence"><span>Entry source</span><EvidenceLink report={report} evidence={entry.evidence} /></p>}
-      {entry?.note && <p className="runner-note">{entry.note}</p>}
-      {entry?.arguments?.length > 0 && <details open><summary>Execution arguments · review source and values</summary>
+      {entry && <p className="evidence"><span>{t("Entry source")}</span><EvidenceLink report={report} evidence={entry.evidence} /></p>}
+      {entry?.note && <p className="runner-note">{t(entry.note)}</p>}
+      {entry?.arguments?.length > 0 && <details open><summary>{t("Execution arguments · review source and values")}</summary>
         {entry.arguments.map((argument) => <div key={argument.id}>
-          <label>{argument.name}{argument.required ? " · required" : " · optional"}<input maxLength={240} disabled={!argument.supported}
-            value={review.argumentValues?.[argument.id] ?? ""} placeholder={argument.default ?? "Already in command, or enter a reviewed value"}
+          <label>{argument.name}{t(argument.required ? " · required" : " · optional")}<input maxLength={240} disabled={!argument.supported}
+            value={review.argumentValues?.[argument.id] ?? ""} placeholder={argument.default ?? t("Already in command, or enter a reviewed value")}
             onChange={(event) => setReview((current) => ({ ...current, argumentValues: { ...current.argumentValues, [argument.id]: event.target.value } }))} /></label>
-          <p className="hint">{argument.help}{!argument.supported && " · Complex action: supply a custom reviewed command instead."}</p>
-          <p className="evidence"><span>Argument source</span><EvidenceLink report={report} evidence={argument.evidence} /></p>
+          <p className="hint">{argument.help}{t(!argument.supported && " · Complex action: supply a custom reviewed command instead.")}</p>
+          <p className="evidence"><span>{t("Argument source")}</span><EvidenceLink report={report} evidence={argument.evidence} /></p>
         </div>)}
-        <p className="hint">Blank preserves the original command/default. Values are shell-quoted, never executed while configuring.</p>
+        <p className="hint">{t("Blank preserves the original command/default. Values are shell-quoted, never executed while configuring.")}</p>
       </details>}
-      {(draft.paths ?? []).some((path) => path.entryIds.includes(review.entryId)) && <details><summary>Configuration / data / checkpoint paths</summary>
-        {(draft.paths ?? []).filter((path) => path.entryIds.includes(review.entryId)).map((path, index) => <p key={index} className="hint">{path.path} · {path.matches.length ? `Tree matches: ${path.matches.join(", ")}` : "Not found in tree; may need external preparation"} · <EvidenceLink report={report} evidence={path.evidence} /></p>)}
+      {(draft.paths ?? []).some((path) => path.entryIds.includes(review.entryId)) && <details><summary>{t("Configuration / data / checkpoint paths")}</summary>
+        {(draft.paths ?? []).filter((path) => path.entryIds.includes(review.entryId)).map((path, index) => <p key={index} className="hint">{path.path} · {t(path.matches.length ? `Tree matches: ${path.matches.join(", ")}` : "Not found in tree; may need external preparation")} · <EvidenceLink report={report} evidence={path.evidence} /></p>)}
       </details>}
-      <label>Result capture<select value={review.outputId ?? ""} onChange={(event) => setReview((current) => ({ ...current, outputId: event.target.value || null }))}>
-        <option value="">Not selected — complete manually</option>
+      <label>{t("Result capture")}<select value={review.outputId ?? ""} onChange={(event) => setReview((current) => ({ ...current, outputId: event.target.value || null }))}>
+        <option value="">{t("Not selected — complete manually")}</option>
         {draft.outputs.filter((output) => output.entryIds.includes(review.entryId)).map((output) => <option value={output.id} key={output.id}>{output.kind === "stdout" ? `Labelled stdout: ${output.label} · ${output.unit}` : output.kind === "stdout-json" ? `JSON stdout: ${output.metricKey}` : `${output.kind.toUpperCase()}: ${output.path}`}</option>)}
       </select></label>
-      {output && <p className="evidence"><span>Output source</span><EvidenceLink report={report} evidence={output.evidence} /></p>}
-      <label>README reference candidate<select value={review.referenceId ?? ""} onChange={(event) => setReview((current) => ({ ...current, referenceId: event.target.value || null }))}>
-        <option value="">Not selected — supply a declared target</option>
-        {draft.references.filter((reference) => !reference.entryId || reference.entryId === review.entryId).map((reference) => <option value={reference.id} key={reference.id}>{reference.label}: {reference.value} · {reference.unit} · line {reference.evidence.line}</option>)}
+      {output && <p className="evidence"><span>{t("Output source")}</span><EvidenceLink report={report} evidence={output.evidence} /></p>}
+      <label>{t("README reference candidate")}<select value={review.referenceId ?? ""} onChange={(event) => setReview((current) => ({ ...current, referenceId: event.target.value || null }))}>
+        <option value="">{t("Not selected — supply a declared target")}</option>
+        {draft.references.filter((reference) => !reference.entryId || reference.entryId === review.entryId).map((reference) => <option value={reference.id} key={reference.id}>{reference.label}: {reference.value} · {t(reference.unit)}{t(" · line ")}{reference.evidence.line}</option>)}
       </select></label>
-      {reference && <p className="evidence"><span>Reference source</span><EvidenceLink report={report} evidence={reference.evidence} /></p>}
-      {failure && <p className="runner-error" role="alert">{failure}</p>}
+      {reference && <p className="evidence"><span>{t("Reference source")}</span><EvidenceLink report={report} evidence={reference.evidence} /></p>}
+      {failure && <p className="runner-error" role="alert">{t(failure)}</p>}
       {options && <>
-        <p className="hint">Proposed output: {options.outputFile || "missing"} · metric: {options.metricKey || "missing"} · reference: {options.metricTarget ?? "missing"} · tolerance: 0.</p>
-        {missing.length > 0 && <p className="runner-note">Complete in the form: {missing.join("; ")}.</p>}
-        {["stdout", "stdout-json"].includes(output?.kind) && <p className="hint">A generic adapter runs the original command and records its actual printed score as JSON. It never substitutes the reference value; missing/duplicate scores fail.</p>}
-        <button type="button" onClick={() => onApply(options)}>Use candidates in Evaluation form</button>
+        <p className="hint">{t("Proposed output: ")}{t(options.outputFile || "missing")}{t(" · metric: ")}{options.metricKey || "missing"}{t(" · reference: ")}{t(options.metricTarget ?? "missing")}{t(" · tolerance: 0.")}</p>
+        {missing.length > 0 && <p className="runner-note">{t("Complete in the form: ")}{t(missing.join("; "))}.</p>}
+        {["stdout", "stdout-json"].includes(output?.kind) && <p className="hint">{t("A generic adapter runs the original command and records its actual printed score as JSON. It never substitutes the reference value; missing/duplicate scores fail.")}</p>}
+        <button type="button" onClick={() => onApply(options)}>{t("Use candidates in Evaluation form")}</button>
       </>}
     </fieldset>}
-    <details><summary>Candidate sources and coverage limits</summary><pre className="evaluation-source">{JSON.stringify(draft, null, 2)}</pre></details>
-    <p className="runner-note">README values may be example output. You must confirm the selected dataset, split, model and metric correspond; they are not automatically verified paper claims.</p>
+    <details><summary>{t("Candidate sources and coverage limits")}</summary><pre className="evaluation-source">{JSON.stringify(draft, null, 2)}</pre></details>
+    <p className="runner-note">{t("README values may be example output. You must confirm the selected dataset, split, model and metric correspond; they are not automatically verified paper claims.")}</p>
   </section>;
 }
 
 function SavedExperimentImport({ disabled, onOpenVersion }) {
+  const { t } = useLanguage();
   const [pendingImport, setPendingImport] = useState(null);
   const [error, setError] = useState("");
   async function importConfig(event) {
@@ -389,39 +395,41 @@ function SavedExperimentImport({ disabled, onOpenVersion }) {
     } catch (failure) { setError(failure.message); }
   }
   return <fieldset className="run-options" disabled={disabled}>
-    <legend>Open a saved Training experiment</legend>
-    <label>Import saved experiment configuration<input type="file" accept=".json,application/json" onChange={importConfig} /></label>
-    {pendingImport && <div role="status"><p>Saved configuration: <strong>{pendingImport.repository}</strong> · commit <code>{pendingImport.commit}</code>. Scan this exact version before reviewing commands. No code will run.</p>
-      <button type="button" onClick={async () => { if (await onOpenVersion(pendingImport)) setPendingImport(null); }}>Scan saved version</button>
-      <button type="button" onClick={() => setPendingImport(null)}>Cancel import</button></div>}
-    {error && <p className="runner-error" role="alert">{error}</p>}
+    <legend>{t("Open a saved Training experiment")}</legend>
+    <label>{t("Import saved experiment configuration")}<input type="file" accept=".json,application/json" onChange={importConfig} /></label>
+    {pendingImport && <div role="status"><p>{t("Saved configuration: ")}<strong>{t(pendingImport.repository)}</strong>{t(" · commit ")}<code>{pendingImport.commit}</code>{t(". Scan this exact version before reviewing commands. No code will run.")}</p>
+      <button type="button" onClick={async () => { if (await onOpenVersion(pendingImport)) setPendingImport(null); }}>{t("Scan saved version")}</button>
+      <button type="button" onClick={() => setPendingImport(null)}>{t("Cancel import")}</button></div>}
+    {error && <p className="runner-error" role="alert">{t(error)}</p>}
   </fieldset>;
 }
 
 function SuggestedEntry({ report, disabled, onChoose }) {
+  const { t } = useLanguage();
   const entries = report.quickEntries ?? [];
   const [id, setId] = useState(report.recommendedQuickEntryId ?? "");
   const selected = entries.find((entry) => entry.id === id);
   const readme = report.checks.find((check) => check.id === "readme")?.evidence;
   return <section className="runner candidate-config" aria-labelledby="suggested-entry-title">
-    <h2 id="suggested-entry-title">Start here · check one entry</h2>
-    <p>Quick checks whether the selected entry executes. It is not full training or metric acceptance. Commands remain untrusted and will not run until you review and confirm. Prerequisites can download large dependencies or datasets; Quick does not mean a small download.</p>
+    <h2 id="suggested-entry-title">{t("Start here · check one entry")}</h2>
+    <p>{t("Quick checks whether the selected entry executes. It is not full training or metric acceptance. Commands remain untrusted and will not run until you review and confirm. Prerequisites can download large dependencies or datasets; Quick does not mean a small download.")}</p>
     {entries.length ? <>
-      <label>Suggested entry<select value={id} disabled={disabled} onChange={(event) => setId(event.target.value)}>
-        <option value="">Choose an entry — no automatic choice</option>
-        {entries.map((entry) => <option key={entry.id} value={entry.id}>{entry.id === report.recommendedQuickEntryId ? "Recommended · " : ""}{entry.command} · {entry.status}</option>)}
+      <label>{t("Suggested entry")}<select value={id} disabled={disabled} onChange={(event) => setId(event.target.value)}>
+        <option value="">{t("Choose an entry — no automatic choice")}</option>
+        {entries.map((entry) => <option key={entry.id} value={entry.id}>{t(entry.id === report.recommendedQuickEntryId ? "Recommended · " : "")}{entry.command} · {t(entry.status)}</option>)}
       </select></label>
       {selected && <><p><EvidenceLink report={report} evidence={selected.evidence} /></p>
-        <p className="hint">{selected.role === "preflight" ? "A source-validated test entry is available; start here before the experiment." : "Review this entry and its prerequisites; Quick does not imply a short or inexpensive run."}</p>
-        <ol>{selected.steps.map((step) => <li key={step.id}>{step.title} · {step.status}{step.command && <pre>{step.command}</pre>}</li>)}</ol>
+        <p className="hint">{t(selected.role === "preflight" ? "A source-validated test entry is available; start here before the experiment." : "Review this entry and its prerequisites; Quick does not imply a short or inexpensive run.")}</p>
+        <ol>{selected.steps.map((step) => <li key={step.id}>{t(step.title)} · {t(step.status)}{step.command && <pre>{step.command}</pre>}</li>)}</ol>
       </>}
-      <button type="button" disabled={disabled || !selected || selected.status === "BLOCKED"} onClick={() => onChoose(selected)}>Review selected entry in Quick</button>
-      {selected?.status === "BLOCKED" && <p className="runner-note">Some prerequisite targets could not be validated. Review their source before execution.</p>}
-    </> : <p className="runner-note">No supported entry was automatically validated. Review {readme ? <EvidenceLink report={report} evidence={readme} /> : <a href={`https://github.com/${report.repository}/tree/${report.commit}`} target="_blank" rel="noreferrer">repository source</a>} and the repository's Python scripts{report.paperWorkflowDraft?.makefile && <> / <EvidenceLink report={report} evidence={{ file: report.paperWorkflowDraft.makefile }} /></>}. This does not mean the repository has no instructions.</p>}
+      <button type="button" disabled={disabled || !selected || selected.status === "BLOCKED"} onClick={() => onChoose(selected)}>{t("Review selected entry in Quick")}</button>
+      {selected?.status === "BLOCKED" && <p className="runner-note">{t("Some prerequisite targets could not be validated. Review their source before execution.")}</p>}
+    </> : <p className="runner-note">{t("No supported entry was automatically validated. Review ")}{readme ? <EvidenceLink report={report} evidence={readme} /> : <a href={`https://github.com/${report.repository}/tree/${report.commit}`} target="_blank" rel="noreferrer">{t("repository source")}</a>}{t(" and the repository's Python scripts")}{report.paperWorkflowDraft?.makefile && <> / <EvidenceLink report={report} evidence={{ file: report.paperWorkflowDraft.makefile }} /></>}{t(". This does not mean the repository has no instructions.")}</p>}
   </section>;
 }
 
 function ExperimentConfig({ report, disabled, onApply, onInvalidate, importedDraft }) {
+  const { t } = useLanguage();
   const [draft, setDraft] = useState(() => importedDraft ?? experimentDraft(report));
   const [error, setError] = useState("");
   useEffect(() => { if (importedDraft) { setDraft(importedDraft); setError(""); } }, [importedDraft]);
@@ -448,163 +456,164 @@ function ExperimentConfig({ report, disabled, onApply, onInvalidate, importedDra
     ["outputFile", "Evaluation score JSON / single-row CSV path", 240], ["metricKey", "Metric key / CSV column", 100],
   ];
   return <fieldset className="run-options" disabled={disabled}>
-    <legend>End-to-end experiment · prepare → train → new model → evaluate</legend>
-    <p className="hint">Scan-prefilled candidates require review. All commands start at the repository root in the same temporary container; use cd … &amp;&amp; where needed. Import only loads fields, never runs code.</p>
-    {[["01 · Commands & model hand-off", fields.slice(0, 6)], ["02 · Experiment protocol", fields.slice(6, 12)], ["03 · Metric output", fields.slice(12)]].map(([title, entries]) => <section className="config-group" key={title}><h3>{title}</h3>{entries.map(([key, label, limit = 500]) => <label key={key}>{label}<input value={draft[key]} maxLength={limit} onChange={(event) => update(key, event.target.value)} /></label>)}</section>)}
-    <p className="hint">Optional required input files: one repository-relative path per line, checked immediately before that stage. Files generated by preparation belong under Training, not Preparation. Existing new-model/output checks remain separate; this does not verify dataset contents.</p>
-    {[["prepare-data", "Preparation"], ["train", "Training"], ["evaluate", "Evaluation"]].map(([stage, title]) => <label key={stage}>{title} required inputs (optional)
-      <textarea rows={2} maxLength={4820} value={(draft.inputs?.[stage] ?? []).join("\n")} onChange={(event) => update("inputs", { ...draft.inputs, [stage]: event.target.value.split("\n") })} />
+    <legend>{t("End-to-end experiment · prepare → train → new model → evaluate")}</legend>
+    <p className="hint">{t("Scan-prefilled candidates require review. All commands start at the repository root in the same temporary container; use cd … && where needed. Import only loads fields, never runs code.")}</p>
+    {[["01 · Commands & model hand-off", fields.slice(0, 6)], ["02 · Experiment protocol", fields.slice(6, 12)], ["03 · Metric output", fields.slice(12)]].map(([title, entries]) => <section className="config-group" key={title}><h3>{t(title)}</h3>{entries.map(([key, label, limit = 500]) => <label key={key}>{t(label)}<input value={draft[key]} maxLength={limit} onChange={(event) => update(key, event.target.value)} /></label>)}</section>)}
+    <p className="hint">{t("Optional required input files: one repository-relative path per line, checked immediately before that stage. Files generated by preparation belong under Training, not Preparation. Existing new-model/output checks remain separate; this does not verify dataset contents.")}</p>
+    {[["prepare-data", "Preparation"], ["train", "Training"], ["evaluate", "Evaluation"]].map(([stage, title]) => <label key={stage}>{t(title)}{t(" required inputs (optional) ")}<textarea rows={2} maxLength={4820} value={(draft.inputs?.[stage] ?? []).join("\n")} onChange={(event) => update("inputs", { ...draft.inputs, [stage]: event.target.value.split("\n") })} />
     </label>)}
-    <label>Evaluation metric capture<select value={draft.capture.kind} onChange={(event) => update("capture", { ...draft.capture, kind: event.target.value })}>
-      <option value="file">Original JSON / single-row CSV output</option><option value="stdout">One labelled numeric stdout line</option><option value="stdout-json">One JSON-object stdout metric line</option>
+    <label>{t("Evaluation metric capture")}<select value={draft.capture.kind} onChange={(event) => update("capture", { ...draft.capture, kind: event.target.value })}>
+      <option value="file">{t("Original JSON / single-row CSV output")}</option><option value="stdout">{t("One labelled numeric stdout line")}</option><option value="stdout-json">{t("One JSON-object stdout metric line")}</option>
     </select></label>
-    {draft.capture.kind === "stdout" && <label>Exact stdout label<input value={draft.capture.label} maxLength={80} placeholder="Accuracy" onChange={(event) => update("capture", { ...draft.capture, label: event.target.value })} /></label>}
-    <label>Printed metric units<select value={draft.capture.unit} onChange={(event) => update("capture", { ...draft.capture, unit: event.target.value })}>
-      <option value="number">Number as printed · no conversion</option><option value="percent">Percent with % suffix</option>
+    {draft.capture.kind === "stdout" && <label>{t("Exact stdout label")}<input value={draft.capture.label} maxLength={80} placeholder={t("Accuracy")} onChange={(event) => update("capture", { ...draft.capture, label: event.target.value })} /></label>}
+    <label>{t("Printed metric units")}<select value={draft.capture.unit} onChange={(event) => update("capture", { ...draft.capture, unit: event.target.value })}>
+      <option value="number">{t("Number as printed · no conversion")}</option><option value="percent">{t("Percent with % suffix")}</option>
     </select></label>
     <div className="metric-options">
-      <label>Condition<select value={draft.metricOperator} onChange={(event) => update("metricOperator", event.target.value)}><option value="eq">Match reference (±)</option><option value="gte">At least (≥)</option><option value="lte">At most (≤)</option></select></label>
-      <label>Reference value<input type="number" step="any" value={draft.metricTarget} onChange={(event) => update("metricTarget", event.target.value)} /></label>
-      {draft.metricOperator === "eq" && <label>Absolute tolerance<input type="number" min="0" step="any" value={draft.metricTolerance} onChange={(event) => update("metricTolerance", event.target.value)} /></label>}
+      <label>{t("Condition")}<select value={draft.metricOperator} onChange={(event) => update("metricOperator", event.target.value)}><option value="eq">{t("Match reference (±)")}</option><option value="gte">{t("At least (≥)")}</option><option value="lte">{t("At most (≤)")}</option></select></label>
+      <label>{t("Reference value")}<input type="number" step="any" value={draft.metricTarget} onChange={(event) => update("metricTarget", event.target.value)} /></label>
+      {draft.metricOperator === "eq" && <label>{t("Absolute tolerance")}<input type="number" min="0" step="any" value={draft.metricTolerance} onChange={(event) => update("metricTolerance", event.target.value)} /></label>}
     </div>
-    <p className="runner-note">Requires an absent-before-training model file up to {MODEL_EXPORT_LIMIT / 1024} KiB. The evaluator must use this file; hashes only show bytes, not prove model use or scientific protocol equivalence. No pretrained fallback, host data upload, GPU or arbitrary paper-protocol inference.</p>
-    <details><summary>Scanned training/evaluation sources and parameters</summary><pre>{JSON.stringify({ training: report.evaluationDraft?.trainingEntries, evaluation: report.evaluationDraft?.entries,
+    <p className="runner-note">{t("Requires an absent-before-training model file up to ")}{t(MODEL_EXPORT_LIMIT / 1024)}{t(" KiB. The evaluator must use this file; hashes only show bytes, not prove model use or scientific protocol equivalence. No pretrained fallback, host data upload, GPU or arbitrary paper-protocol inference.")}</p>
+    <details><summary>{t("Scanned training/evaluation sources and parameters")}</summary><pre>{JSON.stringify({ training: report.evaluationDraft?.trainingEntries, evaluation: report.evaluationDraft?.entries,
       paths: report.evaluationDraft?.paths, parameters: report.experimentParameters, warnings: report.evaluationDraft?.warnings }, null, 2)}</pre></details>
-    <label className="runner-confirm"><input type="checkbox" checked={draft.confirmed} onChange={(event) => update("confirmed", event.target.checked)} />I reviewed every stage, data/split, training parameters/seed, model hand-off and reference. Blank installation/preparation is deliberate. Edits require confirmation again.</label>
-    {error && <p className="runner-error" role="alert">{error}</p>}
-    <div className="recipe-actions"><button type="button" onClick={() => apply()} disabled={!draft.confirmed}>Apply reviewed experiment</button>
-      <button type="button" className="download-button" onClick={() => apply(true)} disabled={!draft.confirmed}>Download experiment configuration</button></div>
+    <label className="runner-confirm"><input type="checkbox" checked={draft.confirmed} onChange={(event) => update("confirmed", event.target.checked)} />{t("I reviewed every stage, data/split, training parameters/seed, model hand-off and reference. Blank installation/preparation is deliberate. Edits require confirmation again.")}</label>
+    {error && <p className="runner-error" role="alert">{t(error)}</p>}
+    <div className="recipe-actions"><button type="button" onClick={() => apply()} disabled={!draft.confirmed}>{t("Apply reviewed experiment")}</button>
+      <button type="button" className="download-button" onClick={() => apply(true)} disabled={!draft.confirmed}>{t("Download experiment configuration")}</button></div>
   </fieldset>;
 }
 
 function ReportChecks({ report }) {
+  const { t, checkText } = useLanguage();
   const [problemsOnly, setProblemsOnly] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
   const groups = groupChecks(report.checks, problemsOnly);
   const visibleChecks = groups.flatMap((group) => group.checks);
   const selected = visibleChecks.find((check) => check.id === selectedId) ?? visibleChecks[0];
   return <div className="audit-workspace">
-    <section className="audit-index" aria-label="Grouped scan checks">
-      <div className="audit-index-heading"><h3>Inspection groups</h3><label><input type="checkbox" checked={problemsOnly} onChange={(event) => setProblemsOnly(event.target.checked)} /> Problems only</label></div>
-      {groups.map((group) => <div className="audit-group" key={group.title}><h4>{group.title}<span>{group.checks.length}</span></h4>
+    <section className="audit-index" aria-label={t("Grouped scan checks")}>
+      <div className="audit-index-heading"><h3>{t("Inspection groups")}</h3><label><input type="checkbox" checked={problemsOnly} onChange={(event) => setProblemsOnly(event.target.checked)} />{t(" Problems only")}</label></div>
+      {groups.map((group) => <div className="audit-group" key={group.title}><h4>{t(group.title)}<span>{group.checks.length}</span></h4>
         {group.checks.map((check) => <button type="button" className={`audit-check check-${check.status.toLowerCase()}`} aria-pressed={selected?.id === check.id} onClick={() => setSelectedId(check.id)} key={check.id}>
-          <span className="check-status">{check.status}</span><span>{check.message}</span><span aria-hidden="true">↗</span>
+          <span className="check-status">{t(check.status)}</span><span>{checkText(check)}</span><span aria-hidden="true">↗</span>
         </button>)}
       </div>)}
-      {!selected && <p className="hint">No checks match this filter. Clear “Problems only” to inspect passed checks.</p>}
+      {!selected && <p className="hint">{t("No checks match this filter. Clear “Problems only” to inspect passed checks.")}</p>}
     </section>
-    <section className="audit-evidence" aria-label="Selected check evidence" aria-live="polite">
-      {selected ? <><p className="eyebrow">Source evidence · {selected.id}</p><h3>{selected.message}</h3>
-        <span className={`evidence-status check-${selected.status.toLowerCase()}`}><span className="check-status">{selected.status}</span></span>
-        {selected.evidence ? <p className="evidence"><span>Source</span><EvidenceLink report={report} evidence={selected.evidence} /></p> : <p className="hint">No source excerpt captured for this check.</p>}
+    <section className="audit-evidence" aria-label={t("Selected check evidence")} aria-live="polite">
+      {selected ? <><p className="eyebrow">{t("Source evidence · ")}{selected.id}</p><h3>{checkText(selected)}</h3>
+        <span className={`evidence-status check-${selected.status.toLowerCase()}`}><span className="check-status">{t(selected.status)}</span></span>
+        {selected.evidence ? <p className="evidence"><span>{t("Source")}</span><EvidenceLink report={report} evidence={selected.evidence} /></p> : <p className="hint">{t("No source excerpt captured for this check.")}</p>}
         {selected.evidence?.text && <pre className="evidence-excerpt"><code>{selected.evidence.text}</code></pre>}
-        {selected.suggestion && <div className="evidence-action"><p className="eyebrow">Suggested next step</p><p>{selected.suggestion}</p></div>}
-        <p className="hint">Static finding at the pinned commit. It does not establish that commands execute successfully or reproduce a paper.</p>
-      </> : <p className="hint">Select a check to inspect its evidence.</p>}
+        {selected.suggestion && <div className="evidence-action"><p className="eyebrow">{t("Suggested next step")}</p><p>{t(selected.suggestion)}</p></div>}
+        <p className="hint">{t("Static finding at the pinned commit. It does not establish that commands execute successfully or reproduce a paper.")}</p>
+      </> : <p className="hint">{t("Select a check to inspect its evidence.")}</p>}
     </section>
   </div>;
 }
 
 function ExecutionEvidence({ job, onPrepareReplay, replayDisabled }) {
+  const { t } = useLanguage();
   const labels = { VERIFIED: "Configured checks passed", FAILED: "Output checks failed", INCOMPLETE: "Verification incomplete",
     NOT_CONFIGURED: "No output checks configured", PENDING: "Waiting for execution" };
   return (
     <div className="execution-evidence">
       <dl className="result-dimensions">
-        <div><dt>Process</dt><dd>{job.status.replaceAll("_", " ")}</dd></div>
-        <div><dt>Output checks</dt><dd>{labels[job.verification?.status] ?? "Not available"}</dd></div>
-        <div><dt>Reference acceptance</dt><dd>{job.evaluation?.status?.replaceAll("_", " ") ?? (job.matrix ? `${job.matrix.summary.matched}/${job.matrix.summary.total} cells matched` : "No evaluation result")}</dd></div>
-        <div><dt>Scope</dt><dd>Selected experiment only</dd></div>
+        <div><dt>{t("Process")}</dt><dd>{t(job.status.replaceAll("_", " "))}</dd></div>
+        <div><dt>{t("Output checks")}</dt><dd>{t(labels[job.verification?.status] ?? "Not available")}</dd></div>
+        <div><dt>{t("Reference acceptance")}</dt><dd>{t(job.evaluation?.status?.replaceAll("_", " ") ?? (job.matrix ? `${job.matrix.summary.matched}/${job.matrix.summary.total} cells matched` : "No evaluation result"))}</dd></div>
+        <div><dt>{t("Scope")}</dt><dd>{t("Selected experiment only")}</dd></div>
       </dl>
-      <h3>Output verification · {labels[job.verification?.status] ?? "Not available"}</h3>
-      <p className="hint">Execution success alone does not prove paper reproducibility. These checks validate only the expectations you supplied.</p>
-      {job.persistenceError && <p className="runner-error" role="alert">{job.persistenceError} — download the evidence now.</p>}
-      {job.logTruncated && <p className="runner-note">Only the last 900,000 log characters are retained.</p>}
-      <details className="verification-details"><summary>Inspect output and input checks ({job.verification?.checks?.length ?? 0})</summary><ul className="verification-checks">
+      <h3>{t("Output verification · ")}{t(labels[job.verification?.status] ?? "Not available")}</h3>
+      <p className="hint">{t("Execution success alone does not prove paper reproducibility. These checks validate only the expectations you supplied.")}</p>
+      {job.persistenceError && <p className="runner-error" role="alert">{t(job.persistenceError)}{t(" — download the evidence now.")}</p>}
+      {job.logTruncated && <p className="runner-note">{t("Only the last 900,000 log characters are retained.")}</p>}
+      <details className="verification-details"><summary>{t("Inspect output and input checks (")}{t(job.verification?.checks?.length ?? 0)})</summary><ul className="verification-checks">
         {job.verification?.checks?.map((check) => (
-          <li key={check.id}><strong>{check.status}</strong> · {check.id}: <code>{check.expected}</code>
-            {check.observed && <details><summary>Inspect captured evidence</summary><pre>{JSON.stringify(check.observed, null, 2)}</pre></details>}
+          <li key={check.id}><strong>{t(check.status)}</strong> · {t(check.id)}: <code>{check.expected}</code>
+            {check.observed && <details><summary>{t("Inspect captured evidence")}</summary><pre>{JSON.stringify(check.observed, null, 2)}</pre></details>}
           </li>
         ))}
       </ul></details>
       {job.paperMatrix && <div className="run-comparison">
-        <h3>Paper matrix · {job.matrix ? `${job.matrix.summary.matched}/${job.matrix.summary.total} matched` : "incomplete"}</h3>
-        <p className="hint">Observed values come from the fresh CSV produced by the reviewed source workflow. References come from the commit-pinned README table.</p>
-        {job.matrix?.error && <p className="runner-error">{job.matrix.error}</p>}
-        {job.matrix?.cells?.length > 0 && <div className="matrix-scroll"><table className="matrix-table"><thead><tr><th>Dataset</th><th>Model</th><th>Paper</th><th>Observed</th><th>Delta</th><th>Status</th></tr></thead>
-          <tbody>{job.matrix.cells.map((cell) => <tr key={cell.id}><td>{cell.dataset}</td><td>{cell.model}{cell.seed ? ` · seed ${cell.seed}` : ""}</td><td>{cell.target}</td><td>{cell.observed ?? "—"}{cell.compared !== cell.observed && cell.compared != null ? ` → ${cell.compared}` : ""}</td><td>{cell.delta ?? "—"}</td><td>{cell.status}</td></tr>)}</tbody></table></div>}
+        <h3>{t("Paper matrix · ")}{t(job.matrix ? `${job.matrix.summary.matched}/${job.matrix.summary.total} matched` : "incomplete")}</h3>
+        <p className="hint">{t("Observed values come from the fresh CSV produced by the reviewed source workflow. References come from the commit-pinned README table.")}</p>
+        {job.matrix?.error && <p className="runner-error">{t(job.matrix.error)}</p>}
+        {job.matrix?.cells?.length > 0 && <div className="matrix-scroll"><table className="matrix-table"><thead><tr><th>{t("Dataset")}</th><th>{t("Model")}</th><th>{t("Paper")}</th><th>{t("Observed")}</th><th>{t("Delta")}</th><th>{t("Status")}</th></tr></thead>
+          <tbody>{job.matrix.cells.map((cell) => <tr key={cell.id}><td>{cell.dataset}</td><td>{cell.model}{t(cell.seed ? ` · seed ${cell.seed}` : "")}</td><td>{cell.target}</td><td>{cell.observed ?? "—"}{t(cell.compared !== cell.observed && cell.compared != null ? ` → ${cell.compared}` : "")}</td><td>{cell.delta ?? "—"}</td><td>{t(cell.status)}</td></tr>)}</tbody></table></div>}
       </div>}
       {job.evaluation && <div className="run-comparison">
-        <h3>Evaluation report · {job.evaluation.status.replaceAll("_", " ")}</h3>
-        <p className="hint">{job.benchmark ? `Reviewed ${job.benchmark.datasetName} software case: input hashes and the pinned README row must pass checks before entry and at completion. This is not full-paper reproduction or a security attestation.` : "Dataset, model and reference source below are user declarations, not independently verified paper claims."}</p>
+        <h3>{t("Evaluation report · ")}{t(job.evaluation.status.replaceAll("_", " "))}</h3>
+        <p className="hint">{t(job.benchmark ? `Reviewed ${job.benchmark.datasetName} software case: input hashes and the pinned README row must pass checks before entry and at completion. This is not full-paper reproduction or a security attestation.` : "Dataset, model and reference source below are user declarations, not independently verified paper claims.")}</p>
         <dl className="evaluation-summary">
-          <dt>Dataset / split</dt><dd>{job.evaluation.dataset}</dd>
-          <dt>Model / checkpoint</dt><dd>{job.evaluation.model}</dd>
-          <dt>Reference source</dt><dd>{job.benchmark ? <a href={job.benchmark.reference.url} target="_blank" rel="noreferrer">Pinned README · Table 3 · {job.benchmark.datasetName}</a> : job.evaluation.reference}</dd>
-          <dt>Observed / reference</dt><dd>{job.evaluation.observedValue ?? "unknown"} / {job.evaluation.referenceValue} · {job.evaluation.metricKey}</dd>
-          <dt>Difference / tolerance</dt><dd>{Number.isFinite(job.evaluation.delta) ? Number(job.evaluation.delta.toPrecision(12)) : "unknown"} / {job.evaluation.tolerance} · condition {job.evaluation.operator}</dd>
+          <dt>{t("Dataset / split")}</dt><dd>{job.evaluation.dataset}</dd>
+          <dt>{t("Model / checkpoint")}</dt><dd>{job.evaluation.model}</dd>
+          <dt>{t("Reference source")}</dt><dd>{job.benchmark ? <a href={job.benchmark.reference.url} target="_blank" rel="noreferrer">{t("Pinned README · Table 3 · ")}{job.benchmark.datasetName}</a> : job.evaluation.reference}</dd>
+          <dt>{t("Observed / reference")}</dt><dd>{t(job.evaluation.observedValue ?? "unknown")} / {job.evaluation.referenceValue} · {job.evaluation.metricKey}</dd>
+          <dt>{t("Difference / tolerance")}</dt><dd>{t(Number.isFinite(job.evaluation.delta) ? Number(job.evaluation.delta.toPrecision(12)) : "unknown")} / {t(job.evaluation.tolerance)}{t(" · condition ")}{t(job.evaluation.operator)}</dd>
         </dl>
         {job.benchmark && <>
-          <p className="runner-note">{job.benchmark.compatibility.note}</p>
-          <p className="hint">Scope: {job.benchmark.reference.scope}</p>
-          <details><summary>Dataset, checkpoint, code hashes and reference-row evidence</summary><pre>{JSON.stringify({ assets: job.assets, reference: job.referenceEvidence }, null, 2)}</pre></details>
+          <p className="runner-note">{t(job.benchmark.compatibility.note)}</p>
+          <p className="hint">{t("Scope: ")}{job.benchmark.reference.scope}</p>
+          <details><summary>{t("Dataset, checkpoint, code hashes and reference-row evidence")}</summary><pre>{JSON.stringify({ assets: job.assets, reference: job.referenceEvidence }, null, 2)}</pre></details>
         </>}
         {job.benchmark?.training && <>
-          <h3>Training from scratch</h3>
-          <p className="hint">Original repository trainer → newly saved model → original evaluator. No pretrained model fallback and no search for a better test score.</p>
+          <h3>{t("Training from scratch")}</h3>
+          <p className="hint">{t("Original repository trainer → newly saved model → original evaluator. No pretrained model fallback and no search for a better test score.")}</p>
           <dl className="evaluation-summary">
-            <dt>Paper configuration</dt><dd>{JSON.stringify(job.benchmark.training.parameters)}</dd>
-            <dt>Run seed / count</dt><dd>{job.benchmark.training.seed} / 1 · our disclosed seed, not an author-provided seed</dd>
-            <dt>Training time</dt><dd>{job.trainingCheckpoint?.trainingSeconds ?? "unknown"} seconds</dd>
-            <dt>New checkpoint</dt><dd>{job.trainingCheckpoint?.path ?? "not saved"} · {job.trainingCheckpoint?.size ?? 0} bytes</dd>
-            <dt>Checkpoint SHA-256</dt><dd>{job.trainingCheckpoint?.sha256 ?? "unknown"}</dd>
+            <dt>{t("Paper configuration")}</dt><dd>{JSON.stringify(job.benchmark.training.parameters)}</dd>
+            <dt>{t("Run seed / count")}</dt><dd>{t(job.benchmark.training.seed)}{t(" / 1 · our disclosed seed, not an author-provided seed")}</dd>
+            <dt>{t("Training time")}</dt><dd>{t(job.trainingCheckpoint?.trainingSeconds ?? "unknown")}{t(" seconds")}</dd>
+            <dt>{t("New checkpoint")}</dt><dd>{t(job.trainingCheckpoint?.path ?? "not saved")} · {t(job.trainingCheckpoint?.size ?? 0)}{t(" bytes")}</dd>
+            <dt>{t("Checkpoint SHA-256")}</dt><dd>{t(job.trainingCheckpoint?.sha256 ?? "unknown")}</dd>
           </dl>
           {job.trainingCheckpoint?.status === "PASSED" && job.trainingCheckpoint.base64 && <a className="download-button evidence-download"
-            href={`data:application/octet-stream;base64,${job.trainingCheckpoint.base64}`} download={`reprocheck-iris-${job.id}.pickle.lzma`}>Download newly trained model</a>}
-          <p className="runner-note">Pickle models are executable when loaded. This download is data only; do not load an untrusted model on the host.</p>
+            href={`data:application/octet-stream;base64,${job.trainingCheckpoint.base64}`} download={`reprocheck-iris-${job.id}.pickle.lzma`}>{t("Download newly trained model")}</a>}
+          <p className="runner-note">{t("Pickle models are executable when loaded. This download is data only; do not load an untrusted model on the host.")}</p>
         </>}
         {job.experiment && <>
-          <h3>Configured end-to-end experiment</h3>
-          <dl className="evaluation-summary"><dt>Parameters / seed (declared)</dt><dd>{job.experiment.parameters} / {job.experiment.seed}</dd>
-            <dt>Protocol review (declared)</dt><dd>{job.experiment.protocol}</dd><dt>New checkpoint</dt><dd>{job.trainingCheckpoint?.path ?? "not saved"} · {job.trainingCheckpoint?.size ?? 0} bytes</dd>
-            <dt>Checkpoint SHA-256</dt><dd>{job.trainingCheckpoint?.sha256 ?? "unknown"}</dd><dt>Training time</dt><dd>{job.trainingCheckpoint?.trainingSeconds ?? "unknown"} seconds</dd></dl>
+          <h3>{t("Configured end-to-end experiment")}</h3>
+          <dl className="evaluation-summary"><dt>{t("Parameters / seed (declared)")}</dt><dd>{job.experiment.parameters} / {t(job.experiment.seed)}</dd>
+            <dt>{t("Protocol review (declared)")}</dt><dd>{job.experiment.protocol}</dd><dt>{t("New checkpoint")}</dt><dd>{t(job.trainingCheckpoint?.path ?? "not saved")} · {t(job.trainingCheckpoint?.size ?? 0)}{t(" bytes")}</dd>
+            <dt>{t("Checkpoint SHA-256")}</dt><dd>{t(job.trainingCheckpoint?.sha256 ?? "unknown")}</dd><dt>{t("Training time")}</dt><dd>{t(job.trainingCheckpoint?.trainingSeconds ?? "unknown")}{t(" seconds")}</dd></dl>
           {job.trainingCheckpoint?.status === "PASSED" && job.trainingCheckpoint.base64 && <a className="download-button evidence-download"
-            href={`data:application/octet-stream;base64,${job.trainingCheckpoint.base64}`} download={job.trainingCheckpoint.path.split("/").at(-1)}>Download newly trained model</a>}
-          <p className="runner-note">Model downloads are untrusted data. Never load pickle/joblib or other executable model formats on the host. A matching number does not independently verify the declared protocol.</p>
+            href={`data:application/octet-stream;base64,${job.trainingCheckpoint.base64}`} download={job.trainingCheckpoint.path.split("/").at(-1)}>{t("Download newly trained model")}</a>}
+          <p className="runner-note">{t("Model downloads are untrusted data. Never load pickle/joblib or other executable model formats on the host. A matching number does not independently verify the declared protocol.")}</p>
         </>}
-        {job.evaluation.output && <details><summary>Reported metrics and asset identifiers</summary><pre>{JSON.stringify(job.evaluation.output, null, 2)}</pre></details>}
+        {job.evaluation.output && <details><summary>{t("Reported metrics and asset identifiers")}</summary><pre>{JSON.stringify(job.evaluation.output, null, 2)}</pre></details>}
       </div>}
-      {job.candidate && <details><summary>Reviewed scan candidates and manual changes</summary><pre>{JSON.stringify(job.candidate, null, 2)}</pre></details>}
+      {job.candidate && <details><summary>{t("Reviewed scan candidates and manual changes")}</summary><pre>{JSON.stringify(job.candidate, null, 2)}</pre></details>}
       <details>
-        <summary>Environment and actual commands</summary>
+        <summary>{t("Environment and actual commands")}</summary>
         <pre>{JSON.stringify({ environment: job.environment, limits: job.limits, commandOverride: job.commandOverride,
           commands: job.steps, dependencies: job.dependencies, experimentParameters: job.experimentParameters,
           note: "Extracted parameter defaults are not proof of the values or seeds actually used." }, null, 2)}</pre>
       </details>
       {job.status !== "RUNNING" && (
-        <a className="download-button evidence-download" href={`/api/runs/${job.id}?download=1`} download={`reprocheck-run-${job.id}.json`}>Download execution evidence</a>
+        <a className="download-button evidence-download" href={`/api/runs/${job.id}?download=1`} download={`reprocheck-run-${job.id}.json`}>{t("Download execution evidence")}</a>
       )}
       {job.recipe && <div className="recipe-actions">
-        <a className="download-button evidence-download" href={`/api/runs/${job.id}/recipe?download=1`} download={`reprocheck-recipe-${job.id}.json`}>Download frozen recipe</a>
-        <button type="button" onClick={() => onPrepareReplay(job.id)} disabled={replayDisabled}>Review frozen recipe</button>
+        <a className="download-button evidence-download" href={`/api/runs/${job.id}/recipe?download=1`} download={`reprocheck-recipe-${job.id}.json`}>{t("Download frozen recipe")}</a>
+        <button type="button" onClick={() => onPrepareReplay(job.id)} disabled={replayDisabled}>{t("Review frozen recipe")}</button>
       </div>}
-      {!job.recipe && job.status === "SUCCEEDED" && <p className="runner-note">Recipe unavailable: {job.recipeUnavailableReason ?? "This record predates recipe capture; run again."}</p>}
+      {!job.recipe && job.status === "SUCCEEDED" && <p className="runner-note">{t("Recipe unavailable: ")}{t(job.recipeUnavailableReason ?? "This record predates recipe capture; run again.")}</p>}
       {job.comparison && <div className="run-comparison">
-        <h3>Compared with baseline</h3>
-        <p className="hint">Baseline {job.comparison.baselineRunId}. Differences do not mean acceptance failed; identical results do not prove acceptance passed. Changes alone do not explain their cause.</p>
-        <p>Current acceptance: <strong>{labels[job.verification?.status] ?? "Not available"}</strong> · execution: {job.status}.</p>
-        <p>Metric requirement: {job.executionOptions?.metricKey ? `${job.executionOptions.metricKey} ${job.executionOptions.metricOperator} ${job.executionOptions.metricTarget} (tolerance ${job.executionOptions.metricTolerance ?? 0})` : "No numeric requirement configured"}. See output checks above for individual failures.</p>
-        {job.comparison.groups ? Object.entries(job.comparison.groups).map(([name, group]) => <p key={name}>{name === "inputs" ? "Code, environment and conditions" : "Observed outputs"}: <strong>{group.status}</strong>{group.unknownCount > 0 && ` · ${group.unknownCount} unavailable field(s)`}</p>)
-          : <p className="hint">Older record: grouped difference summary was not saved. Inspect individual fields below.</p>}
-        <div className="comparison-scroll" tabIndex={0} role="region" aria-label="Baseline and current values">
-          <table className="comparison-table"><caption>Recorded differences · baseline versus current run</caption>
-            <thead><tr><th>Field</th><th>Baseline</th><th>Current</th><th>Difference</th></tr></thead>
+        <h3>{t("Compared with baseline")}</h3>
+        <p className="hint">{t("Baseline ")}{t(job.comparison.baselineRunId)}{t(". Differences do not mean acceptance failed; identical results do not prove acceptance passed. Changes alone do not explain their cause.")}</p>
+        <p>{t("Current acceptance: ")}<strong>{t(labels[job.verification?.status] ?? "Not available")}</strong>{t(" · execution: ")}{t(job.status)}.</p>
+        <p>{t("Metric requirement: ")}{job.executionOptions?.metricKey ? `${job.executionOptions.metricKey} ${job.executionOptions.metricOperator} ${job.executionOptions.metricTarget} (tolerance ${job.executionOptions.metricTolerance ?? 0})` : "No numeric requirement configured"}{t(". See output checks above for individual failures.")}</p>
+        {job.comparison.groups ? Object.entries(job.comparison.groups).map(([name, group]) => <p key={name}>{t(name === "inputs" ? "Code, environment and conditions" : "Observed outputs")}: <strong>{t(group.status)}</strong>{t(group.unknownCount > 0 && ` · ${group.unknownCount} unavailable field(s)`)}</p>)
+          : <p className="hint">{t("Older record: grouped difference summary was not saved. Inspect individual fields below.")}</p>}
+        <div className="comparison-scroll" tabIndex={0} role="region" aria-label={t("Baseline and current values")}>
+          <table className="comparison-table"><caption>{t("Recorded differences · baseline versus current run")}</caption>
+            <thead><tr><th>{t("Field")}</th><th>{t("Baseline")}</th><th>{t("Current")}</th><th>{t("Difference")}</th></tr></thead>
             <tbody>{job.comparison.rows.map((row) => <tr key={row.id}>
-              <th scope="row">{row.id}{row.key && <small>{row.key}</small>}</th>
+              <th scope="row">{t(row.id)}{row.key && <small>{row.key}</small>}</th>
               {[row.baseline, row.current].map((value, index) => <td key={index}>{value !== null && typeof value === "object"
-                ? <details><summary>Inspect recorded values</summary><pre>{comparisonValue(value)}</pre></details>
+                ? <details><summary>{t("Inspect recorded values")}</summary><pre>{comparisonValue(value)}</pre></details>
                 : <pre>{comparisonValue(value)}</pre>}</td>)}
-              <td><strong>{row.status}</strong>{row.delta !== undefined && <small>Delta: {comparisonValue(row.delta)}</small>}</td>
+              <td><strong>{t(row.status)}</strong>{row.delta !== undefined && <small>{t("Delta: ")}{comparisonValue(row.delta)}</small>}</td>
             </tr>)}</tbody>
           </table>
         </div>
@@ -614,6 +623,7 @@ function ExecutionEvidence({ job, onPrepareReplay, replayDisabled }) {
 }
 
 function LandingHero() {
+  const { t } = useLanguage();
   const [motion, setMotion] = useState(() => !window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const [videoFailed, setVideoFailed] = useState(false);
   useEffect(() => {
@@ -628,23 +638,24 @@ function LandingHero() {
         src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260809_012548_ef22562c-c0ae-4816-ad9d-f8922af4e6a7.mp4" />}
     </div>
     <div className="cinema-copy">
-      <p className="capability-pill"><span aria-hidden="true">✳</span> Public source. Explicit evidence.</p>
-      <h1 id="workspace-title" tabIndex={-1}><span>Research code.</span><span>Verifiable results.</span></h1>
-      <p className="cinema-description">Inspect a research repository, review its experiment,<br className="desktop-break" /> and check the result against a declared reference.</p>
-      <button className="cinema-cta" type="button" onClick={() => { document.getElementById("repository")?.focus({ preventScroll: true }); document.getElementById("scan-form")?.scrollIntoView({ block: "start" }); }}>Start a scan <span aria-hidden="true">↗</span></button>
-      <p className="cinema-caption">Scanning needs no Docker. Execution stays local.</p>
+      <p className="capability-pill"><span aria-hidden="true">✳</span>{t(" Public source. Explicit evidence.")}</p>
+      <h1 id="workspace-title" tabIndex={-1}><span>{t("Research code.")}</span><span>{t("Verifiable results.")}</span></h1>
+      <p className="cinema-description">{t("Inspect a research repository, review its experiment,")}<br className="desktop-break" />{t(" and check the result against a declared reference.")}</p>
+      <button className="cinema-cta" type="button" onClick={() => { document.getElementById("repository")?.focus({ preventScroll: true }); document.getElementById("scan-form")?.scrollIntoView({ block: "start" }); }}>{t("Start a scan ")}<span aria-hidden="true">↗</span></button>
+      <p className="cinema-caption">{t("Scanning needs no Docker. Execution stays local.")}</p>
     </div>
-    <ol className="cinema-stages" aria-label="Reproduction workflow">
-      <li><span aria-hidden="true">01</span><strong>Scan</strong><small>Source-linked findings</small></li>
-      <li><span aria-hidden="true">02</span><strong>Review</strong><small>Commands and inputs</small></li>
-      <li><span aria-hidden="true">03</span><strong>Execute</strong><small>Local Docker workflow</small></li>
-      <li><span aria-hidden="true">04</span><strong>Verify</strong><small>Declared reference checks</small></li>
+    <ol className="cinema-stages" aria-label={t("Reproduction workflow")}>
+      <li><span aria-hidden="true">01</span><strong>{t("Scan")}</strong><small>{t("Source-linked findings")}</small></li>
+      <li><span aria-hidden="true">02</span><strong>{t("Review")}</strong><small>{t("Commands and inputs")}</small></li>
+      <li><span aria-hidden="true">03</span><strong>{t("Execute")}</strong><small>{t("Local Docker workflow")}</small></li>
+      <li><span aria-hidden="true">04</span><strong>{t("Verify")}</strong><small>{t("Declared reference checks")}</small></li>
     </ol>
-    <button className="motion-toggle" type="button" disabled={videoFailed} aria-pressed={motion && !videoFailed} onClick={() => setMotion(!motion)}>{videoFailed ? "Static background · video unavailable" : motion ? "Pause background" : "Play background"}</button>
+    <button className="motion-toggle" type="button" disabled={videoFailed} aria-pressed={motion && !videoFailed} onClick={() => setMotion(!motion)}>{t(videoFailed ? "Static background · video unavailable" : motion ? "Pause background" : "Play background")}</button>
   </section>;
 }
 
 function App() {
+  const { t } = useLanguage();
   const [page, setPage] = useState("scan");
   const [url, setUrl] = useState("");
   const [report, setReport] = useState(exampleReport);
@@ -1029,78 +1040,79 @@ function App() {
   return (
     <div className={`shell${page === "scan" ? " home-shell" : ""}`}>
       <header className="topbar">
-        <a className="brand" href="#scan" onClick={(event) => { event.preventDefault(); setPage("scan"); }} aria-label="ReproCheck home">
+        <a className="brand" href="#scan" onClick={(event) => { event.preventDefault(); setPage("scan"); }} aria-label={t("ReproCheck home")}>
           <span className="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" width="28" height="28" fill="none"><circle cx="16" cy="16" r="11" stroke="currentColor" strokeWidth="1.5" strokeDasharray="2 3" /><path d="m10 16 4 4 8-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
-          <span>ReproCheck</span>
+          <span>{t("ReproCheck")}</span>
         </a>
-        <nav className="workspace-nav" aria-label="Workspace">
+        <nav className="workspace-nav" aria-label={t("Workspace")}>
           {[["scan", "Start scan"], ["report", "Scan report"], ["configure", "Experiment"], ["run", "Execution"], ["web", "Web verification"], ["history", "History & comparison"]].map(([id, label]) =>
-            <button type="button" key={id} aria-current={page === id ? "page" : undefined} disabled={(id === "configure" && isExample) || (id === "run" && !runJob)} onClick={() => setPage(id)}>{label}{id === "run" && runJob?.status === "RUNNING" && <span className="live-dot" />}</button>)}
+            <button type="button" key={id} aria-current={page === id ? "page" : undefined} disabled={(id === "configure" && isExample) || (id === "run" && !runJob)} onClick={() => setPage(id)}>{t(label)}{id === "run" && runJob?.status === "RUNNING" && <span className="live-dot" />}</button>)}
         </nav>
-        <span className="mode">Research workbench</span>
+        <LanguageSwitcher />
+        <span className="mode">{t("Research workbench")}</span>
       </header>
 
       <main>
         {page === "scan" && <LandingHero />}
         <div className="workspace-heading" hidden={page === "scan"}>
-          <div><p className="eyebrow">REPROCHECK / {page}</p><h1 id={page === "scan" ? "scan-workspace-title" : "workspace-title"} tabIndex={-1}>{{ scan: "From repository to evidence.", report: "Inspect the evidence", configure: "Review your experiment", run: "Execution workspace", web: "Web application verification", history: "Run history & comparison" }[page]}</h1></div>
-          {page !== "scan" && <button type="button" className="download-button" onClick={() => setPage("scan")}>New scan</button>}
+          <div><p className="eyebrow">{t("REPROCHECK / ")}{t(page)}</p><h1 id={page === "scan" ? "scan-workspace-title" : "workspace-title"} tabIndex={-1}>{t({ scan: "From repository to evidence.", report: "Inspect the evidence", configure: "Review your experiment", run: "Execution workspace", web: "Web application verification", history: "Run history & comparison" }[page])}</h1></div>
+          {page !== "scan" && <button type="button" className="download-button" onClick={() => setPage("scan")}>{t("New scan")}</button>}
         </div>
-        {loading && <p className="source-strip" role="status">Scanning repository and collecting source evidence…</p>}
-        {error && page !== "scan" && <p className="error" role="alert">{error}</p>}
-        {page !== "scan" && page !== "history" && page !== "web" && <div className="source-strip"><span>{page !== "run" && isExample ? "DEMO · not a live scan" : "PINNED SOURCE"}</span><strong>{page === "run" ? runJob?.repository : report.repository}</strong><code>{(page === "run" ? runJob?.commit : report.commit)?.slice(0, 12)}</code></div>}
+        {loading && <p className="source-strip" role="status">{t("Scanning repository and collecting source evidence…")}</p>}
+        {error && page !== "scan" && <p className="error" role="alert">{t(error)}</p>}
+        {page !== "scan" && page !== "history" && page !== "web" && <div className="source-strip"><span>{t(page !== "run" && isExample ? "DEMO · not a live scan" : "PINNED SOURCE")}</span><strong>{page === "run" ? runJob?.repository : report.repository}</strong><code>{(page === "run" ? runJob?.commit : report.commit)?.slice(0, 12)}</code></div>}
         <div hidden={page !== 'web'}><WebVerification active={page === 'web'} /></div>
         <div className="view-panel home-layout" hidden={page !== "scan"}>
         <section className="scan-panel" id="scan-form" aria-labelledby="scan-title">
           <div>
-            <p className="eyebrow">Research repository readiness</p>
-            <h2 id="scan-title">Check a research repository</h2>
-            <p className="hint">Find a supported entry, review its inputs, and verify the result against a declared reference.</p>
+            <p className="eyebrow">{t("Research repository readiness")}</p>
+            <h2 id="scan-title">{t("Check a research repository")}</h2>
+            <p className="hint">{t("Find a supported entry, review its inputs, and verify the result against a declared reference.")}</p>
           </div>
 
           <form onSubmit={submit}>
-            <label htmlFor="repository">Public GitHub repository</label>
+            <label htmlFor="repository">{t("Public GitHub repository")}</label>
             <div className="input-row">
               <input
                 id="repository"
                 type="url"
                 value={url}
                 onChange={(event) => setUrl(event.target.value)}
-                placeholder="https://github.com/owner/repository"
+                placeholder={t("https://github.com/owner/repository")}
                 required
               />
               <button type="submit" disabled={executionBusy}>
-                {loading ? "Scanning…" : "Scan repository"}
+                {t(loading ? "Scanning…" : "Scan repository")}
               </button>
             </div>
-            <p className="hint">Public repositories only · Results pinned to a commit</p>
-            <details className="case-picker"><summary>Explore reviewed examples</summary><div className="case-grid">
-            <button className="download-button" type="button" onClick={loadCpuEvaluation} disabled={executionBusy}>Load CPU evaluation example</button>
-            <p className="hint">Small synthetic held-out dataset + trained checkpoint. Loads a reviewed command; does not start execution.</p>
+            <p className="hint">{t("Public repositories only · Results pinned to a commit")}</p>
+            <details className="case-picker"><summary>{t("Explore reviewed examples")}</summary><div className="case-grid">
+            <button className="download-button" type="button" onClick={loadCpuEvaluation} disabled={executionBusy}>{t("Load CPU evaluation example")}</button>
+            <p className="hint">{t("Small synthetic held-out dataset + trained checkpoint. Loads a reviewed command; does not start execution.")}</p>
             {reviewedBenchmarks.map((benchmark) => <div key={benchmark.id}>
-              <button className="download-button" type="button" onClick={() => loadPublishedBenchmark(benchmark.id)} disabled={executionBusy}>Load published {benchmark.datasetName} benchmark</button>
-              <p className="hint">{benchmark.matrix ? `Reviewed real-data paper matrix: ${benchmark.matrix.cells.length} pinned result cells.` : `Reviewed real-data paper case. Reference: ${benchmark.reference.value} in the pinned README.`} Does not start execution.</p>
+              <button className="download-button" type="button" onClick={() => loadPublishedBenchmark(benchmark.id)} disabled={executionBusy}>{t("Load published ")}{benchmark.datasetName}{t(" benchmark")}</button>
+              <p className="hint">{benchmark.matrix ? `Reviewed real-data paper matrix: ${benchmark.matrix.cells.length} pinned result cells.` : `Reviewed real-data paper case. Reference: ${benchmark.reference.value} in the pinned README.`}{t(" Does not start execution.")}</p>
             </div>)}
             {reviewedTrainings.map((benchmark) => <div key={benchmark.id}>
-              <button className="download-button" type="button" onClick={() => loadPublishedBenchmark(benchmark.id)} disabled={executionBusy}>Load {benchmark.datasetName} training reproduction</button>
-              <p className="hint">Train the original paper model once, save a new checkpoint, then evaluate against {benchmark.reference.value}. The reference is a comparison, not a promised result.</p>
+              <button className="download-button" type="button" onClick={() => loadPublishedBenchmark(benchmark.id)} disabled={executionBusy}>{t("Load ")}{benchmark.datasetName}{t(" training reproduction")}</button>
+              <p className="hint">{t("Train the original paper model once, save a new checkpoint, then evaluate against ")}{benchmark.reference.value}{t(". The reference is a comparison, not a promised result.")}</p>
             </div>)}
             </div></details>
           </form>
           <SavedExperimentImport disabled={executionBusy} onOpenVersion={openExperimentVersion} />
 
-          {error && <p className="error" role="alert">{error}</p>}
+          {error && <p className="error" role="alert">{t(error)}</p>}
         </section>
         <aside className="journey-card">
-          <p className="eyebrow">How it works</p><h2>A clear path to your first result</h2>
+          <p className="eyebrow">{t("How it works")}</p><h2>{t("A clear path to your first result")}</h2>
           <ol className="journey-steps">
-            <li><strong>Scan the source</strong><p>Inspect README instructions, files and supported Python / Make entries. No Docker required.</p></li>
-            <li><strong>Review the plan</strong><p>Confirm commands, input files, dataset and output expectations before execution.</p></li>
-            <li><strong>Run in Docker</strong><p>Execute the selected workflow locally with explicit resource limits and live logs.</p></li>
-            <li><strong>Compare the evidence</strong><p>Separate process completion, output checks and reference matching. Keep the record for replay.</p></li>
+            <li><strong>{t("Scan the source")}</strong><p>{t("Inspect README instructions, files and supported Python / Make entries. No Docker required.")}</p></li>
+            <li><strong>{t("Review the plan")}</strong><p>{t("Confirm commands, input files, dataset and output expectations before execution.")}</p></li>
+            <li><strong>{t("Run in Docker")}</strong><p>{t("Execute the selected workflow locally with explicit resource limits and live logs.")}</p></li>
+            <li><strong>{t("Compare the evidence")}</strong><p>{t("Separate process completion, output checks and reference matching. Keep the record for replay.")}</p></li>
           </ol>
-          <p className="runner-note">A passing check is not full-paper reproduction. Only the reviewed experiment and declared conditions are verified.</p>
-          <button type="button" className="download-button" onClick={() => setPage("report")}>{isExample ? "Preview a clearly labelled demo report" : "Return to latest report"}</button>
+          <p className="runner-note">{t("A passing check is not full-paper reproduction. Only the reviewed experiment and declared conditions are verified.")}</p>
+          <button type="button" className="download-button" onClick={() => setPage("report")}>{t(isExample ? "Preview a clearly labelled demo report" : "Return to latest report")}</button>
         </aside>
         </div>
 
@@ -1111,34 +1123,32 @@ function App() {
           <div className="report-heading">
             <div>
               <div className="report-label">
-                <span>{isExample ? "Example report" : "Scan report"}</span>
+                <span>{t(isExample ? "Example report" : "Scan report")}</span>
                 <span className={`status status-${report.status.toLowerCase()}`}>
-                  {report.status.replaceAll("_", " ")}
+                  {t(report.status.replaceAll("_", " "))}
                 </span>
               </div>
               <h2 id="report-title">{report.repository}</h2>
-              <p className="commit">Commit {report.commit}</p>
+              <p className="commit">{t("Commit ")}{report.commit}</p>
             </div>
 
             <div className="report-tools">
               <dl className="summary">
                 <div>
-                  <dt>Files</dt>
+                  <dt>{t("Files")}</dt>
                   <dd>{report.filesScanned}</dd>
                 </div>
                 <div>
-                  <dt>Blockers</dt>
+                  <dt>{t("Blockers")}</dt>
                   <dd>{report.summary.failures}</dd>
                 </div>
                 <div>
-                  <dt>Warnings</dt>
+                  <dt>{t("Warnings")}</dt>
                   <dd>{report.summary.warnings}</dd>
                 </div>
               </dl>
               {!isExample && (
-                <button className="download-button" type="button" onClick={downloadReport}>
-                  Download JSON
-                </button>
+                <button className="download-button" type="button" onClick={downloadReport}>{t(" Download JSON ")}</button>
               )}
             </div>
           </div>
@@ -1146,24 +1156,24 @@ function App() {
           <ReportChecks key={`${report.repository}@${report.commit}`} report={report} />
         </section>
 
-        {!isExample && <details className="advanced-evidence"><summary>Paper provenance and protocol lock</summary><PaperProvenance report={report} /><ProtocolLock report={report} /></details>}
-        {!isExample && <div className="next-action"><p>Review the source evidence, then configure the workflow and its acceptance conditions.</p><button type="button" onClick={() => setPage("configure")}>Configure experiment →</button></div>}
+        {!isExample && <details className="advanced-evidence"><summary>{t("Paper provenance and protocol lock")}</summary><PaperProvenance report={report} /><ProtocolLock report={report} /></details>}
+        {!isExample && <div className="next-action"><p>{t("Review the source evidence, then configure the workflow and its acceptance conditions.")}</p><button type="button" onClick={() => setPage("configure")}>{t("Configure experiment →")}</button></div>}
         </div>
         <div className="view-panel configure-layout" hidden={page !== "configure"}>
-        {!isExample && !acceptance.benchmarkId && <details className="matrix-options"><summary>Advanced · multi-experiment paper matrix</summary><PaperMatrix key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onApply={applyMatrix} /></details>}
+        {!isExample && !acceptance.benchmarkId && <details className="matrix-options"><summary>{t("Advanced · multi-experiment paper matrix")}</summary><PaperMatrix key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onApply={applyMatrix} /></details>}
 
         {displayedPlan && (
           <section className="plan" aria-labelledby="plan-title">
             <div className="plan-heading">
               <div>
                 <p className="eyebrow">
-                  {report.workflows ? "Reproduction workflows" : "Reproduction plan"}
+                  {t(report.workflows ? "Reproduction workflows" : "Reproduction plan")}
                 </p>
                 <h2 id="plan-title">
-                  {displayedPlan.title ?? activeWorkflow?.title ?? "From repository to first run"}
+                  {t(displayedPlan.title ?? activeWorkflow?.title ?? "From repository to first run")}
                 </h2>
                 {report.workflows && (
-                  <div className="workflow-tabs" role="tablist" aria-label="Reproduction workflow">
+                  <div className="workflow-tabs" role="tablist" aria-label={t("Reproduction workflow")}>
                     {report.workflows.map((workflow) => (
                       <button
                         className={`workflow-tab${workflow.id === activeWorkflow?.id ? " workflow-tab-active" : ""}`}
@@ -1181,7 +1191,7 @@ function App() {
                         }}
                         key={workflow.id}
                       >
-                        {workflow.title}
+                        {t(workflow.title)}
                       </button>
                     ))}
                   </div>
@@ -1189,12 +1199,10 @@ function App() {
               </div>
               <div className="plan-actions">
                 <span className={`status status-${displayedPlan.status.toLowerCase()}`}>
-                  {displayedPlan.status}
+                  {t(displayedPlan.status)}
                 </span>
                 {!isExample && (
-                  <button className="download-button" type="button" onClick={downloadPlan}>
-                    Download plan
-                  </button>
+                  <button className="download-button" type="button" onClick={downloadPlan}>{t(" Download plan ")}</button>
                 )}
               </div>
             </div>
@@ -1205,22 +1213,22 @@ function App() {
                   <span className="step-number">{index + 1}</span>
                   <div>
                     <div className="plan-step-heading">
-                      <h3>{step.title}</h3>
-                      <span>{step.status}</span>
+                      <h3>{t(step.title)}</h3>
+                      <span>{t(step.status)}</span>
                     </div>
                     {step.command && <code className="command">{step.command}</code>}
                     {step.instruction && <p className="plan-instruction">{step.instruction}</p>}
                     {step.status === "MISSING" && (
-                      <p className="plan-missing">This step was not automatically recognized. Review the source instructions before proceeding.</p>
+                      <p className="plan-missing">{t("This step was not automatically recognized. Review the source instructions before proceeding.")}</p>
                     )}
                     {step.evidence?.file && (
                       <p className="evidence">
-                        <span>Evidence</span>
+                        <span>{t("Evidence")}</span>
                         <EvidenceLink report={report} evidence={step.evidence} />
                       </p>
                     )}
                     {step.references?.length > 0 && (
-                      <div className="plan-tags" aria-label="Validated command references">
+                      <div className="plan-tags" aria-label={t("Validated command references")}>
                         {step.references.map((reference) => (
                           <code className={reference.exists === false ? "tag-missing" : "tag-valid"} key={reference.path}>
                             {reference.external ? "External" : reference.exists ? "Found" : "Unknown"} · {reference.path}
@@ -1229,7 +1237,7 @@ function App() {
                       </div>
                     )}
                     {step.parameters?.length > 0 && (
-                      <div className="plan-tags" aria-label="Experiment parameters">
+                      <div className="plan-tags" aria-label={t("Experiment parameters")}>
                         {step.parameters.map((parameter) => (
                           <code key={parameter.name}>
                             {parameter.name}{parameter.default === null ? "" : `=${parameter.default}`}
@@ -1241,7 +1249,7 @@ function App() {
                 </li>
               ))}
               {displayedPlan.steps.length === 0 && (
-                <li className="workflow-empty">{activeWorkflow?.id === "quick" && report.quickEntries?.length ? "Choose an entry in Start here above to review it in Quick." : "No matching entry point was automatically recognized. Check the README and source files."}{activeWorkflow?.id === "evaluation" && " You can explicitly supply and review an Evaluation entry below; it is not a discovered README command."}</li>
+                <li className="workflow-empty">{t(activeWorkflow?.id === "quick" && report.quickEntries?.length ? "Choose an entry in Start here above to review it in Quick." : "No matching entry point was automatically recognized. Check the README and source files.")}{t(activeWorkflow?.id === "evaluation" && " You can explicitly supply and review an Evaluation entry below; it is not a discovered README command.")}</li>
               )}
             </ol>
           </section>
@@ -1253,120 +1261,118 @@ function App() {
           <section className="runner execution-config" aria-labelledby="runner-title">
             <div className="runner-heading">
               <div>
-                <p className="eyebrow">Isolated execution preview</p>
-                <h2 id="runner-title" tabIndex={-1}>Check before running unknown code</h2>
-                <p>Re-scan the pinned commit and inspect the local Docker runner.</p>
+                <p className="eyebrow">{t("Isolated execution preview")}</p>
+                <h2 id="runner-title" tabIndex={-1}>{t("Check before running unknown code")}</h2>
+                <p>{t("Re-scan the pinned commit and inspect the local Docker runner.")}</p>
               </div>
               <button type="button" onClick={checkPreflight} disabled={executionBusy || (activeWorkflow.id === "quick" && report.quickEntries?.length > 0 && !acceptance.quickEntryId) || (acceptance.candidateReview && !acceptance.candidateReview.confirmed) || (activeWorkflow.id === "training" && !acceptance.benchmarkId && !acceptance.experiment)}>
-                {preflightLoading ? "Checking…" : "Check local runner"}
+                {t(preflightLoading ? "Checking…" : "Check local runner")}
               </button>
             </div>
 
-            {preflightError && <p className="runner-error" role="alert">{preflightError}</p>}
+            {preflightError && <p className="runner-error" role="alert">{t(preflightError)}</p>}
             {activeWorkflow.id === "training" && !acceptance.benchmarkId && <>
               <ExperimentConfig key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onApply={applyExperiment} onInvalidate={invalidateExperiment} importedDraft={importedDraft} />
-              <p className="hint" role="status">{acceptance.experiment ? "Reviewed experiment applied. Check local runner to inspect every effective command before execution." : "Review and apply an experiment configuration to enable the runner check."}</p>
+              <p className="hint" role="status">{t(acceptance.experiment ? "Reviewed experiment applied. Check local runner to inspect every effective command before execution." : "Review and apply an experiment configuration to enable the runner check.")}</p>
             </>}
             {acceptance.benchmarkId && <div className="run-comparison">
               <h3>{selectedReviewedCase.title}</h3>
               <p>{selectedReviewedCase.dataset}</p>
               <p>{selectedReviewedCase.model}</p>
-              {selectedReviewedCase.training && <p className="runner-note">{selectedReviewedCase.training.scope}</p>}
+              {selectedReviewedCase.training && <p className="runner-note">{t(selectedReviewedCase.training.scope)}</p>}
               <p><a href={selectedReviewedCase.reference.url} target="_blank" rel="noreferrer">{selectedReviewedCase.matrix ? `Pinned Table 1 source · ${selectedReviewedCase.matrix.cells.length} result cells` : `Pinned reference: ${selectedReviewedCase.metricKey ?? "accuracy"} ${selectedReviewedCase.reference.value} · tolerance ${selectedReviewedCase.reference.tolerance}`}</a></p>
               <p className="hint">{selectedReviewedCase.matrix ? `Fixed output checks: published-matrix-ok · fresh ${selectedReviewedCase.matrix.outputFile} · all ${selectedReviewedCase.matrix.cells.length} cells match at four decimals.` : `Fixed output checks: published-benchmark-ok · fresh benchmark-result.json · ${selectedReviewedCase.metricKey ?? "accuracy"} = ${selectedReviewedCase.reference.value} ± ${selectedReviewedCase.reference.tolerance}.`}</p>
-              <p className="runner-note">{selectedReviewedCase.compatibility.note}</p>
-              <p className="hint">Commands and expectations are fixed for this reviewed case. Choose another workflow or scan again to return to custom Evaluation.</p>
-              <details><summary>Review benchmark manifest and adapter source</summary><pre className="evaluation-source">{JSON.stringify(selectedReviewedCase, null, 2)}{"\n\n"}{selectedBenchmarkSource}{selectedReviewedCase.training && <>{"\n\n"}{trainingSource}</>}</pre></details>
+              <p className="runner-note">{t(selectedReviewedCase.compatibility.note)}</p>
+              <p className="hint">{t("Commands and expectations are fixed for this reviewed case. Choose another workflow or scan again to return to custom Evaluation.")}</p>
+              <details><summary>{t("Review benchmark manifest and adapter source")}</summary><pre className="evaluation-source">{JSON.stringify(selectedReviewedCase, null, 2)}{"\n\n"}{selectedBenchmarkSource}{selectedReviewedCase.training && <>{"\n\n"}{trainingSource}</>}</pre></details>
             </div>}
             {["quick", "evaluation"].includes(activeWorkflow.id) && !acceptance.benchmarkId && (
               <fieldset className="run-options" disabled={optionsLocked}>
-                <legend>Entry and output expectations</legend>
-                <label htmlFor="quick-command">Reviewed {activeWorkflow.id === "evaluation" ? "Evaluation" : "Quick"} command (optional)</label>
+                <legend>{t("Entry and output expectations")}</legend>
+                <label htmlFor="quick-command">{t("Reviewed ")}{t(activeWorkflow.id === "evaluation" ? "Evaluation" : "Quick")}{t(" command (optional)")}</label>
                 <input id="quick-command" value={quickCommand} maxLength={6000}
-                  placeholder="Leave blank to use the README entry point"
+                  placeholder={t("Leave blank to use the README entry point")}
                   disabled={optionsLocked}
                   onChange={(event) => { setQuickCommand(event.target.value); if (acceptance.candidateReview) updateAcceptance("candidateReview", { ...acceptance.candidateReview, confirmed: false }); setPreflight(null); setRunConfirmed(false); }} />
-                <p className="hint">Replaces the final entry point, not dependency installation. Evaluation can use an explicit reviewed entry when none was detected. Review every effective command below.</p>
-                {quickCommand === cpuEvaluationCommand && <details><summary>Review CPU evaluation example source</summary><pre className="evaluation-source">{cpuEvaluationSource}</pre></details>}
-                <label htmlFor="expected-text">Expected text in the entry output (optional)</label>
+                <p className="hint">{t("Replaces the final entry point, not dependency installation. Evaluation can use an explicit reviewed entry when none was detected. Review every effective command below.")}</p>
+                {quickCommand === cpuEvaluationCommand && <details><summary>{t("Review CPU evaluation example source")}</summary><pre className="evaluation-source">{cpuEvaluationSource}</pre></details>}
+                <label htmlFor="expected-text">{t("Expected text in the entry output (optional)")}</label>
                 <input id="expected-text" value={acceptance.expectedText} maxLength={300} disabled={optionsLocked}
-                  placeholder="For example: autodiff-ok" onChange={(event) => updateAcceptance("expectedText", event.target.value)} />
-                <label htmlFor="output-file">Expected new or changed output file (optional)</label>
+                  placeholder={t("For example: autodiff-ok")} onChange={(event) => updateAcceptance("expectedText", event.target.value)} />
+                <label htmlFor="output-file">{t("Expected new or changed output file (optional)")}</label>
                 <input id="output-file" value={acceptance.outputFile} maxLength={240} disabled={optionsLocked}
-                  placeholder="results/metrics.json — relative to the repository" onChange={(event) => updateAcceptance("outputFile", event.target.value)} />
+                  placeholder={t("results/metrics.json — relative to the repository")} onChange={(event) => updateAcceptance("outputFile", event.target.value)} />
                 <div className="metric-options">
-                  <label>JSON key / CSV column (optional)<input value={acceptance.metricKey} maxLength={100} disabled={optionsLocked}
-                    placeholder="accuracy or evaluation.accuracy" onChange={(event) => updateAcceptance("metricKey", event.target.value)} /></label>
-                  <label>Condition<select value={acceptance.metricOperator} disabled={optionsLocked}
-                    onChange={(event) => updateAcceptance("metricOperator", event.target.value)}><option value="gte">At least (≥)</option><option value="lte">At most (≤)</option><option value="eq">Match reference (±)</option></select></label>
-                  <label>Target<input type="number" step="any" value={acceptance.metricTarget} disabled={optionsLocked}
+                  <label>{t("JSON key / CSV column (optional)")}<input value={acceptance.metricKey} maxLength={100} disabled={optionsLocked}
+                    placeholder={t("accuracy or evaluation.accuracy")} onChange={(event) => updateAcceptance("metricKey", event.target.value)} /></label>
+                  <label>{t("Condition")}<select value={acceptance.metricOperator} disabled={optionsLocked}
+                    onChange={(event) => updateAcceptance("metricOperator", event.target.value)}><option value="gte">{t("At least (≥)")}</option><option value="lte">{t("At most (≤)")}</option><option value="eq">{t("Match reference (±)")}</option></select></label>
+                  <label>{t("Target")}<input type="number" step="any" value={acceptance.metricTarget} disabled={optionsLocked}
                     onChange={(event) => updateAcceptance("metricTarget", event.target.value)} /></label>
                 </div>
-                {acceptance.metricOperator === "eq" && <label>Absolute tolerance<input type="number" min="0" step="any" value={acceptance.metricTolerance} disabled={optionsLocked}
+                {acceptance.metricOperator === "eq" && <label>{t("Absolute tolerance")}<input type="number" min="0" step="any" value={acceptance.metricTolerance} disabled={optionsLocked}
                   onChange={(event) => updateAcceptance("metricTolerance", event.target.value)} /></label>}
                 {activeWorkflow.id === "evaluation" && <>
-                  <label>Dataset / evaluation split (required)<input value={acceptance.dataset} maxLength={500} disabled={optionsLocked} placeholder="Dataset version, held-out split, acquisition path"
+                  <label>{t("Dataset / evaluation split (required)")}<input value={acceptance.dataset} maxLength={500} disabled={optionsLocked} placeholder={t("Dataset version, held-out split, acquisition path")}
                     onChange={(event) => updateAcceptance("dataset", event.target.value)} /></label>
-                  <label>Model / checkpoint (required)<input value={acceptance.model} maxLength={500} disabled={optionsLocked} placeholder="Architecture, checkpoint version, source"
+                  <label>{t("Model / checkpoint (required)")}<input value={acceptance.model} maxLength={500} disabled={optionsLocked} placeholder={t("Architecture, checkpoint version, source")}
                     onChange={(event) => updateAcceptance("model", event.target.value)} /></label>
-                  <label>Reference metric source (required)<input value={acceptance.reference} maxLength={500} disabled={optionsLocked} placeholder="Pinned README/table/paper URL, or explicitly user-defined target"
+                  <label>{t("Reference metric source (required)")}<input value={acceptance.reference} maxLength={500} disabled={optionsLocked} placeholder={t("Pinned README/table/paper URL, or explicitly user-defined target")}
                     onChange={(event) => updateAcceptance("reference", event.target.value)} /></label>
                   <label className="runner-confirm"><input type="checkbox" checked={acceptance.assetsInEntry} disabled={optionsLocked}
-                    onChange={(event) => updateAcceptance("assetsInEntry", event.target.checked)} />My reviewed entry handles dataset and model preparation; replace separate data/model steps explicitly.</label>
-                  <p className="hint">Required: a new/changed JSON or single-row CSV file and numeric metric. Units must match the reference; no implicit conversion. Context is user-declared; CPU/2 GB/10 minute limits still apply.</p>
+                    onChange={(event) => updateAcceptance("assetsInEntry", event.target.checked)} />{t("My reviewed entry handles dataset and model preparation; replace separate data/model steps explicitly.")}</label>
+                  <p className="hint">{t("Required: a new/changed JSON or single-row CSV file and numeric metric. Units must match the reference; no implicit conversion. Context is user-declared; CPU/2 GB/10 minute limits still apply.")}</p>
                   {acceptance.candidateReview && <label className="runner-confirm"><input type="checkbox" checked={acceptance.candidateReview.confirmed}
-                    onChange={(event) => updateAcceptance("candidateReview", { ...acceptance.candidateReview, confirmed: event.target.checked })} />I reviewed the candidate sources, completed missing fields, and confirmed this command, dataset/split, model and reference correspond. Editing any field requires review again.</label>}
+                    onChange={(event) => updateAcceptance("candidateReview", { ...acceptance.candidateReview, confirmed: event.target.checked })} />{t("I reviewed the candidate sources, completed missing fields, and confirmed this command, dataset/split, model and reference correspond. Editing any field requires review again.")}</label>}
                 </>}
               </fieldset>
             )}
             {preflight && (
               <div className="runner-result" aria-live="polite">
                 <div className={`runner-state ${preflight.runtime.available ? "runner-ready" : "runner-unavailable"}`}>
-                  <strong>{preflight.runtime.available ? "Docker ready" : preflight.runtime.reason}</strong>
-                  <span>{preflight.limits.cpus} CPUs · {preflight.limits.memory} · {preflight.limits.timeoutMinutes} minute limit · no host mounts</span>
+                  <strong>{t(preflight.runtime.available ? "Docker ready" : preflight.runtime.reason)}</strong>
+                  <span>{t(preflight.limits.cpus)}{t(" CPUs · ")}{t(preflight.limits.memory)} · {t(preflight.limits.timeoutMinutes)}{t(" minute limit · no host mounts")}</span>
                 </div>
-                <h3>Automated steps</h3>
-                {preflight.commandOverride && <p className="runner-note">User-reviewed override · original: {preflight.commandOverride.original}</p>}
-                {preflight.preparationOverride && <details><summary>Explicit dataset/model preparation override</summary><pre>{JSON.stringify(preflight.preparationOverride, null, 2)}</pre></details>}
-                {preflight.benchmark && <details><summary>Reviewed compatibility profile, hash locks and original README steps</summary><pre className="evaluation-source">{JSON.stringify(preflight.benchmark, null, 2)}</pre></details>}
-                {preflight.candidate && <details><summary>Reviewed generated configuration and manual changes</summary><pre className="evaluation-source">{JSON.stringify(preflight.candidate, null, 2)}</pre></details>}
+                <h3>{t("Automated steps")}</h3>
+                {preflight.commandOverride && <p className="runner-note">{t("User-reviewed override · original: ")}{t(preflight.commandOverride.original)}</p>}
+                {preflight.preparationOverride && <details><summary>{t("Explicit dataset/model preparation override")}</summary><pre>{JSON.stringify(preflight.preparationOverride, null, 2)}</pre></details>}
+                {preflight.benchmark && <details><summary>{t("Reviewed compatibility profile, hash locks and original README steps")}</summary><pre className="evaluation-source">{JSON.stringify(preflight.benchmark, null, 2)}</pre></details>}
+                {preflight.candidate && <details><summary>{t("Reviewed generated configuration and manual changes")}</summary><pre className="evaluation-source">{JSON.stringify(preflight.candidate, null, 2)}</pre></details>}
                 <ol>
                   {preflight.automatedSteps.map((step) => (
-                    <li key={step.id}><span>{step.title}</span>{preflight.executionOptions.experiment?.inputs?.[step.id]?.length > 0 && <p>Required input files: {preflight.executionOptions.experiment.inputs[step.id].join(", ")}</p>}<code className="command">{step.effectiveCommand ?? step.command}</code></li>
+                    <li key={step.id}><span>{t(step.title)}</span>{preflight.executionOptions.experiment?.inputs?.[step.id]?.length > 0 && <p>{t("Required input files: ")}{t(preflight.executionOptions.experiment.inputs[step.id].join(", "))}</p>}<code className="command">{step.effectiveCommand ?? step.command}</code></li>
                   ))}
                 </ol>
                 {preflight.manualSteps.length > 0 && (
                   <>
-                    <h3>Manual preparation</h3>
+                    <h3>{t("Manual preparation")}</h3>
                     <ul>
                       {preflight.manualSteps.map((step) => (
-                        <li key={step.id}><span>{step.title}</span><code className="command">{step.instruction}</code></li>
+                        <li key={step.id}><span>{t(step.title)}</span><code className="command">{step.instruction}</code></li>
                       ))}
                     </ul>
                   </>
                 )}
-                <p className="runner-note">Output checks: {preflight.executionOptions.expectedText || preflight.executionOptions.outputFile
+                <p className="runner-note">{t("Output checks: ")}{t(preflight.executionOptions.expectedText || preflight.executionOptions.outputFile
                   ? [preflight.executionOptions.expectedText && `text: ${preflight.executionOptions.expectedText}`, preflight.executionOptions.outputFile && `new/changed file: ${preflight.executionOptions.outputFile}`,
                     preflight.executionOptions.metricKey && `metric: ${preflight.executionOptions.metricKey} ${preflight.executionOptions.metricOperator === "eq" ? "=" : preflight.executionOptions.metricOperator === "gte" ? ">=" : "<="} ${preflight.executionOptions.metricTarget}${preflight.executionOptions.metricOperator === "eq" ? ` ± ${preflight.executionOptions.metricTolerance}` : ""}`].filter(Boolean).join(" · ")
-                  : "none — execution exit code only"}</p>
+                  : "none — execution exit code only")}</p>
                 <label className="runner-confirm">
                   <input
                     type="checkbox"
                     checked={runConfirmed}
                     disabled={optionsLocked}
                     onChange={(event) => setRunConfirmed(event.target.checked)}
-                  />
-                  I understand this runs untrusted code with network access inside a temporary Docker container.
-                </label>
+                  />{t(" I understand this runs untrusted code with network access inside a temporary Docker container. ")}</label>
                 <button
                   type="button"
                   onClick={() => startExecution("readme")}
                   disabled={!preflight.runnable || !runConfirmed || executionBusy}
                 >
-                  {runLoading ? "Starting…" : activeWorkflow.id === "training" ? "Run Training reproduction" : activeWorkflow.id === "evaluation" ? "Run Evaluation" : activeWorkflow.id === "paper-matrix" ? "Run paper matrix" : "Run Quick verification"}
+                  {t(runLoading ? "Starting…" : activeWorkflow.id === "training" ? "Run Training reproduction" : activeWorkflow.id === "evaluation" ? "Run Evaluation" : activeWorkflow.id === "paper-matrix" ? "Run paper matrix" : "Run Quick verification")}
                 </button>
                 {!preflight.runnable && (
-                  <p className="runner-note">{preflight.reason ?? "The workflow is not ready to execute."}</p>
+                  <p className="runner-note">{t(preflight.reason ?? "The workflow is not ready to execute.")}</p>
                 )}
               </div>
             )}
@@ -1375,35 +1381,34 @@ function App() {
         </div>
         <div className="view-panel" hidden={page !== "run"}>
             {runJob && (
-              <section className="runner" id="current-execution" tabIndex={-1} aria-label="Current execution">
+              <section className="runner" id="current-execution" tabIndex={-1} aria-label={t("Current execution")}>
               <div className="run-log">
                 <div>
-                  <strong role="status" aria-live="polite">
-                    Execution {runJob.status.replaceAll("_", " ")} · {runJob.replayOf ? "Locked recipe" : runJob.packageIndex === "pypi" ? "Official PyPI" : "README package source"}
+                  <strong role="status" aria-live="polite">{t(" Execution ")}{t(runJob.status.replaceAll("_", " "))} · {t(runJob.replayOf ? "Locked recipe" : runJob.packageIndex === "pypi" ? "Official PyPI" : "README package source")}
                   </strong>
                   {runJob.status === "RUNNING" && (
-                    <button className="download-button" type="button" onClick={cancelExecution}>Cancel</button>
+                    <button className="download-button" type="button" onClick={cancelExecution}>{t("Cancel")}</button>
                   )}
                 </div>
                 <ol className="run-progress">
                   {runJob.steps.map((step) => (
                     <li className={`run-step-${step.status.toLowerCase()}`} key={step.id}>
-                      <span>{step.status}</span>{step.title}
+                      <span>{t(step.status)}</span>{t(step.title)}
                     </li>
                   ))}
                 </ol>
                 {runJob.failureStep && (
-                  <p className="runner-error">Stopped at: {runJob.failureStep.title}</p>
+                  <p className="runner-error">{t("Stopped at: ")}{t(runJob.failureStep.title)}</p>
                 )}
                 {runJob.diagnosis && <p className="run-diagnosis">{runJob.diagnosis}</p>}
                 {["FAILED", "TIMED_OUT"].includes(runJob.status) && runJob.workflowId === "paper-matrix" && !runJob.replayOf && (
-                  <button type="button" onClick={() => startExecution("readme", runJob)} disabled={executionBusy || !runConfirmed}>Retry complete paper workflow</button>
+                  <button type="button" onClick={() => startExecution("readme", runJob)} disabled={executionBusy || !runConfirmed}>{t("Retry complete paper workflow")}</button>
                 )}
                 {["FAILED", "TIMED_OUT"].includes(runJob.status)
                   && runJob.failureStep?.id === "install"
                   && !runJob.replayOf && runJob.packageIndex === "readme" && (
                     <button type="button" onClick={() => startExecution("pypi", runJob)} disabled={executionBusy || !runConfirmed || !!runJob.replayOf}>
-                      {runLoading ? "Starting…" : "Retry with official PyPI"}
+                      {t(runLoading ? "Starting…" : "Retry with official PyPI")}
                     </button>
                 )}
                 <RunConsole key={runJob.id} text={visibleRunLog(runJob.log)} job={runJob} active={page === "run"} />
@@ -1416,22 +1421,22 @@ function App() {
         <div className="view-panel" hidden={page !== "history"}>
         <section className="runner run-history" aria-labelledby="history-title">
           <div className="runner-heading">
-            <div><p className="eyebrow">Local evidence archive</p><h2 id="history-title">Recent executions</h2>
-              <p>Records stay on this computer and survive server restarts. They are not uploaded to GitHub.</p></div>
-            <button className="download-button" type="button" onClick={refreshHistory}>Refresh history</button>
+            <div><p className="eyebrow">{t("Local evidence archive")}</p><h2 id="history-title">{t("Recent executions")}</h2>
+              <p>{t("Records stay on this computer and survive server restarts. They are not uploaded to GitHub.")}</p></div>
+            <button className="download-button" type="button" onClick={refreshHistory}>{t("Refresh history")}</button>
           </div>
-          {historyError && <p className="runner-note" role="status">{historyError}</p>}
-          <p className="hint">Open a saved record to inspect its evidence or review a frozen replay. Replay comparisons separate changed inputs from metric acceptance.</p>
-          {history.length === 0 && !historyError && <div className="empty-state"><h3>No saved executions yet</h3><p>Scan a repository and complete a reviewed run to build your local evidence archive.</p><button type="button" className="download-button" onClick={() => setPage("scan")}>Start with a repository</button></div>}
+          {historyError && <p className="runner-note" role="status">{t(historyError)}</p>}
+          <p className="hint">{t("Open a saved record to inspect its evidence or review a frozen replay. Replay comparisons separate changed inputs from metric acceptance.")}</p>
+          {history.length === 0 && !historyError && <div className="empty-state"><h3>{t("No saved executions yet")}</h3><p>{t("Scan a repository and complete a reviewed run to build your local evidence archive.")}</p><button type="button" className="download-button" onClick={() => setPage("scan")}>{t("Start with a repository")}</button></div>}
           <ul className="history-list">
             {history.map((entry) => <li key={entry.id}>
-              <div><strong>{entry.repository}</strong><p className="hint">{entry.workflowId ?? "quick"} · Execution: {entry.status} · Output checks: {entry.verificationStatus}{entry.evaluationStatus && ` · Evaluation: ${entry.evaluationStatus}`} · {entry.commit.startsWith('sha256:') ? 'snapshot' : 'commit'} {entry.commit.replace(/^sha256:/, '').slice(0, 7)} · {new Date(entry.startedAt).toLocaleString()}</p></div>
-              <button className="download-button" type="button" onClick={() => openHistory(entry.id)}>View record</button>
+              <div><strong>{entry.repository}</strong><p className="hint">{t(entry.workflowId ?? "quick")}{t(" · Execution: ")}{t(entry.status)}{t(" · Output checks: ")}{t(entry.verificationStatus)}{entry.evaluationStatus && <>{t(" · Evaluation: ")}{t(entry.evaluationStatus.replaceAll("_", " "))}</>} · {t(entry.commit.startsWith('sha256:') ? 'snapshot' : 'commit')} {entry.commit.replace(/^sha256:/, '').slice(0, 7)} · {t(new Date(entry.startedAt).toLocaleString())}</p></div>
+              <button className="download-button" type="button" onClick={() => openHistory(entry.id)}>{t("View record")}</button>
             </li>)}
           </ul>
-          {archivedJob && <div className="run-log" id="archived-execution" tabIndex={-1} aria-label="Saved execution details">
-            <div><strong>{archivedJob.repository} · {archivedJob.status}</strong><button className="download-button" type="button" onClick={() => setArchivedJob(null)}>Close record</button></div>
-            <p className="commit">{archivedJob.id} · {archivedJob.kind === 'web' ? 'Source snapshot' : 'Commit'} {archivedJob.commit}</p>
+          {archivedJob && <div className="run-log" id="archived-execution" tabIndex={-1} aria-label={t("Saved execution details")}>
+            <div><strong>{t(archivedJob.repository)} · {t(archivedJob.status)}</strong><button className="download-button" type="button" onClick={() => setArchivedJob(null)}>{t("Close record")}</button></div>
+            <p className="commit">{t(archivedJob.id)} · {t(archivedJob.kind === 'web' ? 'Source snapshot' : 'Commit')} {t(archivedJob.commit)}</p>
             {archivedJob.diagnosis && <p className="run-diagnosis">{archivedJob.diagnosis}</p>}
             <RunConsole key={archivedJob.id} text={visibleRunLog(archivedJob.log)} job={archivedJob} active={page === "history"} />
             {archivedJob.kind === 'web' ? <WebEvidence job={archivedJob} /> : <ExecutionEvidence job={archivedJob} onPrepareReplay={prepareReplay} replayDisabled={executionBusy} />}
@@ -1439,38 +1444,38 @@ function App() {
           </div>}
         </section>
         {(replayPreview || replayLoading || replayError) && <section className="runner recipe-preview" aria-labelledby="recipe-title">
-          <div className="runner-heading"><div><p className="eyebrow">Frozen reproduction recipe</p><h2 id="recipe-title" tabIndex={-1}>Review before replaying</h2></div>
-            <button className="download-button" type="button" disabled={executionBusy} onClick={() => { setReplayPreview(null); setReplayError(""); setReplayConfirmed(false); }}>Close recipe</button></div>
-          {replayLoading && <p role="status">Checking the exact local image…</p>}
-          {replayError && <p className="runner-error" role="alert">{replayError}</p>}
+          <div className="runner-heading"><div><p className="eyebrow">{t("Frozen reproduction recipe")}</p><h2 id="recipe-title" tabIndex={-1}>{t("Review before replaying")}</h2></div>
+            <button className="download-button" type="button" disabled={executionBusy} onClick={() => { setReplayPreview(null); setReplayError(""); setReplayConfirmed(false); }}>{t("Close recipe")}</button></div>
+          {replayLoading && <p role="status">{t("Checking the exact local image…")}</p>}
+          {replayError && <p className="runner-error" role="alert">{t(replayError)}</p>}
           {replayPreview && <>
-            <p>{replayPreview.repository} · pinned commit {replayPreview.commit}</p>
-            <p className="hint">The saved commit is fetched directly; changes to the latest GitHub branch do not change this recipe.</p>
-            <p className="commit">Image {replayPreview.recipe.imageId} · Python {replayPreview.recipe.python}</p>
-            <p className="hint">{replayPreview.limits.cpus} CPUs · {replayPreview.limits.memory} · {replayPreview.limits.timeoutMinutes} minute limit · no host mounts</p>
+            <p>{t(replayPreview.repository)}{t(" · pinned commit ")}{t(replayPreview.commit)}</p>
+            <p className="hint">{t("The saved commit is fetched directly; changes to the latest GitHub branch do not change this recipe.")}</p>
+            <p className="commit">{t("Image ")}{t(replayPreview.recipe.imageId)}{t(" · Python ")}{t(replayPreview.recipe.python)}</p>
+            <p className="hint">{t(replayPreview.limits.cpus)}{t(" CPUs · ")}{t(replayPreview.limits.memory)} · {t(replayPreview.limits.timeoutMinutes)}{t(" minute limit · no host mounts")}</p>
             {replayPreview.benchmark && <>
-              <p className="runner-note">{replayPreview.benchmark.compatibility.note}</p>
-              <details><summary>Frozen benchmark input hashes and pinned reference</summary><pre>{JSON.stringify(replayPreview.benchmark, null, 2)}</pre></details>
+              <p className="runner-note">{t(replayPreview.benchmark.compatibility.note)}</p>
+              <details><summary>{t("Frozen benchmark input hashes and pinned reference")}</summary><pre>{JSON.stringify(replayPreview.benchmark, null, 2)}</pre></details>
             </>}
-            {replayPreview.candidate && <details><summary>Frozen reviewed candidate sources</summary><pre>{JSON.stringify(replayPreview.candidate, null, 2)}</pre></details>}
-            <ol>{replayPreview.automatedSteps.map((step) => <li key={step.id}><strong>{step.title}</strong>{replayPreview.executionOptions.experiment?.inputs?.[step.id]?.length > 0 && <p>Required input files: {replayPreview.executionOptions.experiment.inputs[step.id].join(", ")}</p>}<code className="command">{step.command}</code></li>)}</ol>
-            <details><summary>Locked dependencies and output expectations</summary><pre>{JSON.stringify({ dependencies: replayPreview.recipe.dependencies, expectations: replayPreview.executionOptions }, null, 2)}</pre></details>
-            {replayPreview.recipe.warnings.map((warning) => <p className="runner-note" key={warning}>{warning}</p>)}
-            {!replayPreview.runnable && <p className="runner-error" role="alert">{replayPreview.reason}</p>}
+            {replayPreview.candidate && <details><summary>{t("Frozen reviewed candidate sources")}</summary><pre>{JSON.stringify(replayPreview.candidate, null, 2)}</pre></details>}
+            <ol>{replayPreview.automatedSteps.map((step) => <li key={step.id}><strong>{t(step.title)}</strong>{replayPreview.executionOptions.experiment?.inputs?.[step.id]?.length > 0 && <p>{t("Required input files: ")}{t(replayPreview.executionOptions.experiment.inputs[step.id].join(", "))}</p>}<code className="command">{step.command}</code></li>)}</ol>
+            <details><summary>{t("Locked dependencies and output expectations")}</summary><pre>{JSON.stringify({ dependencies: replayPreview.recipe.dependencies, expectations: replayPreview.executionOptions }, null, 2)}</pre></details>
+            {replayPreview.recipe.warnings.map((warning) => <p className="runner-note" key={warning}>{t(warning)}</p>)}
+            {!replayPreview.runnable && <p className="runner-error" role="alert">{t(replayPreview.reason)}</p>}
             <label className="runner-confirm"><input type="checkbox" checked={replayConfirmed} disabled={executionBusy}
-              onChange={(event) => setReplayConfirmed(event.target.checked)} />I reviewed this frozen recipe and understand it re-runs untrusted code with network access in a new temporary container.</label>
-            <button type="button" disabled={!replayPreview.runnable || !replayConfirmed || executionBusy} onClick={startReplay}>{runLoading ? "Starting…" : "Replay frozen recipe"}</button>
+              onChange={(event) => setReplayConfirmed(event.target.checked)} />{t("I reviewed this frozen recipe and understand it re-runs untrusted code with network access in a new temporary container.")}</label>
+            <button type="button" disabled={!replayPreview.runnable || !replayConfirmed || executionBusy} onClick={startReplay}>{t(runLoading ? "Starting…" : "Replay frozen recipe")}</button>
           </>}
         </section>}
         </div>
       </main>
-      <footer className="workspace-footer"><span>ReproCheck · Evidence before conclusions</span><span>Public Python repositories · Local Docker execution</span></footer>
+      <footer className="workspace-footer"><span>{t("ReproCheck · Evidence before conclusions")}</span><span>{t("Public Python repositories · Local Docker execution")}</span></footer>
     </div>
   );
 }
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>
-    <App />
+    <LanguageProvider><App /></LanguageProvider>
   </StrictMode>,
 );
