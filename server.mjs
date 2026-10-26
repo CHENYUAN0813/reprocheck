@@ -68,6 +68,7 @@ async function handleApi(request, response) {
         const runtime = await webRuntime();
         if (!runtime.available) { sendJson(response, 409, { error: runtime.reason }); return true; }
         if (input.caseId === 'sydney-planner' && !runtime.plannerAvailable) { sendJson(response, 409, { error: 'Run npm run setup:planner before this case' }); return true; }
+        if (input.caseId === 'npm-project' && !runtime.npmAvailable) { sendJson(response, 409, { error: 'Run npm run setup:web to update the npm browser image' }); return true; }
         sendJson(response, 202, startWebRun(input));
       } else { sendJson(response, 405, { error: 'Method not allowed' }); }
     } catch (error) { sendJson(response, 400, { error: error.message }); }

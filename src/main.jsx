@@ -1,3 +1,4 @@
+import { loadWorkspace, saveWorkspace, savedReport, savedPage, validRunId } from "./workspace-storage.mjs";
 import { useLanguage, LanguageProvider, LanguageSwitcher } from "./language.jsx";
 import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -659,11 +660,13 @@ function LandingHero() {
 
 function App() {
   const { t } = useLanguage();
-  const [page, setPage] = useState("scan");
-  const [url, setUrl] = useState("");
-  const [report, setReport] = useState(exampleReport);
+  const [restored] = useState(() => loadWorkspace("app"));
+  const initialReport = savedReport(restored.report);
+  const [page, setPage] = useState(() => savedPage(restored.page, initialReport, restored.runId));
+  const [url, setUrl] = useState(() => initialReport ? `https://github.com/${initialReport.repository}` : "");
+  const [report, setReport] = useState(() => initialReport ?? exampleReport);
   const [importedDraft, setImportedDraft] = useState(null);
-  const [isExample, setIsExample] = useState(true);
+  const [isExample, setIsExample] = useState(() => !initialReport);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [selectedWorkflow, setSelectedWorkflow] = useState("quick");
@@ -683,6 +686,23 @@ function App() {
   const [replayConfirmed, setReplayConfirmed] = useState(false);
   const [replayLoading, setReplayLoading] = useState(false);
   const [replayError, setReplayError] = useState("");
+  const [restoringRecord, setRestoringRecord] = useState(() => validRunId(restored.page === "run" ? restored.runId : restored.page === "history" ? restored.archivedId : null));
+  useEffect(() => {
+    if (restoringRecord) return;
+    saveWorkspace("app", { page, report: isExample ? null : report, runId: runJob?.id ?? restored.runId,
+      archivedId: archivedJob?.id ?? null });
+  }, [page, report, isExample, runJob?.id, archivedJob?.id, restoringRecord]);
+  useEffect(() => {
+    let disposed = false;
+    const id = restored.page === 'run' ? restored.runId : restored.page === 'history' ? restored.archivedId : null;
+    if (!validRunId(id)) return;
+    fetch(`/api/runs/${id}`, { signal: AbortSignal.timeout(15000) }).then(async response => {
+      const value = await response.json();
+      if (!response.ok) throw new Error(value.error || 'Unable to load the record');
+      if (!disposed) { if (restored.page === 'run') setRunJob(value); else setArchivedJob(value); }
+    }).catch(failure => { if (!disposed) { setHistoryError(failure.message); setPage('history'); } }).finally(() => { if (!disposed) setRestoringRecord(false); });
+    return () => { disposed = true; };
+  }, []);
   const executionBusy = loading || preflightLoading || runLoading || replayLoading || runJob?.status === "RUNNING";
   useEffect(() => { if (replayPreview) document.getElementById("recipe-title")?.focus(); }, [replayPreview]);
   useEffect(() => { if (runJob?.id) setPage("run"); }, [runJob?.id]);
@@ -1049,7 +1069,7 @@ function App() {
         </a>
         <nav className="workspace-nav" aria-label={t("Workspace")}>
           {[["scan", "Start scan"], ["report", "Scan report"], ["configure", "Experiment"], ["run", "Execution"], ["web", "Web verification"], ["history", "History & comparison"]].map(([id, label]) =>
-            <button type="button" key={id} aria-current={page === id ? "page" : undefined} disabled={(id === "configure" && (isExample || report.projectType === "unknown")) || (id === "run" && !runJob)} onClick={() => setPage(id)}>{t(label)}{id === "run" && runJob?.status === "RUNNING" && <span className="live-dot" />}</button>)}
+            <button type="button" key={id} aria-current={page === id ? "page" : undefined} disabled={(id === "configure" && (isExample || ["node", "unknown"].includes(report.projectType))) || (id === "run" && !runJob)} onClick={() => setPage(id)}>{t(label)}{id === "run" && runJob?.status === "RUNNING" && <span className="live-dot" />}</button>)}
         </nav>
         <LanguageSwitcher />
         <span className="mode">{t("Research workbench")}</span>
@@ -1064,7 +1084,7 @@ function App() {
         {loading && <p className="source-strip" role="status">{t("Scanning repository and collecting source evidence…")}</p>}
         {error && page !== "scan" && <p className="error" role="alert">{t(error)}</p>}
         {page !== "scan" && page !== "history" && page !== "web" && <div className="source-strip"><span>{t(page !== "run" && isExample ? "DEMO · not a live scan" : "PINNED SOURCE")}</span><strong>{page === "run" ? runJob?.repository : report.repository}</strong><code>{(page === "run" ? runJob?.commit : report.commit)?.slice(0, 12)}</code></div>}
-        <div hidden={page !== 'web'}><WebVerification active={page === 'web'} /></div>
+        <div hidden={page !== 'web'}><WebVerification active={page === 'web'} sourceReport={report} /></div>
         <div className="view-panel home-layout" hidden={page !== "scan"}>
         <section className="scan-panel" id="scan-form" aria-labelledby="scan-title">
           <div>
@@ -1162,10 +1182,11 @@ function App() {
 
         {!isExample && report.paperProvenance && <details className="advanced-evidence"><summary>{t("Paper provenance and protocol lock")}</summary><PaperProvenance report={report} /><ProtocolLock report={report} /></details>}
         {!isExample && report.projectType === 'mixed' && <NodeProject report={report} />}
-        {!isExample && report.projectType !== 'unknown' && <div className="next-action"><p>{t(report.projectType === 'node' ? 'Review declared commands; automated npm execution is not available.' : "Review the source evidence, then configure the workflow and its acceptance conditions.")}</p><button type="button" onClick={() => setPage("configure")}>{t(report.projectType === 'node' ? 'Review application commands →' : "Configure experiment →")}</button></div>}
+        {!isExample && report.nodeProject?.packages?.some(pkg => !pkg.error && pkg.installCommand) && <div className="next-action"><p>{t('Review an npm configuration generated from this scan, then run installation, tasks and browser smoke checks.')}</p><button type="button" onClick={() => setPage('web')}>{t('Review and run web acceptance →')}</button></div>}
+        {!isExample && !['node', 'unknown'].includes(report.projectType) && <div className="next-action"><p>{t("Review the source evidence, then configure the workflow and its acceptance conditions.")}</p><button type="button" onClick={() => setPage('configure')}>{t("Configure experiment →")}</button></div>}
         </div>
         <div className="view-panel configure-layout" hidden={page !== "configure"}>
-        {report.nodeProject && <NodeProject report={report} />}
+
         {!isExample && report.paperMatrixDraft && !acceptance.benchmarkId && <details className="matrix-options"><summary>{t("Advanced · multi-experiment paper matrix")}</summary><PaperMatrix key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onApply={applyMatrix} /></details>}
 
         {displayedPlan && (

@@ -50,7 +50,7 @@ Use **Docker Desktop with Linux containers** for execution (not for scanning). W
 
 **Process: SUCCEEDED** only means the commands exited normally. **Configured checks passed** means the declared output checks and this case's input identities passed. **MATCHED REFERENCE** means the observed metric met the configured reference condition. The scope remains the **selected experiment only**: Iris evaluates a pretrained model; it does not retrain it or reproduce an entire paper. A failure is a result to inspect, not a reason to silently change the reference.
 
-Switching views preserves the current form. Refreshing the browser clears unsaved configuration; download a configuration before leaving if you need it later. Saved execution records remain in the local history.
+Refreshing or reopening the same local address in the same browser restores the last scan report, view and execution record. Restoring a record never starts a new run. Keep the local server running for an active task to continue; restarting the server may interrupt it. The npm configuration form is saved locally; other unsaved experiment drafts, API keys and execution consent are not restored. Download configurations you need to keep. Configuration review reopens at the saved report. Saved execution records also remain in History & comparison. Browser storage must be enabled; clearing it removes this workspace shortcut, not server-side run records.
 
 Keep the server open while running. Do not run `npm test` during an experiment under `npm run dev`: some tests temporarily edit example fixtures and can trigger a watcher restart. For a run without file watching, use `node server.mjs` instead of `npm run dev` (in the same token-configured terminal).
 
@@ -58,7 +58,28 @@ Keep the server open while running. Do not run `npm test` during an experiment u
 
 Scanning detects Python, JavaScript/TypeScript, mixed and unknown projects. JS/TS reports read up to five `package.json` files, parse npm lock files, show declared Node version requirements and scripts, and recognize README `npm` / `npm.cmd` commands. Mixed projects receive both applicable rule sets; unknown projects are not assigned Python experiment requirements.
 
-For `CHENYUAN0813/rumor-control`, review installation, test/build tasks, the Vite service entry and the Ollama prerequisite. **These are declarations, not executed checks.** Lock consistency, dependency installation, runtime compatibility and service availability remain unverified. Generic npm execution is not enabled; the separately reviewed web cases below retain their execution path. `npm run dev` needs readiness and browser checks, not merely an exit-code check.
+For `CHENYUAN0813/rumor-control`, review installation, test/build tasks, the Vite service entry and the Ollama prerequisite. **Scanning reads declarations; it does not execute them.** Continue with the configuration-driven flow below to actually install and run a single npm application. `npm run dev` needs readiness and browser checks, not merely an exit-code check.
+
+## Run a single npm application
+
+1. Start Docker Desktop and run `npm run setup:web` once (repeat after browser-script updates).
+2. Scan a public npm repository. Select **Review and run web acceptance →** to open **Configured npm application**. The form uses the scanned repository and fixed commit, and suggests script names from `package.json`.
+3. Review installation (`npm ci` requires a committed lock), working directory, test/build/start script names, start arguments, port and page path. Use finite test/build scripts, not watch mode. Missing tests are **SKIPPED / not verified**, never counted as passed. Optionally require specific page text.
+4. Check the environment, acknowledge execution, then select **Run web verification**. The runner fetches the fixed commit, checks the selected scripts exist, installs dependencies, runs the configured tasks, starts the service and opens Chromium. No repository-specific ReproCheck code is required.
+5. Download the npm configuration to share or reuse it. Importing selects its pinned source; inspect that source before confirming. The current npm form is also saved in this browser, without execution consent. Results, stage status, configuration and screenshots remain in local history. Retry uses fresh temporary containers.
+
+**Current scope:** public GitHub, one npm package, Node 24.14.0, no workspaces/symlinks/submodules, no environment secrets or connected databases/model services. Installation has network access; tests/build/runtime are offline. Each container has 2 CPUs; app memory is 2 GB and browser memory 1 GB, with a total ten-minute deadline. Temporary containers are removed; image caches and local evidence remain on disk.
+
+The browser checks successful HTTP response, visible text (or the configured text) and uncaught exceptions during page load. **Passing these checks does not establish that all business features work.** Existing reviewed cases add their own business assertions. Test the generic path with `node test-npm.mjs --docker`: it uses the same executor for pinned Rumor Control and `amannn/vite-react-starter`, and covers cancellation/retry and an intentionally failing text condition.
+
+## Run Rumor Control from its scan report
+
+1. Start Docker Desktop and run `npm run setup:web` (also run this once after updating the acceptance scripts).
+2. Scan `https://github.com/CHENYUAN0813/rumor-control`. The reviewed commit is `b4775b30554f00b1deb9051279fc4facbd7d8ba0`.
+3. In **Web verification**, select **Rumor Control** for the reviewed game-specific checks. The scan-report button opens the generic npm configuration described above; it does not run these game actions. Inspect the commands, check the execution confirmation, then select **Run web verification**. The displayed fixed commit is the version executed, regardless of the latest upstream branch.
+4. Watch npm installation, tests, lint, build, Vite readiness and Chromium checks. A successful run records investigation, evidence submission with Ollama unavailable, and save/reload checks. Download the execution evidence or reopen it in history; retry starts clean temporary containers.
+
+**Live Ollama inference is NOT RUN.** The browser checks the real application's failure fallback, with no fake model responses. This acceptance does not validate all ten rounds, winning strategy, or model quality. Dependencies install with network access; subsequent tests and browser steps run offline. No host ports or folders are exposed. The existing browser image is reused (Node 24), and temporary containers are removed after completion/cancellation. This is a reviewed case, not arbitrary-repository automatic execution.
 
 ## Web application acceptance
 

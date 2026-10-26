@@ -7,14 +7,14 @@ export function NodeProject({ report }) {
   return <section className="runner" aria-label={t('JavaScript / TypeScript declarations')}>
     <p className="eyebrow">{t('JavaScript / TypeScript declarations')}</p>
     <h2>{t('Review installation, tasks and services')}</h2>
-    <p>{t('These scripts are declarations, not verified execution results. Review scripts and lifecycle hooks before running them. Generic npm execution is not enabled in ReproCheck.')}</p>
+    <p>{t('These scripts are declarations, not verified execution results. Review scripts and lifecycle hooks before running them. Use the npm configuration form to review and execute a single application.')}</p>
     <p className="hint">{t('Lock files are parsed, not installed. Version requirements are declarations, not compatibility checks. Workspace and lock consistency require manual review.')}</p>
     {project.packages.map(pkg => <div className="runner-result" key={pkg.path}>
       <h3>{pkg.path}</h3>
       <a href={`https://github.com/${report.repository}/blob/${report.commit}/${pkg.path.split('/').map(encodeURIComponent).join('/')}`} target="_blank" rel="noreferrer">{t('View pinned manifest')}</a>
       <dl className="evaluation-summary"><dt>{t('Working directory')}</dt><dd><code>{pkg.directory}</code></dd>
         <dt>Node.js</dt><dd>{pkg.nodeVersion ?? t('Not declared')}</dd>
-        <dt>{t('Package manager')}</dt><dd>{pkg.packageManager ?? t('Not declared')}</dd></dl>
+        <dt>{t('Package manager')}</dt><dd>{pkg.packageManager ?? t(pkg.lockValid ? 'npm lock found; manager version not declared' : 'Not declared')}</dd></dl>
       {pkg.error ? <p role="alert">{t(pkg.error)}</p> : <>
         <h4>{t('Installation candidate')}</h4>
         {pkg.installCommand ? <pre><code>{pkg.installCommand}</code></pre> : <p>{t('Review the declared package manager; no npm installation command is recommended.')}</p>}
