@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "repository": "CHENYUAN0813/ai-task-planner",
+  "commit": "0f8aba6eaff9bc05a3b3eeeb0ec6b1c35a70ebf9",
+  "services": [
+    {
+      "id": "web",
+      "runtime": "node",
+      "directory": "Frontend",
+      "install": [
+        "npm",
+        "ci"
+      ],
+      "test": [
+        "npm",
+        "run",
+        "test"
+      ],
+      "build": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "start": [
+        "npm",
+        "run",
+        "dev",
+        "--",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "5173",
+        "--strictPort"
+      ],
+      "port": 5173,
+      "readyPath": "/",
+      "dependsOn": [
+        "api"
+      ],
+      "env": {},
+      "generatedEnv": []
+    },
+    {
+      "id": "api",
+      "runtime": "python",
+      "directory": ".",
+      "install": [
+        "pip",
+        "install",
+        "-r",
+        "Backend/requirements.txt"
+      ],
+      "test": [],
+      "build": [],
+      "start": [
+        "python",
+        "-m",
+        "uvicorn",
+        "Backend.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000"
+      ],
+      "port": 8000,
+      "readyPath": "/health",
+      "dependsOn": [],
+      "env": {
+        "AUTH_MODE": "demo"
+      },
+      "generatedEnv": [
+        "REGENERATION_SIGNING_KEY",
+        "GEMINI_API_KEY"
+      ]
+    }
+  ],
+  "browser": {
+    "service": "web",
+    "path": "/",
+    "expectedText": "Dashboard",
+    "requiredApi": [
+      {
+        "service": "api",
+        "path": "/auth/config"
+      }
+    ]
+  }
+}

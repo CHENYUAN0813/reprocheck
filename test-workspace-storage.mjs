@@ -25,3 +25,11 @@ const denied = { getItem() { throw Error('denied'); }, setItem() { throw Error('
 assert.deepEqual(loadWorkspace('app', denied), {});
 assert.equal(saveWorkspace('app', {}, denied), false);
 console.log('PASS workspace storage: report, navigation, run identity and storage failures');
+
+const { changesScannedSource } = await import('./src/web-target.mjs');
+assert.equal(changesScannedSource(report, report), false);
+assert.equal(changesScannedSource(report, { ...report, repository: 'other/repo' }), true);
+assert.equal(changesScannedSource(report, { ...report, commit: 'b'.repeat(40) }), true);
+assert.equal(changesScannedSource(report, { id: 'web-notes', name: 'Fixture' }), true);
+assert.equal(changesScannedSource(null, report), false);
+assert.equal(changesScannedSource(report, null), false);

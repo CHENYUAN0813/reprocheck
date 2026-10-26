@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { npmDraft, npmCommands, validateNpmConfig } from './npm-config.mjs';
+import { npmDraft, npmPlan, npmCommands, validateNpmConfig } from './npm-config.mjs';
 import { prepareNpmSource } from './npm-source.mjs';
 import { validateWebRequest, startWebRun, getWebRun, cancelWebRun, webScreenshot } from './web-runner.mjs';
 import { getSavedRun } from './run-store.mjs';
@@ -23,6 +23,18 @@ await assert.rejects(prepareNpmSource('.', config, mock(entry('package.json'))),
 await assert.rejects(prepareNpmSource('.', config, mock(entry('package.json'), { ...manifest, workspaces: ['apps/*'] })), /single npm/);
 await assert.rejects(prepareNpmSource('.', config, mock(entry('package.json'), { scripts: { dev: 'vite' } })), /script not found/);
 await assert.rejects(prepareNpmSource('.', { ...config, directory: 'apps/web' }, async (_program, args) => ({ output: args.includes('ls-tree') ? entry('package.json') + entry('apps/web/package.json') : args.includes('show') ? JSON.stringify(args.at(-1).endsWith(':package.json') ? { workspaces: ['apps/*'] } : manifest) : '' })), /workspaces/);
+const planPkg = { directory: '.', lockValid: true, scripts: [{ name: 'dev', command: 'vite' }, { name: 'start', command: 'node server.js' }, { name: 'test', command: 'node --test' }, { name: 'build', command: 'vite build' }] };
+const readmeReport = commands => ({ ...config, nodeProject: { manifestsFound: 1, commands: commands.map((command, i) => ({ command, evidence: { file: 'README.md', line: i + 1 } })) } });
+const fromReadme = npmPlan(readmeReport(['npm install', 'npm run dev -- --port 5180 --host 0.0.0.0', 'npm test']), planPkg);
+assert.equal(fromReadme.config.install, 'install');
+assert.equal(fromReadme.config.port, 5180);
+assert.equal(fromReadme.sources.startScript.evidence.line, 2);
+assert.equal(npmPlan(readmeReport(['npm run dev', 'npm start']), planPkg).config.startScript, '');
+assert.equal(npmPlan(readmeReport(['npm run missing', 'npm install && curl evil']), planPkg).warnings.length, 2);
+assert.equal(npmPlan(readmeReport(['npm ci']), { ...planPkg, lockValid: false }).sources.install, undefined);
+assert.equal(npmPlan(readmeReport(['npm start']), { ...planPkg, directory: 'app/' }).sources.startScript, undefined);
+assert.equal(npmPlan({ ...readmeReport(['npm start']), nodeProject: { ...readmeReport(['npm start']).nodeProject, manifestsFound: 2 } }, planPkg).sources.startScript, undefined);
+assert.equal(npmPlan(readmeReport(['npm.cmd run dev']), planPkg).sources.startScript.evidence.file, 'README.md');
 console.log('PASS npm configuration, pinned source and declaration boundaries');
 
 if (process.argv.includes('--docker')) {

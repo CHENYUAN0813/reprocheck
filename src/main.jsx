@@ -1084,7 +1084,7 @@ function App() {
         {loading && <p className="source-strip" role="status">{t("Scanning repository and collecting source evidence…")}</p>}
         {error && page !== "scan" && <p className="error" role="alert">{t(error)}</p>}
         {page !== "scan" && page !== "history" && page !== "web" && <div className="source-strip"><span>{t(page !== "run" && isExample ? "DEMO · not a live scan" : "PINNED SOURCE")}</span><strong>{page === "run" ? runJob?.repository : report.repository}</strong><code>{(page === "run" ? runJob?.commit : report.commit)?.slice(0, 12)}</code></div>}
-        <div hidden={page !== 'web'}><WebVerification active={page === 'web'} sourceReport={report} /></div>
+        <div hidden={page !== 'web'}><WebVerification active={page === 'web'} sourceReport={isExample ? null : report} /></div>
         <div className="view-panel home-layout" hidden={page !== "scan"}>
         <section className="scan-panel" id="scan-form" aria-labelledby="scan-title">
           <div>
@@ -1141,7 +1141,8 @@ function App() {
 
         <div className="view-panel" hidden={page !== "report"}>
 
-        {!isExample && !acceptance.benchmarkId && <SuggestedEntry key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onChoose={chooseQuickEntry} />}
+        {!isExample && !!report.servicePlan?.services?.length && <section className="runner"><h2>{t('Review service startup plan')}</h2><p>{t('Review all detected services together, including their dependencies and API/browser checks. This draft requires confirmation.')}</p><button type="button" onClick={() => setPage('web')}>{t('Review and run web acceptance →')}</button></section>}
+        {!isExample && !report.servicePlan?.services?.length && !acceptance.benchmarkId && <SuggestedEntry key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onChoose={chooseQuickEntry} />}
         <section className="report" aria-labelledby="report-title">
           <div className="report-heading">
             <div>
@@ -1182,7 +1183,7 @@ function App() {
 
         {!isExample && report.paperProvenance && <details className="advanced-evidence"><summary>{t("Paper provenance and protocol lock")}</summary><PaperProvenance report={report} /><ProtocolLock report={report} /></details>}
         {!isExample && report.projectType === 'mixed' && <NodeProject report={report} />}
-        {!isExample && report.nodeProject?.packages?.some(pkg => !pkg.error && pkg.installCommand) && <div className="next-action"><p>{t('Review an npm configuration generated from this scan, then run installation, tasks and browser smoke checks.')}</p><button type="button" onClick={() => setPage('web')}>{t('Review and run web acceptance →')}</button></div>}
+        {!isExample && (report.servicePlan?.services?.length || report.nodeProject?.packages?.some(pkg => !pkg.error && pkg.installCommand)) && <div className="next-action"><p>{t('Review the service configuration generated from this scan, then run installation, tasks and API/browser checks.')}</p><button type="button" onClick={() => setPage('web')}>{t('Review and run web acceptance →')}</button></div>}
         {!isExample && !['node', 'unknown'].includes(report.projectType) && <div className="next-action"><p>{t("Review the source evidence, then configure the workflow and its acceptance conditions.")}</p><button type="button" onClick={() => setPage('configure')}>{t("Configure experiment →")}</button></div>}
         </div>
         <div className="view-panel configure-layout" hidden={page !== "configure"}>

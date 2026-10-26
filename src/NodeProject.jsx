@@ -7,7 +7,7 @@ export function NodeProject({ report }) {
   return <section className="runner" aria-label={t('JavaScript / TypeScript declarations')}>
     <p className="eyebrow">{t('JavaScript / TypeScript declarations')}</p>
     <h2>{t('Review installation, tasks and services')}</h2>
-    <p>{t('These scripts are declarations, not verified execution results. Review scripts and lifecycle hooks before running them. Use the npm configuration form to review and execute a single application.')}</p>
+    <p>{t('These scripts are declarations, not verified execution results. Review scripts and lifecycle hooks before running them. Use the service plan to review and execute supported Node.js/Python applications.')}</p>
     <p className="hint">{t('Lock files are parsed, not installed. Version requirements are declarations, not compatibility checks. Workspace and lock consistency require manual review.')}</p>
     {project.packages.map(pkg => <div className="runner-result" key={pkg.path}>
       <h3>{pkg.path}</h3>

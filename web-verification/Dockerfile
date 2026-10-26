@@ -11,3 +11,5 @@ COPY npm-browser.mjs /opt/browser/npm-browser.mjs
 LABEL org.reprocheck.npm-acceptance="1"
 USER node
 CMD ["node", "/opt/browser/browser.mjs"]
+
+LABEL org.reprocheck.services="1"

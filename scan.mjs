@@ -1,3 +1,4 @@
+import { serviceDraft } from './service-config.mjs';
 import { buildEvaluationDraft, discoverPaperProvenance, suggestCandidate } from "./evaluation-config.mjs";
 import { buildPaperWorkflowDraft } from "./paper-workflow.mjs";
 import { buildProtocolLock } from "./protocol-lock.mjs";
@@ -566,6 +567,7 @@ function standalonePlan(report) {
     commit: report.commit,
     projectType: report.projectType,
     nodeProject: report.nodeProject,
+    servicePlan: report.servicePlan,
     ...report.reproductionPlan,
     experimentParameters: report.experimentParameters,
     entrypoints: report.entrypoints,
@@ -708,6 +710,7 @@ export async function scan(input, token, pinnedCommit) {
     const warnings = checks.filter(check => check.status === 'WARN').length;
     return { repository: `${owner}/${repo}`, commit: commit.sha, filesScanned: filePaths.length, projectType,
       status: projectType === 'unknown' ? 'UNSUPPORTED' : statusFor(failures, warnings), summary: { failures, warnings }, checks,
+      servicePlan: serviceDraft({ repository: `${owner}/${repo}`, commit: commit.sha, nodeProject }, filePaths, readmeText),
       nodeProject, experimentParameters: [], entrypoints: [], workflows: [], quickEntries: [], recommendedQuickEntryId: null,
       reproductionPlan: null, evaluationDraft: null };
   }
@@ -1023,6 +1026,7 @@ export async function scan(input, token, pinnedCommit) {
     report.summary = { failures: report.checks.filter(check => check.status === 'FAIL').length, warnings: report.checks.filter(check => check.status === 'WARN').length };
     report.status = statusFor(report.summary.failures, report.summary.warnings);
   }
+  report.servicePlan = serviceDraft(report, filePaths, readmeText);
   return report;
 }
 

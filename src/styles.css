@@ -991,3 +991,11 @@ textarea:focus-visible, summary:focus-visible { outline: 3px solid #7aa2ff; outl
   .result-dimensions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .shell { width: calc(100% - 32px); }
 }
+
+.screenshot-trigger { display: block; width: 100%; padding: 0; border: 0; background: transparent; cursor: zoom-in; }
+.screenshot-trigger img { display: block; width: 100%; border-radius: 12px; }
+.screenshot-dialog { width: min(1400px, 94vw); max-height: 92vh; padding: 0; background: #111; color: white; border: 1px solid #555; border-radius: 12px; }
+.screenshot-dialog::backdrop { background: rgb(0 0 0 / 80%); }
+.screenshot-dialog > div { padding: 16px; }
+.screenshot-dialog button { display: block; position: sticky; top: 0; margin: 0 0 12px auto; z-index: 1; }
+.screenshot-dialog img { display: block; width: 100%; }
