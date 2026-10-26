@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createViteServer } from "vite";
-import { pathToFileURL } from "node:url";
-import { startScanService } from "./scan-service.mjs";
 import {
   buildDockerInvocation,
   buildPreflight,
@@ -48,7 +46,7 @@ async function readJson(request) {
   return JSON.parse(body);
 }
 
-export async function handleApi(request, response, scanService) {
+async function handleApi(request, response) {
   const url = new URL(request.url || "/", "http://localhost");
   if (url.pathname.startsWith("/api/")) {
     const localOrigin = `http://${request.headers.host}`;
@@ -170,17 +168,7 @@ export async function handleApi(request, response, scanService) {
     }
     const input = await readJson(request);
 
-    let report;
-    if (scanService) {
-      const result = await scanService.request(input);
-      if (result.status !== 200 || url.pathname === "/api/scan") {
-        sendJson(response, result.status, result.body);
-        return true;
-      }
-      report = result.body;
-    }
-
-    if (!input || typeof input.url !== "string") {
+    if (typeof input.url !== "string") {
       throw new Error("A GitHub repository URL is required");
     }
 
@@ -188,8 +176,7 @@ export async function handleApi(request, response, scanService) {
 
     const pinnedCommit = executionOptions.benchmarkId ? reviewedCaseById.get(executionOptions.benchmarkId).commit : executionOptions.experiment?.commit ?? input.pinnedCommit;
     if (input.pinnedCommit !== undefined && input.pinnedCommit !== pinnedCommit) throw new Error("Conflicting pinned commits");
-    // Only the offline legacy API self-test omits the managed FastAPI service.
-    if (!scanService) report = await scan(input.url, process.env.GITHUB_TOKEN, pinnedCommit);
+    const report = await scan(input.url, process.env.GITHUB_TOKEN, pinnedCommit);
     if (url.pathname === "/api/scan") {
       sendJson(response, 200, report);
       return true;
@@ -229,40 +216,20 @@ export async function handleApi(request, response, scanService) {
 }
 
 async function start() {
-  const scanService = await startScanService();
-  console.log("Scan backend: FastAPI (Python)");
-  let vite;
-  try {
-    vite = await createViteServer({
-      appType: "spa",
-      server: { middlewareMode: true },
-    });
-    const server = createHttpServer(async (request, response) => {
-      if (!(await handleApi(request, response, scanService))) {
-        vite.middlewares(request, response);
-      }
-    });
-    const port = Number(process.env.PORT) || 5173;
-    server.once("error", async (error) => {
-      console.error(`Unable to start local server: ${error.code ?? error.message}`);
-      await vite.close();
-      await scanService.close();
-      process.exitCode = 1;
-    });
-    for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, async () => {
-      server.close();
-      await vite.close();
-      await scanService.close();
-      process.exit(0);
-    });
-    server.listen(port, "127.0.0.1", () => {
-      console.log(`ReproCheck: http://127.0.0.1:${port}/`);
-    });
-  } catch (error) {
-    await vite?.close();
-    await scanService.close();
-    throw error;
-  }
+  const vite = await createViteServer({
+    appType: "spa",
+    server: { middlewareMode: true },
+  });
+  const server = createHttpServer(async (request, response) => {
+    if (!(await handleApi(request, response))) {
+      vite.middlewares(request, response);
+    }
+  });
+  const port = Number(process.env.PORT) || 5173;
+
+  server.listen(port, "127.0.0.1", () => {
+    console.log(`ReproCheck: http://127.0.0.1:${port}/`);
+  });
 }
 
 async function selfTest() {
@@ -437,10 +404,8 @@ async function selfTest() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  if (process.argv.includes("--self-test")) {
-    await selfTest();
-  } else {
-    await start();
-  }
+if (process.argv.includes("--self-test")) {
+  await selfTest();
+} else {
+  await start();
 }

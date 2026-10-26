@@ -8,30 +8,16 @@ For students and researchers trying to run someone else's research code: get sou
 
 ## First run: scan only
 
-Install **Node.js 22.12+ (Node 24 recommended)**, **Python 3.11+ (3.12 recommended)** and **Git**. **Scanning does not need Docker** and does not execute repository code.
+Install **Node.js 22.12+ (Node 24 recommended)** and **Git**. **Scanning does not need Docker** and does not execute repository code.
 
 ```sh
 git clone https://github.com/CHENYUAN0813/reprocheck.git
 cd reprocheck
 npm ci
-python -m venv .venv
-```
-
-Install the Python dependencies on Windows PowerShell:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r backend/requirements.txt
-```
-
-On macOS/Linux use `.venv/bin/python -m pip install -r backend/requirements.txt` instead. Then start the app:
-
-```sh
 npm run dev
 ```
 
 On Windows PowerShell, use `npm.cmd` instead of `npm` if script execution is blocked. Keep the terminal open and visit **http://127.0.0.1:5173/**.
-
-The local server starts the FastAPI scan service automatically and prints **Scan backend: FastAPI (Python)**. No second terminal or manual Python activation is needed. The frontend URL and scan API remain unchanged. [Migration scope and troubleshooting](docs/python-scan.md).
 
 On **Start scan**, select **Start a scan** to reach the repository form (or scroll down). Enter a public GitHub repository URL and select **Scan repository**. The **Scan report** view shows findings with file/line evidence, suggested fixes and a recommended entry when one is recognized. Choose **Configure experiment →** to review the workflow and its missing steps. An ordinary scan follows the current default branch; reviewed examples pin their source revision.
 
@@ -79,7 +65,6 @@ See [setup, credentials, evidence and boundaries](docs/web-verification.md).
 ## Detailed documentation
 
 - [Advanced usage](docs/advanced-usage.md): token setup, CLI, candidate selection, training configuration, paper matrices and full limitations.
-- [Python scan backend](docs/python-scan.md): setup, compatibility tests and the remaining JavaScript boundaries.
 - [Result verification](docs/verification.md): metric formats, checks, evidence, saved records and result meanings.
 - [Frozen recipes and replay](docs/replay.md): repeat a saved configuration and interpret comparisons.
 - [Reviewed examples](docs/reviewed-cases.md): BTHOWeN evaluation/training protocols, compatibility choices and measured results.

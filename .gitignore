@@ -3,4 +3,3 @@ dist/
 .reprocheck/
 __pycache__/
 *.pyc
-.venv/

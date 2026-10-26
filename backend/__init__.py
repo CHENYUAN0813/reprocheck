@@ -1,1 +1,0 @@
-"""Local FastAPI scanning service."""

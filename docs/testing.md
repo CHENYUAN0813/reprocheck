@@ -4,14 +4,12 @@
 
 ## Before testing
 
-Run commands from the repository root after `npm ci` and the [Python scan dependency setup](python-scan.md#install-and-start):
+Run commands from the repository root after `npm ci`:
 
 ```sh
 npm test
 npm run build
 ```
-
-`npm run test:scan` checks the FastAPI scan contract and full-report parity with the existing JavaScript scanner, including all eight presets, without live GitHub access.
 
 On Windows PowerShell, use `npm.cmd` if needed. These checks do not require Docker or live GitHub access. **Do not run tests alongside an active experiment under `npm run dev`**: tests temporarily modify fixtures and may trigger a server restart. Complete offline tests first, or use `node server.mjs` without file watching for execution.
 
