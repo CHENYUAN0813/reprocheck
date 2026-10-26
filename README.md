@@ -4,7 +4,7 @@ Check public Python research repositories, then run and verify explicitly review
 
 For students and researchers trying to run someone else's research code: get source-linked findings, a preparation plan, and a report comparing an experiment's observed result with its declared reference. Findings are tied to a fixed Git commit.
 
-![ReproCheck: research code and verifiable results](docs/ui-preview/cinematic-home.png)
+![ReproCheck: research code and verifiable results](docs/ui-preview/desktop-home.jpg)
 
 ## First run: scan only
 
@@ -33,7 +33,7 @@ Use **Docker Desktop with Linux containers** for execution (not for scanning). W
 4. Expect **Process: SUCCEEDED**, **Output checks: Configured checks passed**, and **Reference acceptance: MATCHED REFERENCE**, with observed/reference accuracy **0.98 / 0.98** (49 correct out of 50 held-out samples). Expand **Inspect output and input checks** to examine the evidence.
 5. Select **Download execution evidence**. Use **History & comparison → View record** to reopen a saved result, including after refreshing the page.
 
-![Existing Iris run in the new UI: process succeeded, configured checks passed, and accuracy 0.98 matched the pinned reference](docs/ui-preview/stitch-result.png)
+![Existing Iris run in the new UI: process succeeded, configured checks passed, and accuracy 0.98 matched the pinned reference](docs/ui-preview/desktop-iris-result.jpg)
 
 **Process: SUCCEEDED** only means the commands exited normally. **Configured checks passed** means the declared output checks and this case's input identities passed. **MATCHED REFERENCE** means the observed metric met the configured reference condition. The scope remains the **selected experiment only**: Iris evaluates a pretrained model; it does not retrain it or reproduce an entire paper. A failure is a result to inspect, not a reason to silently change the reference.
 
