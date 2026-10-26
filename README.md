@@ -1,6 +1,6 @@
 # ReproCheck
 
-Check public Python research repositories, then run and verify explicitly reviewed experiments.
+Check public Python research and JavaScript/TypeScript repositories, then run and verify explicitly reviewed experiments.
 
 For students and researchers trying to run someone else's research code: get source-linked findings, a preparation plan, and a report comparing an experiment's observed result with its declared reference. Findings are tied to a fixed Git commit.
 
@@ -53,6 +53,12 @@ Use **Docker Desktop with Linux containers** for execution (not for scanning). W
 Switching views preserves the current form. Refreshing the browser clears unsaved configuration; download a configuration before leaving if you need it later. Saved execution records remain in the local history.
 
 Keep the server open while running. Do not run `npm test` during an experiment under `npm run dev`: some tests temporarily edit example fixtures and can trigger a watcher restart. For a run without file watching, use `node server.mjs` instead of `npm run dev` (in the same token-configured terminal).
+
+## JavaScript / TypeScript scans
+
+Scanning detects Python, JavaScript/TypeScript, mixed and unknown projects. JS/TS reports read up to five `package.json` files, parse npm lock files, show declared Node version requirements and scripts, and recognize README `npm` / `npm.cmd` commands. Mixed projects receive both applicable rule sets; unknown projects are not assigned Python experiment requirements.
+
+For `CHENYUAN0813/rumor-control`, review installation, test/build tasks, the Vite service entry and the Ollama prerequisite. **These are declarations, not executed checks.** Lock consistency, dependency installation, runtime compatibility and service availability remain unverified. Generic npm execution is not enabled; the separately reviewed web cases below retain their execution path. `npm run dev` needs readiness and browser checks, not merely an exit-code check.
 
 ## Web application acceptance
 

@@ -2,6 +2,7 @@ import { buildEvaluationDraft, discoverPaperProvenance, suggestCandidate } from 
 import { buildPaperWorkflowDraft } from "./paper-workflow.mjs";
 import { buildProtocolLock } from "./protocol-lock.mjs";
 import { buildPaperMatrixDraft } from "./paper-matrix.mjs";
+import { detectProjectType, scanNodeProject } from "./node-scan.mjs";
 
 function expectEqual(actual, expected) {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -563,6 +564,8 @@ function standalonePlan(report) {
   return {
     repository: report.repository,
     commit: report.commit,
+    projectType: report.projectType,
+    nodeProject: report.nodeProject,
     ...report.reproductionPlan,
     experimentParameters: report.experimentParameters,
     entrypoints: report.entrypoints,
@@ -657,6 +660,7 @@ export async function scan(input, token, pinnedCommit) {
   const rootFiles = filePaths.filter((path) => !path.includes("/"));
   const readme = rootFiles.find((path) => /^readme(\.|$)/i.test(path));
   const dependencyFiles = filePaths.filter(isDependencyFile);
+  let projectType = detectProjectType(filePaths, dependencyFiles);
   const dependencies =
     dependencyFiles.find((path) =>
       ["poetry.lock", "uv.lock", "pipfile.lock"].includes(
@@ -687,6 +691,26 @@ export async function scan(input, token, pinnedCommit) {
     readRepositoryFile(base, pythonVersion, commit.sha, token),
     readRepositoryFile(base, makefile, commit.sha, token),
   ]);
+  if (['node', 'unknown'].includes(projectType) && /^\t(?:@)?(?:python(?:3(?:\.\d+)?)?|pip3?)\s/m.test(makefileText)) {
+    projectType = projectType === 'node' ? 'mixed' : 'python';
+  }
+  const nodeProject = ['node', 'mixed'].includes(projectType)
+    ? await scanNodeProject(filePaths, readme, readmeText, path => readRepositoryFile(base, path, commit.sha, token)) : null;
+  if (projectType === 'node' || projectType === 'unknown') {
+    const checks = [
+      { id: 'readme', status: readme ? 'PASS' : 'WARN', message: readme ? `README found: ${readme}` : 'README not found', evidence: readme ? { file: readme } : null },
+      ...(nodeProject?.checks ?? [{ id: 'project_type', status: 'WARN', message: 'Project type not automatically recognized; Python rules were not applied', evidence: null }]),
+      { id: 'license', status: license ? 'PASS' : 'WARN', message: license ? `License found: ${license}` : 'License not found', evidence: license ? { file: license } : null },
+      { id: 'tests', status: tests ? 'PASS' : 'WARN', message: tests ? `Test entry found: ${tests}` : 'Test entry not found', evidence: tests ? { file: tests } : null },
+      { id: 'continuous_integration', status: ciWorkflow ? 'PASS' : 'WARN', message: ciWorkflow ? `Continuous integration found: ${ciWorkflow}` : 'Continuous integration workflow not found', evidence: ciWorkflow ? { file: ciWorkflow } : null },
+    ];
+    const failures = checks.filter(check => check.status === 'FAIL').length;
+    const warnings = checks.filter(check => check.status === 'WARN').length;
+    return { repository: `${owner}/${repo}`, commit: commit.sha, filesScanned: filePaths.length, projectType,
+      status: projectType === 'unknown' ? 'UNSUPPORTED' : statusFor(failures, warnings), summary: { failures, warnings }, checks,
+      nodeProject, experimentParameters: [], entrypoints: [], workflows: [], quickEntries: [], recommendedQuickEntryId: null,
+      reproductionPlan: null, evaluationDraft: null };
+  }
   const installCommand = findInstallCommand(readmeText);
   const runCommands = findRunCommands(readmeText);
   const runCommand = runCommands[0]
@@ -992,6 +1016,13 @@ export async function scan(input, token, pinnedCommit) {
   report.protocolLock = buildProtocolLock({ report, treeEntries: tree.tree, readme, makefile, dependencyFile: dependencies, dependencyVersions,
     pythonVersionFile: pythonVersion, pythonVersionResult, seedConfiguration });
   report.paperMatrixDraft = buildPaperMatrixDraft(report);
+  report.projectType = projectType;
+  if (nodeProject) {
+    report.nodeProject = nodeProject;
+    report.checks.push(...nodeProject.checks);
+    report.summary = { failures: report.checks.filter(check => check.status === 'FAIL').length, warnings: report.checks.filter(check => check.status === 'WARN').length };
+    report.status = statusFor(report.summary.failures, report.summary.warnings);
+  }
   return report;
 }
 
