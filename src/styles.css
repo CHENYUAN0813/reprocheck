@@ -563,6 +563,10 @@ code {
   min-height: 44px;
 }
 
+.npm-configuration { min-width: 0; margin: 24px 0; padding: 20px; border: 1px solid #384354; border-radius: 8px; }
+.npm-configuration label { display: grid; gap: 8px; margin: 16px 0; }
+.npm-configuration textarea { width: 100%; min-height: 120px; resize: vertical; padding: 13px 14px; color: #f4f7fb; background: #080c12; border: 1px solid #384354; border-radius: 10px; font: inherit; }
+
 .runner a:not(.evidence-download) { color: #b9c9e8; text-underline-offset: 3px; }
 
 .evidence-download {

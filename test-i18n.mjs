@@ -30,7 +30,7 @@ for (const value of [0, false, null, undefined, [], {}, 'python train.py --seed 
 }
 
 // UI localization must not change form values, request handlers or raw code/log expressions.
-for (const file of ['src/main.jsx', 'src/RunConsole.jsx', 'src/WebVerification.jsx', 'src/NodeProject.jsx']) {
+for (const file of ['src/main.jsx', 'src/RunConsole.jsx', 'src/WebVerification.jsx', 'src/NodeProject.jsx', 'src/NpmConfiguration.jsx']) {
   const source = readFileSync(file, 'utf8');
   const result = parseSync(file, source);
   assert.equal(result.errors.length, 0, file);
