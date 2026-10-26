@@ -6,7 +6,7 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 
-from .rules import shared_rules
+from .report import enrich_report
 
 
 def match(pattern, text, flags=re.I | re.ASCII):
@@ -300,10 +300,10 @@ async def scan(url, token=None, pinned_commit=None, *, client=None):
                   status='BLOCKED' if failures else 'NEEDS_WORK' if warnings else 'READY_FOR_REVIEW',
                   summary=dict(failures=failures, warnings=warnings), checks=checks,
                   experimentParameters=params, entrypoints=entries, reproductionPlan=plan)
-    return await shared_rules(dict(action='enrich', report=report, readme=readme, readmeText=readme_text,
-        codeFiles=code_files, filePaths=files, makefile=makefile, makefileText=make_text,
+    return enrich_report(report=report, readme=readme, readme_text=readme_text,
+        code_files=code_files, file_paths=files, makefile=makefile, makefile_text=make_text,
         lock=dict(treeEntries=tree['tree'], dependencyFile=dependency, dependencyVersions=dep_versions,
-                  pythonVersionFile=version_file, pythonVersionResult=version, seedConfiguration=seed)))
+                  pythonVersionFile=version_file, pythonVersionResult=version, seedConfiguration=seed))
 
 
 def build_checks(readme, install, run, commands, data, model, dependency, deps, license_file, tests, version_file, version, seed, config, ci, refs):

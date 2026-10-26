@@ -38,6 +38,23 @@ const cases = [
   ['requirements-empty', { 'README.md': 'pip install -r requirements.txt', 'requirements.txt': '# no packages\n', 'runtime.txt': 'python-3.12' }],
 ];
 const fixtures = [];
+const makeSource = {
+  'README.md': '# Installation\nmake setup\nmake dependency\n# Prepare data\nmake data-public\n# Reproduce results\nmake test\nmake run\nmake run-cpu\nmake verify\n',
+  Makefile: 'setup:\n\tpython -m venv .venv\ndependency:\n\tpip install -r requirements.txt\ndata-public:\n\tpython data.py\ntest:\n\tpython -m pytest\nrun:\n\tpython run.py\nrun-cpu:\n\tpython run.py --cpu\nverify:\n\tpython verify.py\n',
+};
+cases.push(['make-alternatives', makeSource],
+  ['make-missing-targets', { ...makeSource, Makefile: makeSource.Makefile.replace('run-cpu:', 'other:').replace('setup:', 'missing-setup:') }]);
+const candidateSource = {
+  'README.md': '[Our Paper](https://arxiv.org/pdf/2401.01234.pdf)\n# Evaluation\npython eval.py\nAccuracy: 0.91\n',
+  'requirements.txt': 'numpy==1.26.4',
+  'eval.py': 'iris = load_iris()\ntrain_test_split(X, y, test_size=0.3, random_state=1)\nmodel = LogisticRegression()\nprint("Accuracy: %.4f" % score)\n',
+};
+cases.push(['candidate-suggestion', candidateSource],
+  ['required-arguments', { ...candidateSource, 'eval.py': candidateSource['eval.py'] + 'parser.add_argument("checkpoint", help="Model path")\nparser.add_argument(\n "--config", required=True, help="Config file"\n)\nparser.add_argument("--seed", default=42, type=int)\nparser.add_argument("--gpu", action="store_true")\n' }],
+  ['paper-ambiguity', { ...candidateSource, 'README.md': candidateSource['README.md'] + '[Other](https://openreview.net/forum?id=review-1)\ndoi:10.1145/123.456\n' }],
+  ['table-metrics-and-file-output', { ...candidateSource,
+    'README.md': candidateSource['README.md'] + '| Dataset | Accuracy | Loss |\n| --- | --- | --- |\n| Iris | 98% | 0.0000001 |\n| Wine | 0.95 | 0.000001 |\nFull-catalogue NDCG@10 from Table 1:\n\nData | MC | FMC\n--- | --- | ---\nBeauty | .0492 | .0481\n',
+    'eval.py': 'json.dump({"accuracy":score}, open("results.json","w"))\njson.dump({},open("../escape.json","w"))\n' }]);
 const originalFetch = globalThis.fetch;
 const directory = mkdtempSync(join(tmpdir(), 'reprocheck-fastapi-'));
 try {
@@ -82,21 +99,76 @@ try {
   try {
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const url = `http://127.0.0.1:${server.address().port}/api/scan`;
-    for (const input of [{ url: 'https://example.com/a/b' }, { url: 'https://github.com/a/b', executionOptions: { benchmarkId: 'unknown' } }]) {
-      const result = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
-      assert.equal(result.status, 400);
-      assert.equal(result.headers.get('cache-control'), 'no-store');
-      assert.ok((await result.json()).error);
+    for (const endpoint of ['scan', 'preflight', 'run']) {
+      for (const input of [{ url: 'https://example.com/a/b' }, { url: 'https://github.com/a/b', executionOptions: { benchmarkId: 'unknown' } }]) {
+        const result = await fetch(url.replace('/scan', `/${endpoint}`), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+        assert.equal(result.status, 400);
+        assert.equal(result.headers.get('cache-control'), 'no-store');
+        assert.ok((await result.json()).error);
+      }
     }
     const rejected = await fetch(url, { method: 'POST', headers: { Origin: 'https://evil.example', 'Content-Type': 'application/json' }, body: '{}' });
     assert.equal(rejected.status, 403);
     await service.close();
-    assert.equal((await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 502);
+    for (const endpoint of ['scan', 'preflight', 'run']) {
+      assert.equal((await fetch(url.replace('/scan', `/${endpoint}`), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 502);
+    }
     console.log('PASS FastAPI service startup, local gateway, origin gate, shutdown and unavailable-service response');
   } finally {
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));
     await service.close();
+  }
+
+  // Exercise successful report forwarding without executing any repository code.
+  let scanResult, received;
+  const routing = createServer((request, response) => handleApi(request, response, {
+    request: async input => { received = input; return scanResult; },
+  }));
+  try {
+    await new Promise(resolve => routing.listen(0, '127.0.0.1', resolve));
+    globalThis.fetch = (url, options) => {
+      assert.ok(String(url).startsWith('http://127.0.0.1:'), 'Execution routes must not invoke the legacy GitHub scanner');
+      return originalFetch(url, options);
+    };
+    const post = (endpoint, input) => fetch(`http://127.0.0.1:${routing.address().port}/api/${endpoint}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+    });
+    for (const fixture of fixtures.filter(item => ['evaluation', 'saved-experiment', ...reviewedCaseById.keys()].includes(item.name))) {
+      scanResult = { status: 200, body: fixture.expected };
+      const preset = reviewedCaseById.get(fixture.name);
+      const input = { ...fixture.input, commit: fixture.expected.commit,
+        workflowId: preset ? preset.matrix ? 'paper-matrix' : preset.training ? 'training' : 'evaluation' : fixture.name === 'saved-experiment' ? 'training' : 'quick',
+        executionOptions: fixture.input.executionOptions ?? { quickEntryId: fixture.expected.quickEntries[0].id } };
+      const preflight = await post('preflight', input);
+      assert.equal(preflight.status, 200, `${fixture.name}: ${await preflight.clone().text()}`);
+      assert.equal((await preflight.json()).commit, input.commit);
+      assert.deepEqual(received, input, 'Forward preset/config and commit without altering the request');
+      const run = await post('run', input);
+      assert.equal(run.status, 400);
+      assert.match((await run.json()).error, /Explicit confirmation/);
+      for (const endpoint of ['preflight', 'run']) {
+        const changed = await post(endpoint, { ...input, commit: 'f'.repeat(40) });
+        assert.equal(changed.status, 409);
+        assert.match((await changed.json()).error, /changed after scanning/);
+        const missing = await post(endpoint, { ...input, commit: undefined });
+        assert.equal(missing.status, 400);
+        assert.match((await missing.json()).error, /scanned commit is required/);
+      }
+    }
+    for (const status of [400, 500, 502]) {
+      scanResult = { status, body: { error: 'Scan service rejected request' } };
+      for (const endpoint of ['scan', 'preflight', 'run']) {
+        const rejected = await post(endpoint, { url: 'https://github.com/example/repo', confirmUnknownCode: true });
+        assert.equal(rejected.status, status);
+        assert.deepEqual(await rejected.json(), scanResult.body);
+      }
+    }
+    console.log('PASS preflight/run reuse scan reports for presets and saved experiments; commit/consent gates and scan errors preserved without legacy fallback');
+  } finally {
+    globalThis.fetch = originalFetch;
+    routing.closeAllConnections();
+    await new Promise(resolve => routing.close(resolve));
   }
 } finally {
   globalThis.fetch = originalFetch;

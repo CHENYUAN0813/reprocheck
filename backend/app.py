@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from .rules import shared_rules
+from .rules import validate_execution_options
 from .scanner import scan
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
@@ -58,7 +58,7 @@ async def scan_request(request: Request):
         if not isinstance(value, dict) or not isinstance(value.get('url'), str):
             raise ValueError('A GitHub repository URL is required')
         async with asyncio.timeout(180):
-            options = await shared_rules({'action': 'validate', 'input': value})
+            options = await validate_execution_options(value)
             # Preserve the old distinction between omitted commit and explicitly invalid null.
             if 'pinnedCommit' in options and options['pinnedCommit'] is None:
                 raise ValueError('Invalid pinned source commit')

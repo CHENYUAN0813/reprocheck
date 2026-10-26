@@ -7,12 +7,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
-async def shared_rules(value):
-    # shortcut: retain advanced JS rules and option validation until their own parity-tested migration.
+async def validate_execution_options(value):
+    # Keep execution-option validation identical to the JS Docker runner.
     env = {key: value for key, value in os.environ.items()
            if key.upper() in ('PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP')}
     process = await asyncio.create_subprocess_exec(
-        os.environ.get('REPROCHECK_NODE', 'node'), str(ROOT / 'backend/report-rules.mjs'),
+        os.environ.get('REPROCHECK_NODE', 'node'), str(ROOT / 'backend/execution-options.mjs'),
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL, cwd=ROOT, env=env)
     try:
@@ -24,5 +24,5 @@ async def shared_rules(value):
             await process.wait()
     result = json.loads(output)
     if process.returncode:
-        raise ValueError(result.get('error', 'Report rules failed'))
+        raise ValueError(result.get('error', 'Execution option validation failed'))
     return result

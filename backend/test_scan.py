@@ -45,7 +45,8 @@ async def main():
 
             async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as github:
                 async def scan_fixture(url, token, pinned):
-                    return await scan(url, token, pinned, client=github)
+                    with patch('asyncio.create_subprocess_exec', side_effect=AssertionError('Report generation must stay in Python')):
+                        return await scan(url, token, pinned, client=github)
                 with patch('backend.app.scan', scan_fixture):
                     result = await api.post('/api/scan', json=fixture['input'])
                 assert result.status_code == 200, (fixture['name'], result.text)
@@ -92,7 +93,8 @@ async def main():
         for status in (401, 403, 404, 500):
             async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(status))) as github:
                 async def upstream_failure(url, token, pinned):
-                    return await scan(url, token, pinned, client=github)
+                    with patch('asyncio.create_subprocess_exec', side_effect=AssertionError('Report generation must stay in Python')):
+                        return await scan(url, token, pinned, client=github)
                 with patch('backend.app.scan', upstream_failure):
                     result = await api.post('/api/scan', json={'url': 'https://github.com/a/b'})
                     assert result.status_code == 502 and str(status) in result.json()['error']

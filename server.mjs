@@ -170,13 +170,17 @@ export async function handleApi(request, response, scanService) {
     }
     const input = await readJson(request);
 
-    if (url.pathname === "/api/scan" && scanService) {
+    let report;
+    if (scanService) {
       const result = await scanService.request(input);
-      sendJson(response, result.status, result.body);
-      return true;
+      if (result.status !== 200 || url.pathname === "/api/scan") {
+        sendJson(response, result.status, result.body);
+        return true;
+      }
+      report = result.body;
     }
 
-    if (typeof input.url !== "string") {
+    if (!input || typeof input.url !== "string") {
       throw new Error("A GitHub repository URL is required");
     }
 
@@ -184,7 +188,8 @@ export async function handleApi(request, response, scanService) {
 
     const pinnedCommit = executionOptions.benchmarkId ? reviewedCaseById.get(executionOptions.benchmarkId).commit : executionOptions.experiment?.commit ?? input.pinnedCommit;
     if (input.pinnedCommit !== undefined && input.pinnedCommit !== pinnedCommit) throw new Error("Conflicting pinned commits");
-    const report = await scan(input.url, process.env.GITHUB_TOKEN, pinnedCommit);
+    // Only the offline legacy API self-test omits the managed FastAPI service.
+    if (!scanService) report = await scan(input.url, process.env.GITHUB_TOKEN, pinnedCommit);
     if (url.pathname === "/api/scan") {
       sendJson(response, 200, report);
       return true;
