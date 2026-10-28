@@ -21,7 +21,8 @@ export async function fetchPinnedSource(directory, config, command) {
 
 export async function archivePinnedSource(directory, config, command, checkout) {
   const archive = join(directory, 'source.tar');
-  await command('git', ['-C', checkout, 'archive', '--format=tar', '--output', archive, config.commit]);
+  // Host autocrlf must not turn Linux scripts in the pinned snapshot into CRLF.
+  await command('git', ['-c','core.autocrlf=false','-c','core.eol=lf','-C', checkout, 'archive', '--format=tar', '--output', archive, config.commit]);
   return { archive, sha256: createHash('sha256').update(readFileSync(archive)).digest('hex') };
 }
 

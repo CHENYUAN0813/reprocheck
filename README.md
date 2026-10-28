@@ -56,6 +56,8 @@ Keep the server open while running. Do not run `npm test` during an experiment u
 
 ## JavaScript / TypeScript scans
 
+For finite test commands without a web server, use **configured batch tests**: a pinned public repository, a reviewed local image or repository Dockerfile built from the webpage, and ordered commands, with optional JUnit counts and downloadable evidence. See [batch setup and result meanings](docs/batch-test-plans.md) and the [RhinoForge CPU case](docs/rhinoforge-case.md). The same executor also runs an independent iniconfig test suite; neither requires a dedicated repository entry.
+
 Scanning detects Python, JavaScript/TypeScript, mixed and unknown projects. JS/TS reports read up to five `package.json` files, parse npm lock files, show declared Node version requirements and scripts, and recognize README `npm` / `npm.cmd` commands. Mixed projects receive both applicable rule sets; unknown projects are not assigned Python experiment requirements.
 
 For `CHENYUAN0813/rumor-control`, review installation, test/build tasks, the Vite service entry and the Ollama prerequisite. **Scanning reads declarations; it does not execute them.** Continue with the configuration-driven flow below to actually install and run a single npm application. `npm run dev` needs readiness and browser checks, not merely an exit-code check.

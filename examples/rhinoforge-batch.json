@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "repository": "HUIXI-AI/RhinoForge",
+  "commit": "75a70726552e40715de1a728ad97a7514b67c2dd",
+  "image": "",
+  "directory": ".",
+  "env": {
+    "CI_PROJECT_DIR": "/tmp/project",
+    "CI_JOB_ID": "reprocheck"
+  },
+  "commands": [
+    [
+      "bash",
+      "scripts/ci/run_host_tests.sh",
+      "tests/test_release_version.py",
+      "tests/test_dependency_release.py"
+    ]
+  ],
+  "junit": "test-results/host-runtime.xml",
+  "timeoutMinutes": 30,
+  "memoryMb": 2048,
+  "build": {
+    "context": "scripts/ci/host-image",
+    "dockerfile": "Dockerfile",
+    "args": {
+      "DEBIAN_MIRROR": "https://deb.debian.org"
+    }
+  }
+}
