@@ -1,3 +1,5 @@
+import { validateBatchConfig, batchScope } from './batch-config.mjs';
+import { executeBatchPlan } from './batch-runner.mjs';
 import { validateServiceConfig, serviceScope } from './service-config.mjs';
 import { executeServicePlan, serviceImage } from './service-runner.mjs';
 import { spawn } from 'node:child_process';
@@ -26,6 +28,11 @@ export const webCase = {
 export const webCases = [webCase, plannerCase, rumorCase];
 
 export function validateWebRequest(input) {
+  if (input?.caseId === 'batch') {
+    if (Object.keys(input).some(key => !['caseId','config','confirmUnknownCode','confirmImageBuild'].includes(key)) || input.confirmUnknownCode !== true) throw Error('Explicit execution confirmation is required');
+    if(input.config?.build && input.confirmImageBuild !== true) throw Error('Confirm networked image build before execution');
+    validateBatchConfig(input.config); return;
+  }
   if (input?.caseId === 'multi-service') {
     if (Object.keys(input).some(key => !['caseId', 'config', 'confirmUnknownCode'].includes(key)) || input.confirmUnknownCode !== true) throw new Error('Explicit execution confirmation is required');
     validateServiceConfig(input.config); return;
@@ -50,7 +57,13 @@ function log(job, text) {
   if (job.log.length > LOG_LIMIT) { job.log = job.log.slice(-LOG_LIMIT); job.logTruncated = true; }
 }
 
-function command(program, args, job = null, { timeout = 60_000, tolerate = false, input = null } = {}) {
+export function stopWebCommand(child) {
+  if(!child || child.exitCode !== null || child.signalCode !== null) return;
+  // Windows Docker CLI launches buildx; killing only its parent leaves the build running.
+  if(process.platform==='win32') spawn('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'}).on('error',()=>child.kill());
+  else child.kill();
+}
+function command(program, args, job = null, { timeout = 60_000, tolerate = false, input = null, logOutput = true } = {}) {
   if (job && job.status !== 'RUNNING') return Promise.reject(new Error('Run is no longer active'));
   return new Promise((resolve, reject) => {
     const child = spawn(program, args, { windowsHide: true, stdio: [input === null ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
@@ -58,10 +71,10 @@ function command(program, args, job = null, { timeout = 60_000, tolerate = false
     if (job) job.child = child;
     let output = '';
     let expired = false;
-    const timer = setTimeout(() => { expired = true; child.kill(); }, timeout);
+    const timer = setTimeout(() => { expired = true; stopWebCommand(child); }, timeout);
     for (const stream of [child.stdout, child.stderr]) {
       stream.setEncoding('utf8');
-      stream.on('data', chunk => { output = (output + chunk).slice(-LOG_LIMIT); if (job) log(job, chunk); });
+      stream.on('data', chunk => { output = (output + chunk).slice(-LOG_LIMIT); if (job && logOutput) log(job, chunk); });
     }
     child.on('error', error => { clearTimeout(timer); reject(error); });
     child.on('close', code => {
@@ -94,21 +107,27 @@ export function cancelWebRun(id) {
   if (!job) return null;
   if (job.status === 'RUNNING') {
     job.status = 'CANCELLED';
-    job.child?.kill();
+    stopWebCommand(job.child);
     persist(job);
   }
   return record(job);
 }
 
 export async function webRuntime() {
+  let batchAvailable = false;
+  let batchImages = [];
+  try { await docker(['info','--format','{{.ServerVersion}}']); batchAvailable = true;
+    const rows = (await docker(['image','ls','--no-trunc','--format','{{json .}}'])).output.trim().split('\n').filter(Boolean).map(row=>JSON.parse(row));
+    batchImages = [...new Map(rows.filter(r=>/^sha256:[a-f0-9]{64}$/.test(r.ID)).map(r=>[r.ID,{id:r.ID,name:r.Repository+':'+r.Tag}])).values()].slice(0,100);
+  } catch {}
   try {
     const inspection = await docker(['image', 'inspect', image]);
     const rumorAvailable = JSON.parse(inspection.output)[0]?.Config?.Labels?.['org.reprocheck.rumor-acceptance'] === '1';
     const planner = await docker(['image', 'inspect', plannerCase.image], null, { tolerate: true });
     const services = await docker(['image', 'inspect', serviceImage], null, { tolerate: true });
-    return { servicesAvailable: services.code === 0 && JSON.parse(inspection.output)[0]?.Config?.Labels?.['org.reprocheck.services'] === '1', available: true, image, plannerAvailable: planner.code === 0, rumorAvailable, npmAvailable: JSON.parse(inspection.output)[0]?.Config?.Labels?.['org.reprocheck.npm-acceptance'] === '1' };
+    return { batchAvailable, batchImages, servicesAvailable: services.code === 0 && JSON.parse(inspection.output)[0]?.Config?.Labels?.['org.reprocheck.services'] === '1', available: true, image, plannerAvailable: planner.code === 0, rumorAvailable, npmAvailable: JSON.parse(inspection.output)[0]?.Config?.Labels?.['org.reprocheck.npm-acceptance'] === '1' };
   } catch {
-    return { available: false, image, reason: 'Start Docker Desktop, then run npm run setup:web once to install the browser image.' };
+    return { batchAvailable, batchImages, available: false, image, reason: 'Start Docker Desktop, then run npm run setup:web once to install the browser image.' };
   }
 }
 
@@ -131,9 +150,13 @@ async function execute(job, snapshot) {
     await operation(); checkpoint(); step.status = 'SUCCEEDED'; persist(job);
   };
   const heartbeat = setInterval(() => persist(job), 1000);
-  const deadline = setTimeout(() => { job.status = 'TIMED_OUT'; job.child?.kill(); }, 600_000);
+  const deadline = setTimeout(() => { job.status = 'TIMED_OUT'; stopWebCommand(job.child); }, (job.batchConfig?.timeoutMinutes ?? 10) * 60_000);
   try {
     mkdirSync(source, { recursive: true });
+    if (job.batchConfig) {
+      await executeBatchPlan(job, { directory, app, stage, docker: (args, options) => docker(args, job, options), command: (program, args, options) => command(program, args, job, options) });
+      checkpoint(); job.status = 'SUCCEEDED'; return;
+    }
     if (job.serviceConfig) {
       await executeServicePlan(job, { directory, app, tester, stage, registerSecrets: values => credentials.set(job.id, values), docker: (args, options) => docker(args, job, options), command: (program, args, options) => command(program, args, job, options) });
       job.status = 'SUCCEEDED'; return;
@@ -212,13 +235,15 @@ async function execute(job, snapshot) {
     job.verification = { status: 'VERIFIED', scope: npm ? npmScope : rumor ? rumorCase.scope : planner ? 'Recorded task operations and optional live generation/persistence; not Google login or AI quality.' : 'Only the four recorded browser assertions on the bundled notes application.' };
   } catch (error) {
     if (job.status === 'RUNNING') job.status = 'FAILED';
+    if (job.imageBuild?.status === 'BUILDING') job.imageBuild.status = job.status;
+    if (job.batchConfig) job.verification = { status: job.status === 'FAILED' ? 'FAILED' : 'INCOMPLETE', scope: batchScope };
     if (job.serviceConfig) job.verification = { status: job.status === 'FAILED' ? 'FAILED' : 'INCOMPLETE', scope: serviceScope };
     if (step?.status === 'RUNNING') step.status = job.status;
     job.diagnosis = error.message;
   } finally {
     clearTimeout(deadline); clearInterval(heartbeat);
     if (job.serviceConfig) for (const service of job.serviceConfig.services) try { const result = await docker(['exec', app, 'cat', `/tmp/${service.id}.log`], null, { tolerate: true }); log(job, `\n${service.id} log:\n` + result.output); } catch {}
-    try { const result = await docker(['exec', app, 'cat', '/tmp/app.log'], null, { tolerate: true }); log(job, '\nApplication log:\n' + result.output); } catch {}
+    if (!job.batchConfig) try { const result = await docker(['exec', app, 'cat', '/tmp/app.log'], null, { tolerate: true }); log(job, '\nApplication log:\n' + result.output); } catch {}
     if (planner) try { const result = await docker(['exec', app, 'cat', '/tmp/frontend.log'], null, { tolerate: true }); log(job, '\nFrontend log:\n' + result.output); } catch {}
     try {
       await docker(['rm', '-f', tester, app], null, { tolerate: true });
@@ -239,19 +264,21 @@ export function startWebRun(input) {
   const planner = input.caseId === plannerCase.id;
   const rumor = input.caseId === rumorCase.id;
   const npm = input.caseId === 'npm-project';
+  const batch = input.caseId === 'batch';
+  const batchConfig = batch ? validateBatchConfig(input.config) : null;
   const multi = input.caseId === 'multi-service';
   const serviceConfig = multi ? validateServiceConfig(input.config) : null;
   const config = npm ? validateNpmConfig(input.config) : null;
-  const selected = multi ? { repository: serviceConfig.repository, commit: serviceConfig.commit, commands: serviceConfig.services.flatMap(s => [s.install,s.test,s.build,s.start].filter(a=>a.length).map(a=>`${s.id}: ${JSON.stringify(a)}`)) } : npm ? { repository: config.repository, commit: config.commit, commands: npmCommands(config) } : webCases.find(item => item.id === input.caseId);
-  const snapshot = multi || planner || rumor || npm ? [] : files.map(name => [name, readFileSync(join(root, 'examples', 'web-notes', name))]);
+  const selected = batch ? { ...batchConfig, commands: batchConfig.commands.map(a=>JSON.stringify(a)) } : multi ? { repository: serviceConfig.repository, commit: serviceConfig.commit, commands: serviceConfig.services.flatMap(s => [s.install,s.test,s.build,s.start].filter(a=>a.length).map(a=>`${s.id}: ${JSON.stringify(a)}`)) } : npm ? { repository: config.repository, commit: config.commit, commands: npmCommands(config) } : webCases.find(item => item.id === input.caseId);
+  const snapshot = batch || multi || planner || rumor || npm ? [] : files.map(name => [name, readFileSync(join(root, 'examples', 'web-notes', name))]);
   const hash = createHash('sha256');
   for (const [name, bytes] of snapshot) hash.update(name).update('\0').update(bytes);
   const job = { schemaVersion: 1, kind: 'web', id: randomUUID(), repository: selected.repository ?? 'Built-in / web-notes',
     commit: selected.commit ?? `sha256:${hash.digest('hex')}`, workflowId: input.caseId, status: 'RUNNING', liveAi: planner && input.liveAi === true,
     startedAt: new Date().toISOString(), finishedAt: null, steps: [], log: '', logTruncated: false,
-    limits: { cpus: '2 per container', memory: multi || planner || rumor || npm ? '2g app / 1g browser' : '1g per container', timeoutMinutes: 10 },
-    verification: { status: 'INCOMPLETE' }, recipeUnavailableReason: 'Web fixture runs use a source snapshot and browser assertions, not a Python experiment recipe.',
-    ...(npm ? { npmConfig: config } : {}), ...(multi ? { serviceConfig } : {}),
+    limits: batch ? {cpus: 2, memory: `${batchConfig.memoryMb} MB`, timeoutMinutes: batchConfig.timeoutMinutes} : { cpus: '2 per container', memory: multi || planner || rumor || npm ? '2g app / 1g browser' : '1g per container', timeoutMinutes: 10 },
+    verification: { status: 'INCOMPLETE' }, recipeUnavailableReason: batch ? 'Batch configuration is saved in this record; export it from the batch plan editor.' : 'Web fixture runs use a source snapshot and browser assertions, not a Python experiment recipe.',
+    ...(batch ? {batchConfig} : {}), ...(npm ? { npmConfig: config } : {}), ...(multi ? { serviceConfig } : {}),
     commands: selected.commands, cleanup: 'PENDING', browser: null };
   if (job.liveAi) credentials.set(job.id, input.geminiApiKey?.trim() || process.env.GEMINI_API_KEY);
   active.set(job.id, job); persist(job);

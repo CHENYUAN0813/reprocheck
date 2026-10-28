@@ -1,3 +1,4 @@
+import { batchReport } from './batch-runner.mjs';
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
@@ -66,13 +67,21 @@ async function handleApi(request, response) {
         const input = await readJson(request);
         validateWebRequest(input);
         const runtime = await webRuntime();
-        if (!runtime.available) { sendJson(response, 409, { error: runtime.reason }); return true; }
+        if (input.caseId === 'batch' ? !runtime.batchAvailable : !runtime.available) { sendJson(response, 409, { error: runtime.reason }); return true; }
         if (input.caseId === 'sydney-planner' && !runtime.plannerAvailable) { sendJson(response, 409, { error: 'Run npm run setup:planner before this case' }); return true; }
         if (input.caseId === 'multi-service' && !runtime.servicesAvailable) { sendJson(response, 409, { error: 'Run npm run setup:services first' }); return true; }
         if (input.caseId === 'npm-project' && !runtime.npmAvailable) { sendJson(response, 409, { error: 'Run npm run setup:web to update the npm browser image' }); return true; }
         sendJson(response, 202, startWebRun(input));
       } else { sendJson(response, 405, { error: 'Method not allowed' }); }
     } catch (error) { sendJson(response, 400, { error: error.message }); }
+    return true;
+  }
+  const junitId = url.pathname.match(/^\/api\/web\/runs\/([\w-]+)\/junit$/)?.[1];
+  if (junitId) {
+    if (request.method !== 'GET') { sendJson(response,405,{error:'Method not allowed'}); return true; }
+    const bytes = batchReport(junitId);
+    if (!bytes) sendJson(response,404,{error:'JUnit report not available'});
+    else { response.writeHead(200,{'Content-Type':'application/xml','Content-Disposition':`attachment; filename="junit-${junitId}.xml"`,'X-Content-Type-Options':'nosniff','Cache-Control':'no-store'}); response.end(bytes); }
     return true;
   }
   const screenshotId = url.pathname.match(/^\/api\/web\/runs\/([\w-]+)\/screenshot$/)?.[1];

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "repository": "pytest-dev/iniconfig",
+  "commit": "a9e0ad14bcd0d9d3b68d2b699ce38399cbe64fdd",
+  "image": "sha256:1feceef627d3892eb001a19fd762ed582dba06b8f3ee16e90c7d2fde1787edc2",
+  "directory": ".",
+  "env": {
+    "PYTHONPATH": "/tmp/project/src",
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"
+  },
+  "commands": [
+    [
+      "python",
+      "-m",
+      "pytest",
+      "testing",
+      "-q",
+      "--junitxml=result.xml"
+    ]
+  ],
+  "junit": "result.xml",
+  "timeoutMinutes": 10,
+  "memoryMb": 2048
+}

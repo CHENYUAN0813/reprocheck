@@ -1141,6 +1141,7 @@ function App() {
 
         <div className="view-panel" hidden={page !== "report"}>
 
+        {!isExample && <div className="next-action"><p>{t('Run selected tests without a web service using a prepared local image.')}</p><button type="button" onClick={() => setPage('web')}>{t('Configure batch or service execution →')}</button></div>}
         {!isExample && !!report.servicePlan?.services?.length && <section className="runner"><h2>{t('Review service startup plan')}</h2><p>{t('Review all detected services together, including their dependencies and API/browser checks. This draft requires confirmation.')}</p><button type="button" onClick={() => setPage('web')}>{t('Review and run web acceptance →')}</button></section>}
         {!isExample && !report.servicePlan?.services?.length && !acceptance.benchmarkId && <SuggestedEntry key={`${report.repository}@${report.commit}`} report={report} disabled={executionBusy} onChoose={chooseQuickEntry} />}
         <section className="report" aria-labelledby="report-title">

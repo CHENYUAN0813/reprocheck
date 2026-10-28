@@ -1,3 +1,4 @@
+import { findDockerfiles } from './batch-config.mjs';
 import { serviceDraft } from './service-config.mjs';
 import { buildEvaluationDraft, discoverPaperProvenance, suggestCandidate } from "./evaluation-config.mjs";
 import { buildPaperWorkflowDraft } from "./paper-workflow.mjs";
@@ -708,7 +709,7 @@ export async function scan(input, token, pinnedCommit) {
     ];
     const failures = checks.filter(check => check.status === 'FAIL').length;
     const warnings = checks.filter(check => check.status === 'WARN').length;
-    return { repository: `${owner}/${repo}`, commit: commit.sha, filesScanned: filePaths.length, projectType,
+    return { repository: `${owner}/${repo}`, commit: commit.sha, filesScanned: filePaths.length, projectType, dockerfiles: findDockerfiles(filePaths),
       status: projectType === 'unknown' ? 'UNSUPPORTED' : statusFor(failures, warnings), summary: { failures, warnings }, checks,
       servicePlan: serviceDraft({ repository: `${owner}/${repo}`, commit: commit.sha, nodeProject }, filePaths, readmeText),
       nodeProject, experimentParameters: [], entrypoints: [], workflows: [], quickEntries: [], recommendedQuickEntryId: null,
@@ -1003,6 +1004,7 @@ export async function scan(input, token, pinnedCommit) {
     repository: `${owner}/${repo}`,
     commit: commit.sha,
     filesScanned: filePaths.length,
+    dockerfiles: findDockerfiles(filePaths),
     status: statusFor(failures, warnings),
     summary: { failures, warnings },
     checks,

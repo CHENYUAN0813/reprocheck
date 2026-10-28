@@ -3,11 +3,11 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
-    "dev": "node --watch-preserve-output --watch-path=server.mjs --watch-path=scan.mjs --watch-path=node-scan.mjs --watch-path=evaluation-config.mjs --watch-path=experiment-config.mjs --watch-path=web-runner.mjs --watch-path=service-runner.mjs --watch-path=service-config.mjs --watch-path=npm-source.mjs --watch-path=runner.mjs --watch-path=run-store.mjs --watch-path=collect-evidence.py --watch-path=examples --watch-path=worker.mjs server.mjs",
+    "dev": "node --watch-preserve-output --watch-path=server.mjs --watch-path=scan.mjs --watch-path=node-scan.mjs --watch-path=evaluation-config.mjs --watch-path=experiment-config.mjs --watch-path=web-runner.mjs --watch-path=service-runner.mjs --watch-path=service-config.mjs --watch-path=batch-config.mjs --watch-path=batch-runner.mjs --watch-path=batch-image.mjs --watch-path=parse-junit.py --watch-path=npm-source.mjs --watch-path=runner.mjs --watch-path=run-store.mjs --watch-path=collect-evidence.py --watch-path=examples --watch-path=worker.mjs server.mjs",
     "prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "vite build --outDir dist/client && vite build --ssr worker.mjs --outDir dist/server",
     "preview": "vite preview",
-    "test": "node test-services.mjs && node test-npm.mjs && node test-node-scan.mjs && node test-i18n.mjs && node scan.mjs --self-test && node server.mjs --self-test && node test-runner.mjs && node test-benchmark.mjs && node test-candidates.mjs && node test-paper-workflow.mjs && node test-protocol-lock.mjs && node test-paper-matrix.mjs && node test-training.mjs && node test-experiments.mjs && node test-workbench.mjs && node test-web.mjs && node test-planner.mjs && node test-rumor.mjs && node test-workspace-storage.mjs",
+    "test": "node test-batch-build.mjs && node test-batch.mjs && node test-services.mjs && node test-npm.mjs && node test-node-scan.mjs && node test-i18n.mjs && node scan.mjs --self-test && node server.mjs --self-test && node test-runner.mjs && node test-benchmark.mjs && node test-candidates.mjs && node test-paper-workflow.mjs && node test-protocol-lock.mjs && node test-paper-matrix.mjs && node test-training.mjs && node test-experiments.mjs && node test-workbench.mjs && node test-web.mjs && node test-planner.mjs && node test-rumor.mjs && node test-workspace-storage.mjs",
     "test:docker": "node test-runner.mjs --docker",
     "test:benchmark": "node test-benchmark.mjs --docker",
     "test:candidates": "node test-candidates.mjs --docker",
@@ -20,7 +20,8 @@
     "test:rumor": "node test-rumor.mjs --docker",
     "test:npm": "node test-npm.mjs --docker",
     "setup:services": "npm run setup:web && docker build -t reprocheck-services:1 -f web-verification/planner.Dockerfile web-verification",
-    "test:services": "node test-services.mjs --docker --docker-regression --docker-api"
+    "test:services": "node test-services.mjs --docker --docker-regression --docker-api",
+    "test:batch": "node test-batch.mjs --docker && node test-batch-build.mjs --docker"
   },
   "keywords": [],
   "author": "",
